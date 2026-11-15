@@ -31,7 +31,7 @@ class Cmob < Formula
   def caveats
     <<~EOS
       Next steps, in a terminal inside cmux:
-        cmob setup            # one time: autostart + Tailscale Serve
+        cmob setup            # one time: token, autostart, gateway
         cmob qr --tailscale   # pair your phone
       Needs the cmux app and Tailscale. Run `cmob status` if anything looks off.
     EOS

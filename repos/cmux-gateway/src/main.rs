@@ -33,7 +33,7 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// One-time setup (run inside cmux): token, autostart, gateway, Tailscale Serve
+    /// One-time setup (run inside cmux): token, autostart, gateway
     Setup,
     /// Start the gateway in the background (inside cmux)
     Start {

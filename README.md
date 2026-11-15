@@ -38,7 +38,7 @@ You need the [cmux](https://cmux.com/) app on your Mac and [Tailscale](https://t
 In a terminal **inside cmux**:
 
 ```bash
-cmob setup            # one time: token, autostart, gateway, Tailscale Serve
+cmob setup            # one time: token, autostart, gateway
 cmob qr --tailscale   # prints a QR code; scan it from the app
 cmob status           # is it healthy, who is connected
 ```
@@ -48,7 +48,7 @@ On the phone, open the web app, then menu → **Hosts & devices** → **Scan**. 
 | Command | What it does |
 |---|---|
 | `cmob setup` | One-time setup (run inside cmux). Safe to run again |
-| `cmob qr --tailscale` | QR code that pairs a phone |
+| `cmob qr --tailscale` | QR code that pairs a phone. Also publishes the gateway over Tailscale HTTPS the first time, unless Tailscale Serve is already serving something else (it never overwrites that) |
 | `cmob status` | Gateway, cmux, Tailscale, connected clients, paired devices |
 | `cmob devices` / `cmob devices revoke <id>` | List paired phones, or cut one off |
 | `cmob start` / `stop` / `restart` | Control the background gateway |

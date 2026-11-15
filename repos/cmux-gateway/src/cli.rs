@@ -199,30 +199,68 @@ fn tailscale_dns() -> Option<String> {
     (!name.is_empty()).then_some(name)
 }
 
-fn tailscale_serving(bin: &str, port: u16) -> bool {
-    Command::new(bin)
-        .args(["serve", "status"])
-        .stderr(Stdio::null())
-        .output()
-        .map(|o| String::from_utf8_lossy(&o.stdout).contains(&format!("127.0.0.1:{port}")))
-        .unwrap_or(false)
+#[derive(Debug, PartialEq)]
+enum ServeState {
+    /// Tailscale Serve has no configuration, so setting ours replaces nothing.
+    Empty,
+    /// It already proxies to the gateway.
+    Ours,
+    /// It serves something else; setting ours would overwrite it.
+    Other,
 }
 
-/// Makes sure Tailscale Serve proxies HTTPS to the gateway and returns the public `https://` base URL.
+/// Classifies `tailscale serve status --json` for our port.
+fn serve_state(json: &str, port: u16) -> Res<ServeState> {
+    let v: serde_json::Value =
+        serde_json::from_str(json).map_err(|_| "could not read the Tailscale Serve configuration".to_string())?;
+    if v.is_null() || v.as_object().map(|o| o.is_empty()).unwrap_or(false) {
+        return Ok(ServeState::Empty);
+    }
+    if json.contains(&format!("127.0.0.1:{port}")) || json.contains(&format!("localhost:{port}")) {
+        return Ok(ServeState::Ours);
+    }
+    Ok(ServeState::Other)
+}
+
+fn tailscale_serve_state(bin: &str, port: u16) -> Res<ServeState> {
+    let out = Command::new(bin)
+        .args(["serve", "status", "--json"])
+        .stderr(Stdio::null())
+        .output()
+        .map_err(|e| e.to_string())?;
+    serve_state(&String::from_utf8_lossy(&out.stdout), port)
+}
+
+fn tailscale_serving(bin: &str, port: u16) -> bool {
+    tailscale_serve_state(bin, port).map(|s| s == ServeState::Ours).unwrap_or(false)
+}
+
+/// Publishes the gateway over Tailscale HTTPS and returns the `https://` base URL. It never replaces a
+/// Serve configuration that belongs to something else.
 fn ensure_tailscale_serve() -> Res<String> {
     let bin = tailscale_bin().ok_or("Tailscale was not found. Install it from https://tailscale.com/download")?;
     let dns = tailscale_dns()
         .ok_or("Tailscale is installed but not signed in. Open the Tailscale app and sign in")?;
-    if !tailscale_serving(&bin, port()) {
-        let ok = Command::new(&bin)
-            .args(["serve", "--bg", &port().to_string()])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        if !ok {
-            return Err("could not enable Tailscale Serve (try `tailscale serve --bg 8088` yourself)".into());
+    match tailscale_serve_state(&bin, port())? {
+        ServeState::Ours => {}
+        ServeState::Empty => {
+            let ok = Command::new(&bin)
+                .args(["serve", "--bg", &port().to_string()])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !ok {
+                return Err("could not enable Tailscale Serve (try `tailscale serve --bg 8088` yourself)".into());
+            }
+        }
+        ServeState::Other => {
+            return Err(
+                "Tailscale Serve is already serving something else on this Mac, and cmob will not overwrite it. \
+                 See it with `tailscale serve status`; remove it, or point it at 127.0.0.1:8088 yourself"
+                    .into(),
+            );
         }
     }
     Ok(format!("https://{dns}"))
@@ -445,9 +483,11 @@ pub fn setup() -> Res<()> {
 
     start(false)?;
 
-    match ensure_tailscale_serve() {
-        Ok(url) => ok(format!("Tailscale Serve is on: {url}")),
-        Err(e) => warn(format!("Tailscale: {e}. Phones need it for HTTPS.")),
+    // Setup only looks at Tailscale. Publishing happens in `cmob qr --tailscale`, when you ask for it.
+    match (tailscale_bin(), tailscale_dns()) {
+        (Some(_), Some(dns)) => ok(format!("Tailscale is signed in ({dns})")),
+        (Some(_), None) => warn("Tailscale is installed but not signed in. Phones need it for HTTPS."),
+        _ => warn("Tailscale was not found. Phones need it for HTTPS: https://tailscale.com/download"),
     }
 
     println!("\nNext: pair your phone with  cmob qr --tailscale");
@@ -760,6 +800,18 @@ mod tests {
         let chrome = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36";
         assert_eq!(short_agent(chrome), "Chrome · macOS");
         assert_eq!(short_agent(""), "unknown");
+    }
+
+    #[test]
+    fn serve_state_never_mistakes_someone_elses_config_for_ours() {
+        assert_eq!(serve_state("{}", 8088).unwrap(), ServeState::Empty);
+        assert_eq!(serve_state("null", 8088).unwrap(), ServeState::Empty);
+        let ours = r#"{"Web":{"m.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8088"}}}}}"#;
+        assert_eq!(serve_state(ours, 8088).unwrap(), ServeState::Ours);
+        let other = r#"{"Web":{"m.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#;
+        assert_eq!(serve_state(other, 8088).unwrap(), ServeState::Other);
+        assert_eq!(serve_state(other, 3000).unwrap(), ServeState::Ours);
+        assert!(serve_state("not json", 8088).is_err(), "unreadable config must not count as empty");
     }
 
     #[test]
