@@ -4783,3 +4783,8 @@ Method: cargo test (115 pass), clippy (39 style warnings, 0 errors), vp lint, ma
 - Limit: a phone whose old client build already overwrote its stored token with the stale one has nothing valid to fall back to; it must pair once more.
 - Separate regression found on the way, caused by renaming the binary to `cmob`: the default log filter was `cmux_gateway=info`, but module targets are now `cmob::…`, so the gateway logged nothing by default (`gateway.log` stayed 0 bytes; `RUST_LOG=info` worked). Filter now `cmob=info,cmux_gateway=info,tower_http=info`. Also added log lines for pairing success/rejection (no token content). Affects 0.1.0 and 0.1.1.
 - [HYPOTHESIS - UNVERIFIED] On the real iPhone the stale token came from a home-screen icon created from an old `#token=` link. Verify: after updating, open the icon cold; `cmob logs` should show one `rejected: invalid token` followed by a successful session.
+
+## 29Z — no Chat view for plain shells
+- `SurfaceDetailView.tsx`: the Chat/Term toggle and the chat view now exist only when `surface.agent` is set or a startup dialog is pending (`chatAvailable`); a plain shell opens straight into the terminal. Before, the toggle was always shown, and Chat on a shell was an empty chat with an agent composer.
+- Verified with the demo gateway and headless Chrome: a tab with `agent: null` shows no Chat button; tabs with a detected agent (`dev server` = Codex, `tests` = Claude) keep it.
+- Caveat: "is an agent" is the gateway's detection (`workspace_tree.rs`: process on the tab's tty, or the tab title via `recognize_standby_agent`). An agent the gateway fails to recognise now shows only the terminal. The agent-created Chat toggle returns by itself once detection succeeds (`prevAgentRef` effect).

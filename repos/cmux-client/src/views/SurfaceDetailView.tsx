@@ -120,6 +120,9 @@ export function SurfaceDetailView({
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
   const [withinGrace, setWithinGrace] = useState(false);
   const [startupDialog, setStartupDialog] = useState<StartupDialogInfo | null>(null);
+  // A plain shell has nobody to chat with: only agents (and their startup dialogs) get the Chat view.
+  const chatAvailable = hasAgent || Boolean(startupDialog);
+  const activeMode: "chat" | "terminal" = chatAvailable ? viewMode : "terminal";
   const [isWorking, setIsWorking] = useState(false);
   const [lifecycleState, setLifecycleState] = useState<AgentLifecycleState>("idle");
   const [activityText, setActivityText] = useState<string | null>(null);
@@ -573,32 +576,34 @@ export function SurfaceDetailView({
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0 pr-1">
-          <div className="flex items-center p-1 bg-[#1e1e22] border border-white/[0.08] rounded-xl shrink-0">
-            <button
-              type="button"
-              onClick={() => setViewMode("chat")}
-              className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-                viewMode === "chat"
-                  ? "bg-[#3276f2] text-white shadow-sm"
-                  : "text-[#a3a3a3] hover:text-[#fafafa]"
-              }`}
-            >
-              <MessageSquare className="w-3.5 h-3.5" />
-              <span>Chat</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => setViewMode("terminal")}
-              className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-                viewMode === "terminal"
-                  ? "bg-[#3276f2] text-white shadow-sm"
-                  : "text-[#a3a3a3] hover:text-[#fafafa]"
-              }`}
-            >
-              <Terminal className="w-3.5 h-3.5" />
-              <span>Term</span>
-            </button>
-          </div>
+          {chatAvailable && (
+            <div className="flex items-center p-1 bg-[#1e1e22] border border-white/[0.08] rounded-xl shrink-0">
+              <button
+                type="button"
+                onClick={() => setViewMode("chat")}
+                className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+                  activeMode === "chat"
+                    ? "bg-[#3276f2] text-white shadow-sm"
+                    : "text-[#a3a3a3] hover:text-[#fafafa]"
+                }`}
+              >
+                <MessageSquare className="w-3.5 h-3.5" />
+                <span>Chat</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => setViewMode("terminal")}
+                className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
+                  activeMode === "terminal"
+                    ? "bg-[#3276f2] text-white shadow-sm"
+                    : "text-[#a3a3a3] hover:text-[#fafafa]"
+                }`}
+              >
+                <Terminal className="w-3.5 h-3.5" />
+                <span>Term</span>
+              </button>
+            </div>
+          )}
 
           <button
             type="button"
@@ -700,7 +705,7 @@ export function SurfaceDetailView({
       )}
 
       <div className="flex-1 min-h-0 overflow-hidden min-w-0 max-w-full flex flex-col">
-        {viewMode === "chat" ? (
+        {activeMode === "chat" ? (
           <OrcaChatView
             // Composer state (queued messages, draft) belongs to one surface; remount on switch.
             key={surface.id || surface.ref}
