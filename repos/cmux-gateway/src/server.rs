@@ -322,14 +322,20 @@ async fn pair_exchange_handler(
     Json(body): Json<ExchangeRequest>,
 ) -> impl IntoResponse {
     match state.devices.redeem_labeled(&body.ticket, &body.label) {
-        Some(token) => (
-            axum::http::StatusCode::OK,
-            Json(serde_json::json!({ "token": token })),
-        ),
-        None => (
-            axum::http::StatusCode::UNAUTHORIZED,
-            Json(serde_json::json!({ "error": "invalid_or_expired_ticket" })),
-        ),
+        Some(token) => {
+            info!("Paired a new device ({})", if body.label.is_empty() { "unnamed" } else { body.label.as_str() });
+            (
+                axum::http::StatusCode::OK,
+                Json(serde_json::json!({ "token": token })),
+            )
+        }
+        None => {
+            warn!("Pairing ticket rejected: already used, expired or unknown");
+            (
+                axum::http::StatusCode::UNAUTHORIZED,
+                Json(serde_json::json!({ "error": "invalid_or_expired_ticket" })),
+            )
+        }
     }
 }
 

@@ -1,8 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  collectTokenCandidates,
   decodePairingPayload,
   endpointToHttpBase,
   isValidGatewayEndpoint,
+  nextPairingHash,
   sameOriginEndpoint,
   parsePairingInput,
   readPairingFromLocation,
@@ -161,5 +163,23 @@ describe("Pairing Protocol", () => {
       .replace(/\//g, "_")
       .replace(/=+$/, "");
     expect(parsePairingInput(`https://mac.tail.ts.net/#code=${code}`)).toEqual(offer);
+  });
+
+  it("replaces a stale token or code fragment but never an unrelated one", () => {
+    expect(nextPairingHash("", "abc")).toBe("#token=abc");
+    expect(nextPairingHash("#", "abc")).toBe("#token=abc");
+    expect(nextPairingHash("#token=old", "abc")).toBe("#token=abc");
+    expect(nextPairingHash("#code=spentticket", "abc")).toBe("#token=abc");
+    expect(nextPairingHash("#section-2", "abc")).toBe("#section-2");
+    expect(nextPairingHash("#token=old", "")).toBe("#token=old");
+    expect(nextPairingHash("", "a b/c")).toBe("#token=a%20b%2Fc");
+  });
+
+  it("lists the address-bar token first, then remembered ones, without duplicates or blanks", () => {
+    expect(
+      collectTokenCandidates("url", ["local", "url", null, "", undefined, "local", "cookie"]),
+    ).toEqual(["url", "local", "cookie"]);
+    expect(collectTokenCandidates(undefined, [null, "local"])).toEqual(["local"]);
+    expect(collectTokenCandidates(undefined, [])).toEqual([]);
   });
 });

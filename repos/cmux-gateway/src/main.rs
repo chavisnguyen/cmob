@@ -128,7 +128,8 @@ async fn serve(args: ServeArgs) -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::registry()
         .with(
             tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "cmux_gateway=info,tower_http=info".into()),
+                // Log targets are `cmob::...` in the binary and `cmux_gateway::...` in the library.
+                .unwrap_or_else(|_| "cmob=info,cmux_gateway=info,tower_http=info".into()),
         )
         .with(tracing_subscriber::fmt::layer())
         .init();

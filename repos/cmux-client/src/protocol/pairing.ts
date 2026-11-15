@@ -204,6 +204,35 @@ export function readPairingFromLocation(
  * - ref/orca/src/renderer/src/web/web-pairing.ts:107-126
  * - architecture.md: Section 5.1
  */
+/**
+ * Hash to show for `token`. A `#token=` / `#code=` fragment (or none) is replaced, so a stale credential
+ * left in the address bar (an old home-screen link) can never outrank the token that is actually in use.
+ * Any other fragment is left alone.
+ */
+export function nextPairingHash(currentHash: string, token: string): string {
+  if (!token) return currentHash;
+  if (!currentHash || currentHash === "#" || /^#(token|code)=/.test(currentHash)) {
+    return `#token=${encodeURIComponent(token)}`;
+  }
+  return currentHash;
+}
+
+/**
+ * Tokens to try, best guess first and without duplicates: the one in the address bar (a link the user
+ * just opened), then what this browser remembers. The caller moves to the next when the gateway
+ * rejects one, so a stale address-bar token cannot lock out a valid remembered one.
+ */
+export function collectTokenCandidates(
+  urlToken: string | undefined,
+  remembered: ReadonlyArray<string | null | undefined>,
+): string[] {
+  const out: string[] = [];
+  for (const t of [urlToken, ...remembered]) {
+    if (t && !out.includes(t)) out.push(t);
+  }
+  return out;
+}
+
 export function sanitizePairingInAddressBar(token?: string): void {
   if (typeof window === "undefined") {
     return;
@@ -218,20 +247,18 @@ export function sanitizePairingInAddressBar(token?: string): void {
     searchParams.delete("token");
     searchParams.delete("code");
     const newSearch = searchParams.toString() ? `?${searchParams.toString()}` : "";
-    const hash =
-      window.location.hash && window.location.hash !== "#"
-        ? window.location.hash
-        : effectiveToken
-          ? `#token=${encodeURIComponent(effectiveToken)}`
-          : "";
+    const hash = nextPairingHash(window.location.hash, effectiveToken ?? "");
     const cleanUrl = `${window.location.origin}${window.location.pathname}${newSearch}${hash}`;
     window.history.replaceState(null, docTitle, cleanUrl);
-  } else if (effectiveToken && (!window.location.hash || window.location.hash === "#")) {
-    window.history.replaceState(
-      null,
-      docTitle,
-      `${window.location.origin}${window.location.pathname}${window.location.search}#token=${encodeURIComponent(effectiveToken)}`,
-    );
+  } else if (effectiveToken) {
+    const hash = nextPairingHash(window.location.hash, effectiveToken);
+    if (hash !== window.location.hash) {
+      window.history.replaceState(
+        null,
+        docTitle,
+        `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`,
+      );
+    }
   }
 }
 

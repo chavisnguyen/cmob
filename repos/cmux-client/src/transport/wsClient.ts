@@ -7,6 +7,7 @@
 
 import { getActiveHostId, setActiveHostId, upsertHost, type SavedHost } from "../hosts/hostStore";
 import {
+  collectTokenCandidates,
   endpointToHttpBase,
   isValidGatewayEndpoint,
   readPairingFromLocation,
@@ -73,29 +74,24 @@ function deviceLabel(): string {
   return standalone ? `${platform} (app)` : platform;
 }
 
-function getStoredToken(): string {
-  if (typeof window === "undefined") return "";
+/** Every token this browser could use, best guess first (see `collectTokenCandidates`). */
+function readTokenCandidates(): string[] {
+  if (typeof window === "undefined") return [];
   const offer = readPairingFromLocation(window.location);
-  if (offer?.token && !isForeignOffer(offer)) return offer.token;
-
+  const urlToken = offer?.token && !isForeignOffer(offer) ? offer.token : undefined;
+  let local: string | null = null;
+  let session: string | null = null;
   try {
-    const lsToken = localStorage.getItem("cmux_token");
-    if (lsToken) return lsToken;
+    local = localStorage.getItem("cmux_token");
   } catch {
     // Ignore storage quota or access errors
   }
-
   try {
-    const ssToken = sessionStorage.getItem("cmux_token");
-    if (ssToken) return ssToken;
+    session = sessionStorage.getItem("cmux_token");
   } catch {
     // Ignore
   }
-
-  const cookieToken = getCookie("cmux_token");
-  if (cookieToken) return cookieToken;
-
-  return "";
+  return collectTokenCandidates(urlToken, [local, session, getCookie("cmux_token")]);
 }
 
 function clearStoredToken(): void {
@@ -179,12 +175,15 @@ export class GatewayWsClient {
   private pendingPairing: PairingOffer | null = null;
   private pairingListeners = new Set<() => void>();
   private hostNameHint: string | null = null;
+  /** Other remembered tokens to try, in order, when the gateway rejects the current one. */
+  private fallbackTokens: string[] = [];
 
   constructor() {
-    this.token = getStoredToken();
-    if (this.token) {
-      persistStoredToken(this.token);
-    }
+    // Nothing is written back yet: a token from the address bar may be stale, and overwriting the
+    // remembered one with it would destroy the only valid credential. It is saved on auth_ok.
+    const candidates = readTokenCandidates();
+    this.token = candidates[0] ?? "";
+    this.fallbackTokens = candidates.slice(1);
 
     if (typeof window !== "undefined") {
       const offer = readPairingFromLocation(window.location);
@@ -248,6 +247,7 @@ export class GatewayWsClient {
   public setToken(token: string): void {
     const trimmed = token.trim();
     this.token = trimmed;
+    this.fallbackTokens = [];
     if (trimmed) {
       persistStoredToken(trimmed);
     } else if (typeof window !== "undefined") {
@@ -380,6 +380,7 @@ export class GatewayWsClient {
       offer.ticket && !offer.token ? { ticket: offer.ticket, endpoint: offer.endpoint } : null;
     // Never present the previous host's credential to the new host.
     this.token = "";
+    this.fallbackTokens = [];
     clearStoredToken();
     stripPairingCodeFromAddressBar();
     this.notifyPairing();
@@ -488,11 +489,14 @@ export class GatewayWsClient {
           // Handle auth response frame
           if (raw.type === "auth_ok") {
             this.reconnectAttempts = 0;
+            this.fallbackTokens = [];
+            persistStoredToken(this.token);
             this.recordCurrentHost();
             this.setState("connected");
             return;
           }
           if (raw.type === "auth_error") {
+            if (this.useNextToken()) return;
             this.shouldReconnect = false;
             this.setState("error");
             return;
@@ -529,6 +533,7 @@ export class GatewayWsClient {
         this.setState("disconnected");
         // Do not auto-reconnect if closed due to authentication failure (close code 1008)
         if (ev.code === 1008) {
+          if (this.useNextToken()) return;
           this.shouldReconnect = false;
           this.setState("error");
           return;
@@ -567,6 +572,15 @@ export class GatewayWsClient {
   public reconnect(): void {
     this.disconnect();
     this.connect();
+  }
+
+  /** The gateway rejected the current token: retry with the next remembered one, if any. */
+  private useNextToken(): boolean {
+    const next = this.fallbackTokens.shift();
+    if (!next) return false;
+    this.token = next;
+    this.reconnect();
+    return true;
   }
 
   private scheduleReconnect(): void {
