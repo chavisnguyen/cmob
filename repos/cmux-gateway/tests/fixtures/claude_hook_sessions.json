@@ -1,0 +1,83 @@
+{
+  "activeSessionsBySurface": {
+    "4BEC6107-D94C-4DDE-93AF-3835F68B0E93": {
+      "allowsNewSessionReplacement": true,
+      "sessionId": "f6c4368e-faef-4b60-9432-e1ca1a198168",
+      "updatedAt": 1794480443.8535771
+    },
+    "DD8E8344-75DF-40F3-8246-6111FF22E12F": {
+      "sessionId": "be0f7550-05ce-4885-a9c4-4fa138966079",
+      "updatedAt": 1793955648.996719
+    }
+  },
+  "activeSessionsByWorkspace": {
+    "4EA5F151-84D5-41E3-A92B-D9A082DD1EBC": {
+      "allowsNewSessionReplacement": true,
+      "sessionId": "f6c4368e-faef-4b60-9432-e1ca1a198168",
+      "updatedAt": 1794480443.8535771
+    }
+  },
+  "pendingCursorApprovalIndexInitialized": true,
+  "sessions": {
+    "be0f7550-05ce-4885-a9c4-4fa138966079": {
+      "agentLifecycle": "idle",
+      "cwd": "/Users/developer/projects/project-a",
+      "hookEventName": "SessionStart",
+      "isRestorable": false,
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/claude"
+        ],
+        "capturedAt": 1793955648.966395,
+        "executablePath": "/opt/homebrew/bin/claude",
+        "launcher": "claude",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-a"
+      },
+      "pid": 50372,
+      "pidStartMicroseconds": 625261,
+      "pidStartSeconds": 1793955645,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "idle",
+      "sessionId": "be0f7550-05ce-4885-a9c4-4fa138966079",
+      "startedAt": 1793955648.996719,
+      "surfaceId": "DD8E8344-75DF-40F3-8246-6111FF22E12F",
+      "transcriptPath": "/Users/developer/.claude/projects/-Users-developer-Documents-sun-project-a/be0f7550-05ce-4885-a9c4-4fa138966079.jsonl",
+      "updatedAt": 1793955648.996719,
+      "workspaceId": "958F8A5E-AE2C-4412-9CB2-76F60E216744"
+    },
+    "f6c4368e-faef-4b60-9432-e1ca1a198168": {
+      "agentLifecycle": "idle",
+      "cwd": "/Users/developer/projects/project-a",
+      "hadPendingBackgroundWorkAtStop": false,
+      "hookEventName": "Stop",
+      "isRestorable": true,
+      "lastBody": "Đã lưu vào `notes/`, commit và push (`abc1234`). Đã chạy lại bước kiểm tra tài liệu: 0 lỗi.",
+      "lastPermissionMode": "auto",
+      "lastSubtitle": "Completed in project-a",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/claude"
+        ],
+        "capturedAt": 1794453420.973027,
+        "executablePath": "/opt/homebrew/bin/claude",
+        "launcher": "claude",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-a"
+      },
+      "pid": 2290,
+      "pidStartMicroseconds": 663190,
+      "pidStartSeconds": 1794453417,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "idle",
+      "sessionId": "f6c4368e-faef-4b60-9432-e1ca1a198168",
+      "startedAt": 1794453420.9791698,
+      "surfaceId": "4BEC6107-D94C-4DDE-93AF-3835F68B0E93",
+      "transcriptPath": "/Users/developer/.claude/projects/-Users-developer-Documents-sun-project-a/f6c4368e-faef-4b60-9432-e1ca1a198168.jsonl",
+      "turnSettled": true,
+      "updatedAt": 1794480443.8535771,
+      "workspaceId": "4EA5F151-84D5-41E3-A92B-D9A082DD1EBC"
+    }
+  },
+  "version": 1
+}

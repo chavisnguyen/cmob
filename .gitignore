@@ -1,0 +1,33 @@
+# Reference repositories (read-only upstream clones)
+ref/
+
+# Environment & OS
+.DS_Store
+*.swp
+*.swo
+
+# Node / JS
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Rust / Cargo
+target/
+**/*.rs.bk
+
+# Build outputs
+dist/
+dist-ssr/
+repos/cmux-gateway/assets/
+
+# Secrets
+secrets/*
+!secrets/README.md
+!secrets/.gitignore
+
+# Vite+ cache
+.vite-plus/
+.vite/

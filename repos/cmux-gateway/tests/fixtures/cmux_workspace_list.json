@@ -1,0 +1,326 @@
+{
+  "window_id": "0F6B4D1A-5370-4955-9769-37BD033DE900",
+  "window_ref": "window:1000080000",
+  "workspaces": [
+    {
+      "current_directory": "/Users/developer/projects/project-a",
+      "custom_color": "#1565C0",
+      "custom_title": "Project A workspace",
+      "description": null,
+      "has_custom_title": true,
+      "id": "4EA5F151-84D5-41E3-A92B-D9A082DD1EBC",
+      "index": 0,
+      "latest_conversation_message": "commit and push the notes",
+      "latest_submitted_at": "2026-11-12T10:46:48.021Z",
+      "latest_submitted_message": "commit and push the notes",
+      "listening_ports": [],
+      "pinned": true,
+      "ref": "workspace:1000080003",
+      "remote": {
+        "active_terminal_sessions": 0,
+        "cloud_vm_base": null,
+        "cloud_vm_id": null,
+        "cloud_vm_transport": null,
+        "conflicted_ports": [],
+        "connected": false,
+        "daemon": {
+          "capabilities": [],
+          "detail": null,
+          "name": null,
+          "remote_path": null,
+          "state": "unavailable",
+          "version": null
+        },
+        "destination": null,
+        "detail": null,
+        "detected_ports": [],
+        "enabled": false,
+        "forwarded_ports": [],
+        "has_identity_file": false,
+        "has_ssh_options": false,
+        "heartbeat": {
+          "age_seconds": null,
+          "count": 0,
+          "last_seen_at": null
+        },
+        "local_proxy_port": null,
+        "persistent_daemon_slot": null,
+        "port": null,
+        "proxy": {
+          "error_code": null,
+          "host": null,
+          "port": null,
+          "schemes": [
+            "socks5",
+            "http_connect"
+          ],
+          "state": "unavailable",
+          "url": null
+        },
+        "state": "disconnected",
+        "terminal_profile": null,
+        "terminal_tmux_session": null,
+        "terminal_transport": null,
+        "transport": null
+      },
+      "selected": false,
+      "title": "Project A workspace"
+    },
+    {
+      "current_directory": "/Users/developer/projects/project-c",
+      "custom_color": "#C0392B",
+      "custom_title": "Project C workspace",
+      "description": null,
+      "has_custom_title": true,
+      "id": "D810944A-83F2-4662-BC2F-09719579443B",
+      "index": 1,
+      "latest_conversation_message": "create a private repo for the project, then push everything",
+      "latest_submitted_at": "2026-11-12T05:01:37.398Z",
+      "latest_submitted_message": "create a private repo for the project, then push everything",
+      "listening_ports": [],
+      "pinned": true,
+      "ref": "workspace:1000080005",
+      "remote": {
+        "active_terminal_sessions": 0,
+        "cloud_vm_base": null,
+        "cloud_vm_id": null,
+        "cloud_vm_transport": null,
+        "conflicted_ports": [],
+        "connected": false,
+        "daemon": {
+          "capabilities": [],
+          "detail": null,
+          "name": null,
+          "remote_path": null,
+          "state": "unavailable",
+          "version": null
+        },
+        "destination": null,
+        "detail": null,
+        "detected_ports": [],
+        "enabled": false,
+        "forwarded_ports": [],
+        "has_identity_file": false,
+        "has_ssh_options": false,
+        "heartbeat": {
+          "age_seconds": null,
+          "count": 0,
+          "last_seen_at": null
+        },
+        "local_proxy_port": null,
+        "persistent_daemon_slot": null,
+        "port": null,
+        "proxy": {
+          "error_code": null,
+          "host": null,
+          "port": null,
+          "schemes": [
+            "socks5",
+            "http_connect"
+          ],
+          "state": "unavailable",
+          "url": null
+        },
+        "state": "disconnected",
+        "terminal_profile": null,
+        "terminal_tmux_session": null,
+        "terminal_transport": null,
+        "transport": null
+      },
+      "selected": false,
+      "title": "Project C workspace"
+    },
+    {
+      "current_directory": "/Users/developer/projects/project-b-workspace/repos/project-b-app",
+      "custom_color": "#7D6608",
+      "custom_title": "Project B",
+      "description": null,
+      "has_custom_title": true,
+      "id": "5A63DADA-673B-457F-8534-D9DEF9E705C0",
+      "index": 2,
+      "latest_conversation_message": null,
+      "latest_submitted_at": null,
+      "latest_submitted_message": null,
+      "listening_ports": [],
+      "pinned": true,
+      "ref": "workspace:1000080000",
+      "remote": {
+        "active_terminal_sessions": 0,
+        "cloud_vm_base": null,
+        "cloud_vm_id": null,
+        "cloud_vm_transport": null,
+        "conflicted_ports": [],
+        "connected": false,
+        "daemon": {
+          "capabilities": [],
+          "detail": null,
+          "name": null,
+          "remote_path": null,
+          "state": "unavailable",
+          "version": null
+        },
+        "destination": null,
+        "detail": null,
+        "detected_ports": [],
+        "enabled": false,
+        "forwarded_ports": [],
+        "has_identity_file": false,
+        "has_ssh_options": false,
+        "heartbeat": {
+          "age_seconds": null,
+          "count": 0,
+          "last_seen_at": null
+        },
+        "local_proxy_port": null,
+        "persistent_daemon_slot": null,
+        "port": null,
+        "proxy": {
+          "error_code": null,
+          "host": null,
+          "port": null,
+          "schemes": [
+            "socks5",
+            "http_connect"
+          ],
+          "state": "unavailable",
+          "url": null
+        },
+        "state": "disconnected",
+        "terminal_profile": null,
+        "terminal_tmux_session": null,
+        "terminal_transport": null,
+        "transport": null
+      },
+      "selected": false,
+      "title": "Project B"
+    },
+    {
+      "current_directory": "/Users/developer/projects/cmux-mobile",
+      "custom_color": "#196F3D",
+      "custom_title": "Tools",
+      "description": null,
+      "has_custom_title": true,
+      "id": "1580694D-A6F5-40C2-94AD-E22E60A7855E",
+      "index": 3,
+      "latest_conversation_message": null,
+      "latest_submitted_at": null,
+      "latest_submitted_message": null,
+      "listening_ports": [],
+      "pinned": true,
+      "ref": "workspace:1000080004",
+      "remote": {
+        "active_terminal_sessions": 0,
+        "cloud_vm_base": null,
+        "cloud_vm_id": null,
+        "cloud_vm_transport": null,
+        "conflicted_ports": [],
+        "connected": false,
+        "daemon": {
+          "capabilities": [],
+          "detail": null,
+          "name": null,
+          "remote_path": null,
+          "state": "unavailable",
+          "version": null
+        },
+        "destination": null,
+        "detail": null,
+        "detected_ports": [],
+        "enabled": false,
+        "forwarded_ports": [],
+        "has_identity_file": false,
+        "has_ssh_options": false,
+        "heartbeat": {
+          "age_seconds": null,
+          "count": 0,
+          "last_seen_at": null
+        },
+        "local_proxy_port": null,
+        "persistent_daemon_slot": null,
+        "port": null,
+        "proxy": {
+          "error_code": null,
+          "host": null,
+          "port": null,
+          "schemes": [
+            "socks5",
+            "http_connect"
+          ],
+          "state": "unavailable",
+          "url": null
+        },
+        "state": "disconnected",
+        "terminal_profile": null,
+        "terminal_tmux_session": null,
+        "terminal_transport": null,
+        "transport": null
+      },
+      "selected": true,
+      "title": "Tools"
+    },
+    {
+      "current_directory": "/Users/developer",
+      "custom_color": "#1A5276",
+      "custom_title": "Sys",
+      "description": null,
+      "has_custom_title": true,
+      "id": "C414661C-6109-408E-AACB-CFF3B6F605F4",
+      "index": 4,
+      "latest_conversation_message": null,
+      "latest_submitted_at": null,
+      "latest_submitted_message": null,
+      "listening_ports": [],
+      "pinned": true,
+      "ref": "workspace:1000080002",
+      "remote": {
+        "active_terminal_sessions": 0,
+        "cloud_vm_base": null,
+        "cloud_vm_id": null,
+        "cloud_vm_transport": null,
+        "conflicted_ports": [],
+        "connected": false,
+        "daemon": {
+          "capabilities": [],
+          "detail": null,
+          "name": null,
+          "remote_path": null,
+          "state": "unavailable",
+          "version": null
+        },
+        "destination": null,
+        "detail": null,
+        "detected_ports": [],
+        "enabled": false,
+        "forwarded_ports": [],
+        "has_identity_file": false,
+        "has_ssh_options": false,
+        "heartbeat": {
+          "age_seconds": null,
+          "count": 0,
+          "last_seen_at": null
+        },
+        "local_proxy_port": null,
+        "persistent_daemon_slot": null,
+        "port": null,
+        "proxy": {
+          "error_code": null,
+          "host": null,
+          "port": null,
+          "schemes": [
+            "socks5",
+            "http_connect"
+          ],
+          "state": "unavailable",
+          "url": null
+        },
+        "state": "disconnected",
+        "terminal_profile": null,
+        "terminal_tmux_session": null,
+        "terminal_transport": null,
+        "transport": null
+      },
+      "selected": false,
+      "title": "Sys"
+    }
+  ]
+}

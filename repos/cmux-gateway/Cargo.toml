@@ -1,0 +1,38 @@
+[package]
+name = "cmux-gateway"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+description = "cmob - Cmux Mobile: watch and control cmux terminals and coding agents from a phone"
+repository = "https://github.com/chavisnguyen/cmux-mobile"
+
+[lib]
+name = "cmux_gateway"
+path = "src/lib.rs"
+
+[[bin]]
+name = "cmob"
+path = "src/main.rs"
+
+[dependencies]
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+axum-extra = { version = "0.10", features = ["typed-header"] }
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "fs", "trace"] }
+rust-embed = { version = "8", features = ["compression"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+uuid = { version = "1", features = ["v4", "fast-rng"] }
+base64 = "0.22"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+futures-util = { version = "0.3", default-features = false, features = ["sink", "std"] }
+clap = { version = "4", features = ["derive", "env"] }
+mime_guess = "2.0.5"
+thiserror = "2.0.21"
+web-push = "0.11.0"
+jwt-simple = { version = "=0.12.17", default-features = false, features = ["pure-rust"] }
+qrcode = { version = "0.14", default-features = false }
+libc = "0.2"
+

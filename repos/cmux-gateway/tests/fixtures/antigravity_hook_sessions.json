@@ -1,0 +1,1350 @@
+{
+  "pendingCursorApprovalIndexInitialized": true,
+  "sessions": {
+    "02639ede-754d-43be-a1d4-5227ea0db2be": {
+      "activePromptDepth": 508,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_151941-6233-2.log"
+        ],
+        "capturedAt": 1794482538.650244,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 6236,
+      "pidStartMicroseconds": 421201,
+      "pidStartSeconds": 1794454076,
+      "priorProcessGenerations": [],
+      "sessionId": "02639ede-754d-43be-a1d4-5227ea0db2be",
+      "startedAt": 1794454406.834449,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/02639ede-754d-43be-a1d4-5227ea0db2be/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794482538.651608,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "06260ec2-f2cb-467f-9b93-4f2da5d32544": {
+      "activePromptDepth": 7,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-b-workspace/repos/project-b-app",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_101516-1436-1.log"
+        ],
+        "capturedAt": 1794456030.750895,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-b-workspace/repos/project-b-app"
+      },
+      "pid": 1437,
+      "pidStartMicroseconds": 699021,
+      "pidStartSeconds": 1794453316,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "06260ec2-f2cb-467f-9b93-4f2da5d32544",
+      "startedAt": 1794455929.798589,
+      "surfaceId": "62D2D5EF-C0F4-4FFA-BBC7-35BBE6D1B568",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/06260ec2-f2cb-467f-9b93-4f2da5d32544/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794456030.753055,
+      "workspaceId": "5A63DADA-673B-457F-8534-D9DEF9E705C0"
+    },
+    "0f615028-8f8f-4653-997d-e8bacbe613f1": {
+      "activePromptDepth": 48,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794475757.886859,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "0f615028-8f8f-4653-997d-e8bacbe613f1",
+      "startedAt": 1794475071.347855,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/0f615028-8f8f-4653-997d-e8bacbe613f1/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794475757.8880439,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "13b263d3-1a9c-4f48-8439-c1ac842ca50a": {
+      "activePromptDepth": 3,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_102756-6233-1.log"
+        ],
+        "capturedAt": 1794460537.403275,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 6236,
+      "pidStartMicroseconds": 421201,
+      "pidStartSeconds": 1794454076,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "13b263d3-1a9c-4f48-8439-c1ac842ca50a",
+      "startedAt": 1794460472.321758,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/13b263d3-1a9c-4f48-8439-c1ac842ca50a/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794460537.411261,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "15a13010-62e0-4ddd-b62d-acd51aa95ddd": {
+      "activePromptDepth": 1010,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-a",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy"
+        ],
+        "capturedAt": 1793962874.161305,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-a"
+      },
+      "pid": 15090,
+      "pidStartMicroseconds": 480596,
+      "pidStartSeconds": 1793766832,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "15a13010-62e0-4ddd-b62d-acd51aa95ddd",
+      "startedAt": 1793946434.10765,
+      "surfaceId": "C1FE3651-3AD3-4650-98B8-580923077B3B",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/15a13010-62e0-4ddd-b62d-acd51aa95ddd/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793962874.175304,
+      "workspaceId": "958F8A5E-AE2C-4412-9CB2-76F60E216744"
+    },
+    "1e10683e-8b77-4ba2-9220-660ba4ae29ac": {
+      "activePromptDepth": 93,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/vidgen",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_123711-76354-1.log"
+        ],
+        "capturedAt": 1793944921.7323198,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/vidgen"
+      },
+      "pid": 76362,
+      "pidStartMicroseconds": 161059,
+      "pidStartSeconds": 1793943431,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "1e10683e-8b77-4ba2-9220-660ba4ae29ac",
+      "startedAt": 1793944218.8574839,
+      "surfaceId": "9871009A-45DD-4D3F-BBB4-27D80EC5BAB6",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/1e10683e-8b77-4ba2-9220-660ba4ae29ac/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793944921.7345319,
+      "workspaceId": "0E69CD88-6B5A-4F36-86FF-A09D25AAB0BD"
+    },
+    "22a4bc3a-97f6-434e-b17d-e9cad9a22c96": {
+      "activePromptDepth": 212,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/1craft-browseruse",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy"
+        ],
+        "capturedAt": 1793942933.1029081,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/1craft-browseruse"
+      },
+      "pid": 75106,
+      "pidStartMicroseconds": 584740,
+      "pidStartSeconds": 1793775878,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "22a4bc3a-97f6-434e-b17d-e9cad9a22c96",
+      "startedAt": 1793775964.565668,
+      "surfaceId": "533816EA-78ED-432A-8D1A-BE4977A0ABBB",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/22a4bc3a-97f6-434e-b17d-e9cad9a22c96/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793942933.117547,
+      "workspaceId": "E96518EA-CAAF-4E77-AD27-BBBAD7D6609E"
+    },
+    "24eaaf9a-1220-4c9f-be33-972078a7f416": {
+      "activePromptDepth": 35,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/slack-mcp",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_102251-4704-1.log"
+        ],
+        "capturedAt": 1794455011.565085,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/slack-mcp"
+      },
+      "pid": 4706,
+      "pidStartMicroseconds": 510941,
+      "pidStartSeconds": 1794453771,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "24eaaf9a-1220-4c9f-be33-972078a7f416",
+      "startedAt": 1794453811.737986,
+      "surfaceId": "62C02B2B-0628-4580-9728-D6E20B3C96CB",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/24eaaf9a-1220-4c9f-be33-972078a7f416/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794455011.577755,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "269e8adb-dd8d-43c3-92b1-6e67fc1ffe8d": {
+      "activePromptDepth": 38,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_102756-6233-1.log"
+        ],
+        "capturedAt": 1794462598.379476,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 6236,
+      "pidStartMicroseconds": 421201,
+      "pidStartSeconds": 1794454076,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "269e8adb-dd8d-43c3-92b1-6e67fc1ffe8d",
+      "startedAt": 1794461982.4084868,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/269e8adb-dd8d-43c3-92b1-6e67fc1ffe8d/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794462598.380527,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "2da730ce-ddae-4897-a349-d6ea403ad0a4": {
+      "activePromptDepth": 25,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/1craft-bot",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_125631-94231-1.log"
+        ],
+        "capturedAt": 1793944920.71086,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/1craft-bot"
+      },
+      "pid": 94233,
+      "pidStartMicroseconds": 663352,
+      "pidStartSeconds": 1793944591,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "2da730ce-ddae-4897-a349-d6ea403ad0a4",
+      "startedAt": 1793944728.5915132,
+      "surfaceId": "2D33C47C-EF7E-4AFC-AD99-6817FD2A050B",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/2da730ce-ddae-4897-a349-d6ea403ad0a4/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793944920.712749,
+      "workspaceId": "E96518EA-CAAF-4E77-AD27-BBBAD7D6609E"
+    },
+    "390b11bb-b407-403f-9ee2-98d2e5fa37e5": {
+      "activePromptDepth": 62,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_151941-6233-2.log"
+        ],
+        "capturedAt": 1794475463.297872,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 20618,
+      "pidStartMicroseconds": 245309,
+      "pidStartSeconds": 1794471581,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "390b11bb-b407-403f-9ee2-98d2e5fa37e5",
+      "startedAt": 1794474981.116057,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/390b11bb-b407-403f-9ee2-98d2e5fa37e5/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794475463.304822,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "3a927798-8f67-4043-9df7-cc53598ba15b": {
+      "activePromptDepth": 53,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794461633.7180672,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "3a927798-8f67-4043-9df7-cc53598ba15b",
+      "startedAt": 1794460753.809583,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/3a927798-8f67-4043-9df7-cc53598ba15b/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794461633.719146,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "3b8ad85f-5151-41d1-8f66-d6cc9c83c9e6": {
+      "activePromptDepth": 106,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-b-workspace",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261110_151120-72853-1.log"
+        ],
+        "capturedAt": 1794304437.0544,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-b-workspace"
+      },
+      "pid": 72861,
+      "pidStartMicroseconds": 966546,
+      "pidStartSeconds": 1794298280,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "3b8ad85f-5151-41d1-8f66-d6cc9c83c9e6",
+      "startedAt": 1794298304.359068,
+      "surfaceId": "8A6FA928-98ED-4664-AABF-A13A529AFDAA",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/3b8ad85f-5151-41d1-8f66-d6cc9c83c9e6/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794304437.067068,
+      "workspaceId": "5A63DADA-673B-457F-8534-D9DEF9E705C0"
+    },
+    "3bf48e98-458e-4183-9b29-188f9198c8a8": {
+      "activePromptDepth": 91,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/vidgen",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_123711-76354-1.log"
+        ],
+        "capturedAt": 1793949701.991839,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/vidgen"
+      },
+      "pid": 76362,
+      "pidStartMicroseconds": 161059,
+      "pidStartSeconds": 1793943431,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "3bf48e98-458e-4183-9b29-188f9198c8a8",
+      "startedAt": 1793948997.4274411,
+      "surfaceId": "9871009A-45DD-4D3F-BBB4-27D80EC5BAB6",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/3bf48e98-458e-4183-9b29-188f9198c8a8/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793949701.993433,
+      "workspaceId": "0E69CD88-6B5A-4F36-86FF-A09D25AAB0BD"
+    },
+    "40e2d519-74df-4a3d-bca1-92afbe03eecf": {
+      "activePromptDepth": 11,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/1craft-bot",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_125631-94231-1.log"
+        ],
+        "capturedAt": 1793944835.739438,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/1craft-bot"
+      },
+      "pid": 94233,
+      "pidStartMicroseconds": 663352,
+      "pidStartSeconds": 1793944591,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "40e2d519-74df-4a3d-bca1-92afbe03eecf",
+      "startedAt": 1793944723.558454,
+      "surfaceId": "2D33C47C-EF7E-4AFC-AD99-6817FD2A050B",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/40e2d519-74df-4a3d-bca1-92afbe03eecf/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793944835.740984,
+      "workspaceId": "E96518EA-CAAF-4E77-AD27-BBBAD7D6609E"
+    },
+    "41d69caf-55f2-4737-a479-b66a51e0b174": {
+      "activePromptDepth": 40,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/1craft-bot",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_125631-94231-1.log"
+        ],
+        "capturedAt": 1793946272.176029,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/1craft-bot"
+      },
+      "pid": 94233,
+      "pidStartMicroseconds": 663352,
+      "pidStartSeconds": 1793944591,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "41d69caf-55f2-4737-a479-b66a51e0b174",
+      "startedAt": 1793944605.740596,
+      "surfaceId": "2D33C47C-EF7E-4AFC-AD99-6817FD2A050B",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/41d69caf-55f2-4737-a479-b66a51e0b174/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793946272.185111,
+      "workspaceId": "E96518EA-CAAF-4E77-AD27-BBBAD7D6609E"
+    },
+    "4b3afa60-1d06-4e99-8c30-0b183fab883c": {
+      "activePromptDepth": 95,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794462077.439067,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "4b3afa60-1d06-4e99-8c30-0b183fab883c",
+      "startedAt": 1794460778.557417,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/4b3afa60-1d06-4e99-8c30-0b183fab883c/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794462077.4405031,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "4ce98ec1-b96a-41ac-9b77-00701ceaeecb": {
+      "activePromptDepth": 69,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_102756-6233-1.log"
+        ],
+        "capturedAt": 1794463076.3590698,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 6236,
+      "pidStartMicroseconds": 421201,
+      "pidStartSeconds": 1794454076,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "4ce98ec1-b96a-41ac-9b77-00701ceaeecb",
+      "startedAt": 1794461959.175869,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/4ce98ec1-b96a-41ac-9b77-00701ceaeecb/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794463076.3677669,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "5168dabb-c21f-4437-8266-4e81c5f1bb5a": {
+      "activePromptDepth": 70,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794461656.266708,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "5168dabb-c21f-4437-8266-4e81c5f1bb5a",
+      "startedAt": 1794460768.324547,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/5168dabb-c21f-4437-8266-4e81c5f1bb5a/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794461656.268217,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "5f6760cc-4aba-4a74-8809-6a28682dc613": {
+      "activePromptDepth": 15,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794481743.7273378,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "5f6760cc-4aba-4a74-8809-6a28682dc613",
+      "startedAt": 1794481690.0508552,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/5f6760cc-4aba-4a74-8809-6a28682dc613/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794481743.7284951,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "6165ef57-88f7-4664-88ab-7a5c052e8122": {
+      "activePromptDepth": 11,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794475257.312313,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "6165ef57-88f7-4664-88ab-7a5c052e8122",
+      "startedAt": 1794475050.805657,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/6165ef57-88f7-4664-88ab-7a5c052e8122/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794475257.3135,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "76de4478-6c00-47d0-8d5c-c291815a05cd": {
+      "activePromptDepth": 30,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_151941-6233-2.log"
+        ],
+        "capturedAt": 1794479082.92315,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 20618,
+      "pidStartMicroseconds": 245309,
+      "pidStartSeconds": 1794471581,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "76de4478-6c00-47d0-8d5c-c291815a05cd",
+      "startedAt": 1794478831.3947,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/76de4478-6c00-47d0-8d5c-c291815a05cd/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794479082.934886,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "80596647-9963-4f34-9f8a-dcdf69393d6e": {
+      "activePromptDepth": 68,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_151941-6233-2.log"
+        ],
+        "capturedAt": 1794482153.911897,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 20618,
+      "pidStartMicroseconds": 245309,
+      "pidStartSeconds": 1794471581,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "80596647-9963-4f34-9f8a-dcdf69393d6e",
+      "startedAt": 1794481643.771759,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/80596647-9963-4f34-9f8a-dcdf69393d6e/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794482153.923894,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "94a88c35-5793-4085-9b88-3860a0c5d3fb": {
+      "activePromptDepth": 111,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_102756-6233-1.log"
+        ],
+        "capturedAt": 1794460989.7946758,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 6236,
+      "pidStartMicroseconds": 421201,
+      "pidStartSeconds": 1794454076,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "94a88c35-5793-4085-9b88-3860a0c5d3fb",
+      "startedAt": 1794458910.364248,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/94a88c35-5793-4085-9b88-3860a0c5d3fb/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794460989.7957501,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "99ee3710-0c33-40fb-a36c-1f6553e0b883": {
+      "activePromptDepth": 69,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/1craft-computeruse",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy"
+        ],
+        "capturedAt": 1793943025.182023,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/1craft-computeruse"
+      },
+      "pid": 13423,
+      "pidStartMicroseconds": 715355,
+      "pidStartSeconds": 1793784557,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "99ee3710-0c33-40fb-a36c-1f6553e0b883",
+      "startedAt": 1793784613.804713,
+      "surfaceId": "60A1B597-AD94-4CF2-B5E9-7E2B54B18AD1",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/99ee3710-0c33-40fb-a36c-1f6553e0b883/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793943025.182836,
+      "workspaceId": "E96518EA-CAAF-4E77-AD27-BBBAD7D6609E"
+    },
+    "9b31a6e9-138d-4592-ae71-604601b2f7e6": {
+      "activePromptDepth": 11,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794479675.480826,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "9b31a6e9-138d-4592-ae71-604601b2f7e6",
+      "startedAt": 1794479561.900278,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/9b31a6e9-138d-4592-ae71-604601b2f7e6/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794479675.482037,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "9b42fd57-913e-42fd-b2a1-e0b387d2461d": {
+      "activePromptDepth": 134,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/vidgen",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_123711-76354-1.log"
+        ],
+        "capturedAt": 1793947518.735744,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/vidgen"
+      },
+      "pid": 76362,
+      "pidStartMicroseconds": 161059,
+      "pidStartSeconds": 1793943431,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "9b42fd57-913e-42fd-b2a1-e0b387d2461d",
+      "startedAt": 1793946180.6117911,
+      "surfaceId": "9871009A-45DD-4D3F-BBB4-27D80EC5BAB6",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/9b42fd57-913e-42fd-b2a1-e0b387d2461d/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793947518.737329,
+      "workspaceId": "0E69CD88-6B5A-4F36-86FF-A09D25AAB0BD"
+    },
+    "a9e8fad6-9c46-4c33-9a86-3c06f5daa2a3": {
+      "activePromptDepth": 20,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-b-workspace",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy"
+        ],
+        "capturedAt": 1793951645.229131,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-b-workspace"
+      },
+      "pid": 71155,
+      "pidStartMicroseconds": 954402,
+      "pidStartSeconds": 1793942939,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "a9e8fad6-9c46-4c33-9a86-3c06f5daa2a3",
+      "startedAt": 1793951534.0054631,
+      "surfaceId": "8A6FA928-98ED-4664-AABF-A13A529AFDAA",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/a9e8fad6-9c46-4c33-9a86-3c06f5daa2a3/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793951645.2302341,
+      "workspaceId": "5A63DADA-673B-457F-8534-D9DEF9E705C0"
+    },
+    "b0d9d80a-fa08-48a7-b47b-fc836a312caf": {
+      "activePromptDepth": 31,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/cmux-mobile",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_102756-6233-1.log"
+        ],
+        "capturedAt": 1794458254.998523,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/cmux-mobile"
+      },
+      "pid": 6236,
+      "pidStartMicroseconds": 421201,
+      "pidStartSeconds": 1794454076,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "b0d9d80a-fa08-48a7-b47b-fc836a312caf",
+      "startedAt": 1794456374.5626311,
+      "surfaceId": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/b0d9d80a-fa08-48a7-b47b-fc836a312caf/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794458255.000771,
+      "workspaceId": "1580694D-A6F5-40C2-94AD-E22E60A7855E"
+    },
+    "b3c17153-385f-4f4e-8454-78dc7ed7999b": {
+      "activePromptDepth": 55,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_123302-74217-1.log"
+        ],
+        "capturedAt": 1793943828.674231,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer"
+      },
+      "pid": 74218,
+      "pidStartMicroseconds": 653744,
+      "pidStartSeconds": 1793943182,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "b3c17153-385f-4f4e-8454-78dc7ed7999b",
+      "startedAt": 1793943198.3718991,
+      "surfaceId": "96B4C23E-FB89-4C30-B180-EEA812CD55B2",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/b3c17153-385f-4f4e-8454-78dc7ed7999b/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793943828.687273,
+      "workspaceId": "C414661C-6109-408E-AACB-CFF3B6F605F4"
+    },
+    "b3ff7568-e236-4607-915e-349852eb089e": {
+      "activePromptDepth": 262,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-b-workspace/repos/project-b-app",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_101516-1436-1.log"
+        ],
+        "capturedAt": 1794479619.384406,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-b-workspace/repos/project-b-app"
+      },
+      "pid": 1437,
+      "pidStartMicroseconds": 699021,
+      "pidStartSeconds": 1794453316,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "b3ff7568-e236-4607-915e-349852eb089e",
+      "startedAt": 1794453349.1107411,
+      "surfaceId": "62D2D5EF-C0F4-4FFA-BBC7-35BBE6D1B568",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/b3ff7568-e236-4607-915e-349852eb089e/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794479619.392025,
+      "workspaceId": "5A63DADA-673B-457F-8534-D9DEF9E705C0"
+    },
+    "b7f03d52-160b-40b3-b74c-8b4528bea2da": {
+      "agentLifecycle": "needsInput",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "Stop",
+      "lastBody": "generating and executing: UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-high on the server",
+      "lastEmittedNotificationAt": 1794470323.66975,
+      "lastEmittedNotificationFingerprint": "error:edff4e72c5daed54",
+      "lastNotificationStatus": "error",
+      "lastSubtitle": "Error",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794470323.6458821,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "recentEmittedNotificationFingerprints": {
+        "error:edff4e72c5daed54": 1794470323.66975
+      },
+      "runtimeStatus": "error",
+      "sessionId": "b7f03d52-160b-40b3-b74c-8b4528bea2da",
+      "startedAt": 1794470167.072315,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/b7f03d52-160b-40b3-b74c-8b4528bea2da/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": true,
+      "updatedAt": 1794470323.66975,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "c013daf5-f65f-4f62-bbf3-70574e394f29": {
+      "activePromptDepth": 1321,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-b-workspace",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy"
+        ],
+        "capturedAt": 1793960210.964429,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-b-workspace"
+      },
+      "pid": 71155,
+      "pidStartMicroseconds": 954402,
+      "pidStartSeconds": 1793942939,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "c013daf5-f65f-4f62-bbf3-70574e394f29",
+      "startedAt": 1793943398.888448,
+      "surfaceId": "8A6FA928-98ED-4664-AABF-A13A529AFDAA",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/c013daf5-f65f-4f62-bbf3-70574e394f29/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793960210.978235,
+      "workspaceId": "5A63DADA-673B-457F-8534-D9DEF9E705C0"
+    },
+    "cbacfc59-8ccd-4466-b554-390ade3f1d6e": {
+      "activePromptDepth": 98,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794465507.200768,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "cbacfc59-8ccd-4466-b554-390ade3f1d6e",
+      "startedAt": 1794463944.635545,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/cbacfc59-8ccd-4466-b554-390ade3f1d6e/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794465507.216175,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "d329a231-0890-4b69-8dc7-0647c5d5727d": {
+      "activePromptDepth": 550,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/vidgen",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_151249-10339-1.log"
+        ],
+        "capturedAt": 1793956364.592098,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/vidgen"
+      },
+      "pid": 76362,
+      "pidStartMicroseconds": 161059,
+      "pidStartSeconds": 1793943431,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "d329a231-0890-4b69-8dc7-0647c5d5727d",
+      "startedAt": 1793943447.014978,
+      "surfaceId": "9871009A-45DD-4D3F-BBB4-27D80EC5BAB6",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/d329a231-0890-4b69-8dc7-0647c5d5727d/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793956364.602838,
+      "workspaceId": "0E69CD88-6B5A-4F36-86FF-A09D25AAB0BD"
+    },
+    "da007cce-0817-4858-8d6b-de231f9a127f": {
+      "activePromptDepth": 71,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794462339.6177301,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "da007cce-0817-4858-8d6b-de231f9a127f",
+      "startedAt": 1794460802.2800012,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/da007cce-0817-4858-8d6b-de231f9a127f/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794462339.620201,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "dffdb6b8-41ac-4846-8979-71f3e7081fa9": {
+      "activePromptDepth": 310,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794482436.154509,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "dffdb6b8-41ac-4846-8979-71f3e7081fa9",
+      "startedAt": 1794460284.562625,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/dffdb6b8-41ac-4846-8979-71f3e7081fa9/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794482436.15568,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "e0cc5d67-99a7-4aea-b0a2-757fef82cfde": {
+      "activePromptDepth": 76,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794465188.1103458,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "e0cc5d67-99a7-4aea-b0a2-757fef82cfde",
+      "startedAt": 1794463870.5838299,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/e0cc5d67-99a7-4aea-b0a2-757fef82cfde/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794465188.1113,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "e3fbe166-a923-4a29-bc16-8db5c400d273": {
+      "activePromptDepth": 29,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794481619.722114,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "e3fbe166-a923-4a29-bc16-8db5c400d273",
+      "startedAt": 1794480045.314744,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/e3fbe166-a923-4a29-bc16-8db5c400d273/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794481619.723639,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "e48f09a7-a0f8-4387-9842-f4bbaece280b": {
+      "activePromptDepth": 74,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794465157.237364,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "e48f09a7-a0f8-4387-9842-f4bbaece280b",
+      "startedAt": 1794463901.51784,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/e48f09a7-a0f8-4387-9842-f4bbaece280b/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794465157.238332,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "e4bf4cf8-d616-473d-ba9e-99d22d0d8a85": {
+      "activePromptDepth": 1,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794470420.519167,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "e4bf4cf8-d616-473d-ba9e-99d22d0d8a85",
+      "startedAt": 1794470037.314372,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/e4bf4cf8-d616-473d-ba9e-99d22d0d8a85/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794470420.5203161,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "e62d8116-c009-497d-b7f0-737e34a36d7c": {
+      "activePromptDepth": 16,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/vidgen",
+      "hookEventName": "UserPromptSubmit",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_123711-76354-1.log"
+        ],
+        "capturedAt": 1793945736.168322,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/vidgen"
+      },
+      "pid": 76362,
+      "pidStartMicroseconds": 161059,
+      "pidStartSeconds": 1793943431,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "e62d8116-c009-497d-b7f0-737e34a36d7c",
+      "startedAt": 1793945522.4494162,
+      "surfaceId": "9871009A-45DD-4D3F-BBB4-27D80EC5BAB6",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/e62d8116-c009-497d-b7f0-737e34a36d7c/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793945736.169559,
+      "workspaceId": "0E69CD88-6B5A-4F36-86FF-A09D25AAB0BD"
+    },
+    "eb62a75a-a87b-48d7-afc4-c5bfef365bfd": {
+      "activePromptDepth": 91,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-c",
+      "hookEventName": "PreInvocation",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261112_120902-37252-1.log"
+        ],
+        "capturedAt": 1794465303.514287,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/project-c"
+      },
+      "pid": 37255,
+      "pidStartMicroseconds": 121039,
+      "pidStartSeconds": 1794460142,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "eb62a75a-a87b-48d7-afc4-c5bfef365bfd",
+      "startedAt": 1794463954.820467,
+      "surfaceId": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/eb62a75a-a87b-48d7-afc4-c5bfef365bfd/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1794465303.5152478,
+      "workspaceId": "D810944A-83F2-4662-BC2F-09719579443B"
+    },
+    "f839c478-541e-425c-967f-1ee85fcf77e0": {
+      "activePromptDepth": 95,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/vidgen",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy",
+          "--log-file",
+          "/Users/developer/.gemini/antigravity-cli/log/agys-run-20261106_143656-76749-1.log"
+        ],
+        "capturedAt": 1793951891.0342221,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "environment",
+        "workingDirectory": "/Users/developer/projects/vidgen"
+      },
+      "pid": 76752,
+      "pidStartMicroseconds": 922623,
+      "pidStartSeconds": 1793950616,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "f839c478-541e-425c-967f-1ee85fcf77e0",
+      "startedAt": 1793950642.8956451,
+      "surfaceId": "C45E347B-F1AD-428C-B9A0-7B3FE7240C94",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/f839c478-541e-425c-967f-1ee85fcf77e0/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793951891.0513859,
+      "workspaceId": "0E69CD88-6B5A-4F36-86FF-A09D25AAB0BD"
+    },
+    "fd391771-3b07-4ab4-b1bc-57f021a31344": {
+      "activePromptDepth": 194,
+      "agentLifecycle": "running",
+      "cwd": "/Users/developer/projects/project-a",
+      "hookEventName": "Stop",
+      "launchCommand": {
+        "arguments": [
+          "/opt/homebrew/bin/agy"
+        ],
+        "capturedAt": 1793946368.334872,
+        "executablePath": "/opt/homebrew/bin/agy",
+        "launcher": "antigravity",
+        "source": "process",
+        "workingDirectory": "/Users/developer/projects/project-a"
+      },
+      "pid": 15090,
+      "pidStartMicroseconds": 480596,
+      "pidStartSeconds": 1793766832,
+      "priorProcessGenerations": [],
+      "runtimeStatus": "running",
+      "sessionId": "fd391771-3b07-4ab4-b1bc-57f021a31344",
+      "startedAt": 1793776894.918781,
+      "surfaceId": "C1FE3651-3AD3-4650-98B8-580923077B3B",
+      "transcriptPath": "/Users/developer/.gemini/antigravity-cli/brain/fd391771-3b07-4ab4-b1bc-57f021a31344/.system_generated/logs/transcript_full.jsonl",
+      "turnSettled": false,
+      "updatedAt": 1793946368.3492432,
+      "workspaceId": "958F8A5E-AE2C-4412-9CB2-76F60E216744"
+    }
+  },
+  "version": 1
+}

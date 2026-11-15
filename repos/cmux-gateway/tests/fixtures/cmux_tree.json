@@ -1,0 +1,456 @@
+{
+  "active": {
+    "is_browser_surface": false,
+    "pane_id": "1EBF2C2E-06CF-46C1-8F75-1B94E62A33FE",
+    "pane_ref": "pane:1000080004",
+    "surface_id": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+    "surface_ref": "surface:1000080009",
+    "surface_type": "terminal",
+    "tab_id": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+    "tab_ref": "tab:1000080009",
+    "window_id": "0F6B4D1A-5370-4955-9769-37BD033DE900",
+    "window_ref": "window:1000080000",
+    "workspace_id": "1580694D-A6F5-40C2-94AD-E22E60A7855E",
+    "workspace_ref": "workspace:1000080004"
+  },
+  "caller": {
+    "is_browser_surface": false,
+    "pane_id": "1EBF2C2E-06CF-46C1-8F75-1B94E62A33FE",
+    "pane_ref": "pane:1000080004",
+    "surface_id": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+    "surface_ref": "surface:1000080009",
+    "surface_type": "terminal",
+    "tab_id": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+    "tab_ref": "tab:1000080009",
+    "window_id": "0F6B4D1A-5370-4955-9769-37BD033DE900",
+    "window_ref": "window:1000080000",
+    "workspace_id": "1580694D-A6F5-40C2-94AD-E22E60A7855E",
+    "workspace_ref": "workspace:1000080004"
+  },
+  "windows": [
+    {
+      "active": true,
+      "current": true,
+      "id": "0F6B4D1A-5370-4955-9769-37BD033DE900",
+      "index": 0,
+      "key": true,
+      "ref": "window:1000080000",
+      "selected_workspace_id": "1580694D-A6F5-40C2-94AD-E22E60A7855E",
+      "selected_workspace_ref": "workspace:1000080004",
+      "visible": true,
+      "workspace_count": 5,
+      "workspaces": [
+        {
+          "active": false,
+          "description": null,
+          "id": "4EA5F151-84D5-41E3-A92B-D9A082DD1EBC",
+          "index": 0,
+          "layout": {
+            "pane": {
+              "id": "4A038CA7-1037-4A5B-97E2-D7928CA0E218",
+              "ref": "pane:1000080003"
+            }
+          },
+          "panes": [
+            {
+              "active": false,
+              "focused": true,
+              "id": "4A038CA7-1037-4A5B-97E2-D7928CA0E218",
+              "index": 0,
+              "ref": "pane:1000080003",
+              "selected_surface_id": "4BEC6107-D94C-4DDE-93AF-3835F68B0E93",
+              "selected_surface_ref": "surface:1000080008",
+              "surface_count": 3,
+              "surface_ids": [
+                "4BEC6107-D94C-4DDE-93AF-3835F68B0E93",
+                "8EC2FDFD-5327-4EBC-97CC-ECDB31F1C0CD",
+                "46347564-6BCB-420E-BF5D-48BF3DD29CF8"
+              ],
+              "surface_refs": [
+                "surface:1000080008",
+                "surface:1000080033",
+                "surface:1000080031"
+              ],
+              "surfaces": [
+                {
+                  "active": false,
+                  "focused": true,
+                  "here": false,
+                  "id": "4BEC6107-D94C-4DDE-93AF-3835F68B0E93",
+                  "index": 0,
+                  "index_in_pane": 0,
+                  "pane_id": "4A038CA7-1037-4A5B-97E2-D7928CA0E218",
+                  "pane_ref": "pane:1000080003",
+                  "ref": "surface:1000080008",
+                  "render_health": "not_started",
+                  "selected": true,
+                  "selected_in_pane": true,
+                  "title": "Sync notes to hub",
+                  "tty": "ttys006",
+                  "type": "terminal",
+                  "url": null
+                },
+                {
+                  "active": false,
+                  "focused": false,
+                  "here": false,
+                  "id": "8EC2FDFD-5327-4EBC-97CC-ECDB31F1C0CD",
+                  "index": 1,
+                  "index_in_pane": 1,
+                  "pane_id": "4A038CA7-1037-4A5B-97E2-D7928CA0E218",
+                  "pane_ref": "pane:1000080003",
+                  "ref": "surface:1000080033",
+                  "render_health": null,
+                  "selected": false,
+                  "selected_in_pane": false,
+                  "title": "README.md",
+                  "tty": null,
+                  "type": "markdown",
+                  "url": null
+                },
+                {
+                  "active": false,
+                  "focused": false,
+                  "here": false,
+                  "id": "46347564-6BCB-420E-BF5D-48BF3DD29CF8",
+                  "index": 2,
+                  "index_in_pane": 2,
+                  "pane_id": "4A038CA7-1037-4A5B-97E2-D7928CA0E218",
+                  "pane_ref": "pane:1000080003",
+                  "ref": "surface:1000080031",
+                  "render_health": null,
+                  "selected": false,
+                  "selected_in_pane": false,
+                  "title": "AGENTS.md",
+                  "tty": null,
+                  "type": "markdown",
+                  "url": null
+                }
+              ]
+            }
+          ],
+          "pinned": true,
+          "ref": "workspace:1000080003",
+          "selected": false,
+          "title": "Project A workspace"
+        },
+        {
+          "active": false,
+          "description": null,
+          "id": "D810944A-83F2-4662-BC2F-09719579443B",
+          "index": 1,
+          "layout": {
+            "pane": {
+              "id": "BE8B0E34-6798-456E-A43A-558AA5637063",
+              "ref": "pane:1000080006"
+            }
+          },
+          "panes": [
+            {
+              "active": false,
+              "focused": true,
+              "id": "BE8B0E34-6798-456E-A43A-558AA5637063",
+              "index": 0,
+              "ref": "pane:1000080006",
+              "selected_surface_id": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+              "selected_surface_ref": "surface:1000080018",
+              "surface_count": 1,
+              "surface_ids": [
+                "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39"
+              ],
+              "surface_refs": [
+                "surface:1000080018"
+              ],
+              "surfaces": [
+                {
+                  "active": false,
+                  "focused": true,
+                  "here": false,
+                  "id": "CCF28575-F5B7-4C6F-B1DE-89C47F2FAA39",
+                  "index": 0,
+                  "index_in_pane": 0,
+                  "pane_id": "BE8B0E34-6798-456E-A43A-558AA5637063",
+                  "pane_ref": "pane:1000080006",
+                  "ref": "surface:1000080018",
+                  "render_health": "not_started",
+                  "selected": true,
+                  "selected_in_pane": true,
+                  "title": "Adding Custom Rules For Repo",
+                  "tty": "ttys001",
+                  "type": "terminal",
+                  "url": null
+                }
+              ]
+            }
+          ],
+          "pinned": true,
+          "ref": "workspace:1000080005",
+          "selected": false,
+          "title": "Project C workspace"
+        },
+        {
+          "active": false,
+          "description": null,
+          "id": "5A63DADA-673B-457F-8534-D9DEF9E705C0",
+          "index": 2,
+          "layout": {
+            "pane": {
+              "id": "8B0ACC42-BBC9-4AA4-B996-8BB1CB781FE5",
+              "ref": "pane:1000080000"
+            }
+          },
+          "panes": [
+            {
+              "active": false,
+              "focused": true,
+              "id": "8B0ACC42-BBC9-4AA4-B996-8BB1CB781FE5",
+              "index": 0,
+              "ref": "pane:1000080000",
+              "selected_surface_id": "62D2D5EF-C0F4-4FFA-BBC7-35BBE6D1B568",
+              "selected_surface_ref": "surface:1000080006",
+              "surface_count": 2,
+              "surface_ids": [
+                "62D2D5EF-C0F4-4FFA-BBC7-35BBE6D1B568",
+                "4A5F2D83-7183-4F84-8954-90F29DA7C1D0"
+              ],
+              "surface_refs": [
+                "surface:1000080006",
+                "surface:1000080029"
+              ],
+              "surfaces": [
+                {
+                  "active": false,
+                  "focused": true,
+                  "here": false,
+                  "id": "62D2D5EF-C0F4-4FFA-BBC7-35BBE6D1B568",
+                  "index": 0,
+                  "index_in_pane": 0,
+                  "pane_id": "8B0ACC42-BBC9-4AA4-B996-8BB1CB781FE5",
+                  "pane_ref": "pane:1000080000",
+                  "ref": "surface:1000080006",
+                  "render_health": "not_started",
+                  "selected": true,
+                  "selected_in_pane": true,
+                  "title": "Git Repository Status Check",
+                  "tty": "ttys002",
+                  "type": "terminal",
+                  "url": null
+                },
+                {
+                  "active": false,
+                  "focused": false,
+                  "here": false,
+                  "id": "4A5F2D83-7183-4F84-8954-90F29DA7C1D0",
+                  "index": 1,
+                  "index_in_pane": 1,
+                  "pane_id": "8B0ACC42-BBC9-4AA4-B996-8BB1CB781FE5",
+                  "pane_ref": "pane:1000080000",
+                  "ref": "surface:1000080029",
+                  "render_health": "not_started",
+                  "selected": false,
+                  "selected_in_pane": false,
+                  "title": "lazygit",
+                  "tty": "ttys013",
+                  "type": "terminal",
+                  "url": null
+                }
+              ]
+            }
+          ],
+          "pinned": true,
+          "ref": "workspace:1000080000",
+          "selected": false,
+          "title": "Project B"
+        },
+        {
+          "active": true,
+          "description": null,
+          "id": "1580694D-A6F5-40C2-94AD-E22E60A7855E",
+          "index": 3,
+          "layout": {
+            "pane": {
+              "id": "1EBF2C2E-06CF-46C1-8F75-1B94E62A33FE",
+              "ref": "pane:1000080004"
+            }
+          },
+          "panes": [
+            {
+              "active": true,
+              "focused": true,
+              "id": "1EBF2C2E-06CF-46C1-8F75-1B94E62A33FE",
+              "index": 0,
+              "ref": "pane:1000080004",
+              "selected_surface_id": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+              "selected_surface_ref": "surface:1000080009",
+              "surface_count": 3,
+              "surface_ids": [
+                "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+                "AE0E4B28-6CC3-4817-A76E-B3AEFBDC0668",
+                "276843F0-9777-495A-9AE9-BF8F9BA178EC"
+              ],
+              "surface_refs": [
+                "surface:1000080009",
+                "surface:1000080038",
+                "surface:1000080036"
+              ],
+              "surfaces": [
+                {
+                  "active": true,
+                  "focused": true,
+                  "here": true,
+                  "id": "3D9A33E7-473D-46DF-BEF5-3DD2019E2D57",
+                  "index": 0,
+                  "index_in_pane": 0,
+                  "pane_id": "1EBF2C2E-06CF-46C1-8F75-1B94E62A33FE",
+                  "pane_ref": "pane:1000080004",
+                  "ref": "surface:1000080009",
+                  "render_health": "rendering",
+                  "selected": true,
+                  "selected_in_pane": true,
+                  "title": "Building Mobile App For Cmux",
+                  "tty": "ttys007",
+                  "type": "terminal",
+                  "url": null
+                },
+                {
+                  "active": false,
+                  "focused": false,
+                  "here": false,
+                  "id": "AE0E4B28-6CC3-4817-A76E-B3AEFBDC0668",
+                  "index": 1,
+                  "index_in_pane": 1,
+                  "pane_id": "1EBF2C2E-06CF-46C1-8F75-1B94E62A33FE",
+                  "pane_ref": "pane:1000080004",
+                  "ref": "surface:1000080038",
+                  "render_health": "not_started",
+                  "selected": false,
+                  "selected_in_pane": false,
+                  "title": "…/projects/cmux-mobile",
+                  "tty": "ttys008",
+                  "type": "terminal",
+                  "url": null
+                },
+                {
+                  "active": false,
+                  "focused": false,
+                  "here": false,
+                  "id": "276843F0-9777-495A-9AE9-BF8F9BA178EC",
+                  "index": 2,
+                  "index_in_pane": 2,
+                  "pane_id": "1EBF2C2E-06CF-46C1-8F75-1B94E62A33FE",
+                  "pane_ref": "pane:1000080004",
+                  "ref": "surface:1000080036",
+                  "render_health": null,
+                  "selected": false,
+                  "selected_in_pane": false,
+                  "title": "roadmap_and_tasks.md",
+                  "tty": null,
+                  "type": "markdown",
+                  "url": null
+                }
+              ]
+            }
+          ],
+          "pinned": true,
+          "ref": "workspace:1000080004",
+          "selected": true,
+          "title": "Tools"
+        },
+        {
+          "active": false,
+          "description": null,
+          "id": "C414661C-6109-408E-AACB-CFF3B6F605F4",
+          "index": 4,
+          "layout": {
+            "pane": {
+              "id": "EE53DBF7-596B-42E2-ADDC-9AF20E7A8307",
+              "ref": "pane:1000080002"
+            }
+          },
+          "panes": [
+            {
+              "active": false,
+              "focused": true,
+              "id": "EE53DBF7-596B-42E2-ADDC-9AF20E7A8307",
+              "index": 0,
+              "ref": "pane:1000080002",
+              "selected_surface_id": "89BBADDE-B4F4-40F4-92C6-8786D76BAA47",
+              "selected_surface_ref": "surface:1000080005",
+              "surface_count": 3,
+              "surface_ids": [
+                "37309AE2-31D6-4ED2-A8CA-53CEB7164E86",
+                "CF8DA5F6-C31F-4EB3-9BD5-6069FE8063EF",
+                "89BBADDE-B4F4-40F4-92C6-8786D76BAA47"
+              ],
+              "surface_refs": [
+                "surface:1000080004",
+                "surface:1000080024",
+                "surface:1000080005"
+              ],
+              "surfaces": [
+                {
+                  "active": false,
+                  "focused": false,
+                  "here": false,
+                  "id": "37309AE2-31D6-4ED2-A8CA-53CEB7164E86",
+                  "index": 0,
+                  "index_in_pane": 0,
+                  "pane_id": "EE53DBF7-596B-42E2-ADDC-9AF20E7A8307",
+                  "pane_ref": "pane:1000080002",
+                  "ref": "surface:1000080004",
+                  "render_health": "not_started",
+                  "selected": false,
+                  "selected_in_pane": false,
+                  "title": "~",
+                  "tty": "ttys005",
+                  "type": "terminal",
+                  "url": null
+                },
+                {
+                  "active": false,
+                  "focused": false,
+                  "here": false,
+                  "id": "CF8DA5F6-C31F-4EB3-9BD5-6069FE8063EF",
+                  "index": 1,
+                  "index_in_pane": 1,
+                  "pane_id": "EE53DBF7-596B-42E2-ADDC-9AF20E7A8307",
+                  "pane_ref": "pane:1000080002",
+                  "ref": "surface:1000080024",
+                  "render_health": "not_started",
+                  "selected": false,
+                  "selected_in_pane": false,
+                  "title": "caffeinate -d",
+                  "tty": "ttys011",
+                  "type": "terminal",
+                  "url": null
+                },
+                {
+                  "active": false,
+                  "focused": true,
+                  "here": false,
+                  "id": "89BBADDE-B4F4-40F4-92C6-8786D76BAA47",
+                  "index": 2,
+                  "index_in_pane": 2,
+                  "pane_id": "EE53DBF7-596B-42E2-ADDC-9AF20E7A8307",
+                  "pane_ref": "pane:1000080002",
+                  "ref": "surface:1000080005",
+                  "render_health": "not_started",
+                  "selected": true,
+                  "selected_in_pane": true,
+                  "title": "bunx codeburn",
+                  "tty": "ttys004",
+                  "type": "terminal",
+                  "url": null
+                }
+              ]
+            }
+          ],
+          "pinned": true,
+          "ref": "workspace:1000080002",
+          "selected": false,
+          "title": "Sys"
+        }
+      ]
+    }
+  ]
+}
