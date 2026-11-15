@@ -1,114 +1,103 @@
-# cmob - Cmux Mobile
+# cmob
 
-**Watch and control your [cmux](https://cmux.com/) terminals and coding agents (Claude Code, Antigravity, Kiro, Codex) from your phone.** Get notified when an agent needs you or finishes, chat with it, and see or type into its terminal, from a web app (PWA) that runs over your own Tailscale network.
+[![release](https://img.shields.io/github/v/release/chavisnguyen/cmob)](https://github.com/chavisnguyen/cmob/releases)
+[![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
 
----
+**Cmux Mobile.** Your coding agents keep working in [cmux](https://cmux.com/) on your Mac. **cmob puts them on your phone**: see which ones are running, read what they did, answer when they need you, and type into the terminal, from anywhere on your own Tailscale network.
 
-## Architecture Overview
+![cmob on a phone: workspaces, chat, terminal](docs/images/demo.png)
 
-cmux-mobile follows a **Web-First Local Gateway (2-Tier)** architecture structured as a Coordinator Hub:
+*Invented demo projects. cmob runs against your real cmux.*
 
-```
-cmux-mobile/
-├── repos/
-│   ├── cmux-gateway/    # High-performance Rust daemon (Tokio, Axum, rust-embed)
-│   └── cmux-client/     # Mobile & Web PWA Companion (Vite+, React 19, Tailwind CSS, Oxlint)
-├── documents/           # Project specifications and architecture documents
-├── scripts/             # Coordinator scripts (init, dev, build, test, tailscale)
-├── secrets/             # gitignored local credentials & VAPID keys
-├── .context/            # Persistent long-term agent memory (strictly evidence-based)
-└── Makefile             # Developer shortcuts (make init, make dev, make build, make test)
-```
+## What you can do
 
-For complete technical specifications, see [`.context/architecture.md`](.context/architecture.md) and [`.context/protocol_spec.md`](.context/protocol_spec.md).
+- **See everything at a glance.** Every cmux workspace and tab, with whether its agent is running or idle and the last thing it said.
+- **Read the work, not a wall of text.** The chat view shows replies with code blocks and tables, tool calls, reasoning, diffs and sub-agents. Long messages fold.
+- **Answer from the couch.** Send a message, approve a permission prompt, interrupt a turn, attach a photo or dictate. Slash commands work too.
+- **Get pinged.** A push notification when an agent needs approval, finishes a turn, or shows a dialog. Pick which ones you want.
+- **Drop into the real terminal** when chat is not enough, with a key row (Ctrl, Alt, Esc, Tab, arrows) built for a phone.
+- **Review changes.** A git diff view for the workspace, and buttons to open, rename or close tabs.
 
----
+Built for Claude Code, Codex, Kiro and Antigravity. cmob also recognises OpenCode, Grok, Gemini, Aider and a few others, but those are less tested.
 
 ## Install
+
+You need: a Mac with the [cmux](https://cmux.com/) app, and [Tailscale](https://tailscale.com/) on the Mac and on your phone. No Node, no Rust, no repo clone.
 
 ```bash
 brew tap chavisnguyen/cmob
 brew install cmob
 ```
 
-You need the [cmux](https://cmux.com/) app on your Mac and [Tailscale](https://tailscale.com/) on the Mac and the phone (it gives the phone the HTTPS address that the camera, push and the PWA need).
-
-## Use
+## Set up
 
 In a terminal **inside cmux**:
 
 ```bash
-cmob setup            # one time: token, autostart, gateway
-cmob qr --tailscale   # prints a QR code; scan it from the app
-cmob status           # is it healthy, who is connected
+cmob setup            # one time
+cmob qr --tailscale   # prints a QR code
 ```
 
-On the phone, open the web app, then menu → **Hosts & devices** → **Scan**. The code works once and expires after 10 minutes. Every phone gets its own token and shows up by name. Run `cmob qr --tailscale` again for another phone.
+On your phone, open the address printed under the QR code (or scan it with the camera), then in the app: menu → **Hosts & devices** → **Scan**. Add the page to your Home Screen on iPhone to get notifications.
+
+![from the workspace list to chat to the terminal](docs/images/demo.gif)
+
+Check that everything is healthy at any time:
+
+```bash
+cmob status
+```
+
+```
+Gateway     ✓ running on 127.0.0.1:8088 (v0.1.1)
+cmux        ✓ connected
+Autostart   ✓ installed
+Tailscale   ✓ https://your-mac.your-tailnet.ts.net
+Connected   1 client
+  - device          Safari · iPhone    up 3m
+Paired      1 device (cmob devices)
+```
+
+Stuck? See [Troubleshooting](docs/troubleshooting.md).
+
+## Commands
 
 | Command | What it does |
 |---|---|
 | `cmob setup` | One-time setup (run inside cmux). Safe to run again |
-| `cmob qr --tailscale` | QR code that pairs a phone. Also publishes the gateway over Tailscale HTTPS the first time, unless Tailscale Serve is already serving something else (it never overwrites that) |
+| `cmob qr --tailscale` | QR code that pairs a phone. Run it again for another phone |
 | `cmob status` | Gateway, cmux, Tailscale, connected clients, paired devices |
-| `cmob devices` / `cmob devices revoke <id>` | List paired phones, or cut one off |
+| `cmob devices` | List paired phones |
+| `cmob devices revoke <id>` | Cut one phone off. It is disconnected and gets no more notifications |
 | `cmob start` / `stop` / `restart` | Control the background gateway |
 | `cmob logs [-f]` | Show or follow the gateway log |
 | `cmob uninstall` | Remove autostart and stop the gateway |
 
-`cmob setup` adds a small, clearly marked block to `~/.zshrc` (the previous file is saved as `.zshrc.cmob.bak`) so the gateway starts whenever a terminal opens inside cmux. `cmob uninstall` removes it.
+`cmob setup` adds a small, marked block to `~/.zshrc` so the gateway starts whenever a terminal opens inside cmux (your old file is kept as `.zshrc.cmob.bak`). `cmob uninstall` removes it.
 
-## Build from source
+## Is it safe?
 
-Needs Rust 1.80+, Node 20+, `pnpm` 9+ and [Vite+](https://viteplus.dev) (`curl -fsSL https://vite.plus | bash`).
+The gateway only listens on your Mac (`127.0.0.1`). Your phone reaches it through Tailscale, so it is visible to your tailnet and not to the internet. Each phone gets its own token from a single-use QR code, and you can revoke any of them.
 
-```bash
-make init      # check prerequisites, install dependencies
-make build     # client + gateway into one binary: repos/cmux-gateway/target/release/cmob
-make install   # build, then run `cmob setup` (inside cmux)
-make dev       # gateway on :8088 plus the Vite+ dev server
-make test      # gateway and client tests
-```
+**Anyone you pair can read and type into your terminals and agents**, so pair only devices you control. Details: [Security](docs/security.md).
 
----
+## Docs
 
-## Security model
-* The gateway listens on `127.0.0.1` only. Phones reach it through Tailscale Serve, so it is visible to your tailnet and not to the internet. Tailscale (WireGuard) is the encrypted transport; the gateway adds no end-to-end encryption of its own.
-* **Anyone who is paired can read and type into your terminals and agents.** Pair only devices you control, and cut off a lost phone with `cmob devices revoke`.
-* The gateway token lives in `~/.cmux/gateway-token` (mode 600, created on first use). It is passed to the process through the environment, never the command line. Per-device tokens are stored in `~/.cmux/devices.json` and expire after 90 days without use.
-* Pairing codes carry a single-use ticket and never the gateway token.
-* Requests with an unexpected `Host` or `Origin` header are rejected (DNS-rebinding guard). Add extra hostnames with `CMUX_ALLOWED_HOSTS`.
-
-## Why `cmob setup` must run inside cmux
-cmux only answers socket clients that were started inside cmux (`cmux socket-status` shows `cmuxOnly`). A launchd service is outside cmux, so its gateway connects but shows no workspaces. That is why autostart is a shell hook: every terminal cmux opens runs it. cmux also has a `password` socket mode, but changing it is a security decision for the machine owner, so cmob does not touch it. [HYPOTHESIS - UNVERIFIED] Setting `CMUX_SOCKET_PASSWORD` for the gateway should then allow a launchd service; verify with `CMUX_SOCKET_PASSWORD=... cmux ping` from a non-cmux terminal after enabling password mode.
-
-## Configuration
-| Variable | Meaning | Default |
-|---|---|---|
-| `CMUX_GATEWAY_HOST` / `CMUX_GATEWAY_PORT` | bind address (loopback or Tailscale only) | `127.0.0.1` / `8088` |
-| `CMUX_GATEWAY_TOKEN` | gateway token for `cmob serve` | read from `~/.cmux/gateway-token` |
-| `CMUX_ALLOWED_HOSTS` | extra allowed `Host` names, comma separated | none |
-| `CMUX_VAPID_SUBJECT` | `mailto:` or `https:` contact sent with web push | a placeholder address; set your own |
-| `CMUX_DEVICES_FILE` | where paired devices are stored | `~/.cmux/devices.json` |
-
-## Troubleshooting
-* **Phone says `ERR_NAME_NOT_RESOLVED`:** Tailscale is off on the phone. Turn it on.
-* **App opens but shows no workspaces, `cmob status` says cmux is not reachable:** the gateway was not started inside cmux. Run `cmob stop`, then `cmob start` from a cmux terminal.
-* **No Scan button, or the camera does not open:** the page must be served over HTTPS (use the Tailscale address) and the browser must be allowed to use the camera.
-* **"Invalid token":** the token changed. Pair again with `cmob qr --tailscale`.
-* **QR code is cut off:** it is about 35 lines tall. Enlarge the terminal, or copy the printed link to the phone.
+- [Security](docs/security.md): how pairing and tokens work, what is stored where
+- [Troubleshooting](docs/troubleshooting.md): `ERR_NAME_NOT_RESOLVED`, empty workspace list, camera, tokens
+- [Configuration](docs/configuration.md): environment variables
+- [Development](docs/development.md): build from source, tests, releases
 
 ## Limitations
-* macOS only. Linux and Windows are not supported.
-* The Back gesture, swipe navigation and push notifications with the app closed have been checked only in part on real devices.
-* The gateway handles each socket one request at a time, so one slow request delays that phone's others.
+
+- macOS only. Linux and Windows are not supported.
+- The Back gesture, swipe navigation and notifications with the app closed have been checked only in part on real devices.
+- Each phone's requests are handled one at a time, so one slow request delays that phone's others.
+
+## Credits
+
+Built for [cmux](https://github.com/manaflow-ai/cmux). UI ideas from [Orca](https://github.com/stablyai/orca) and [cmux-pocket](https://github.com/shiquda/cmux-pocket).
 
 ## License
+
 [MIT](LICENSE)
-
----
-
-## References & Credits
-* [cmux](https://github.com/manaflow-ai/cmux)
-* [orca](https://github.com/stablyai/orca)
-* [cmux-pocket](https://github.com/shiquda/cmux-pocket)
-* [vite+](https://viteplus.dev)

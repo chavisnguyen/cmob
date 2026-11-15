@@ -4,7 +4,7 @@ version = "0.1.1"
 edition = "2024"
 license = "MIT"
 description = "cmob - Cmux Mobile: watch and control cmux terminals and coding agents from a phone"
-repository = "https://github.com/chavisnguyen/cmux-mobile"
+repository = "https://github.com/chavisnguyen/cmob"
 
 [lib]
 name = "cmux_gateway"
