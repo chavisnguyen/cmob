@@ -350,6 +350,184 @@ fn sanitize_id_part(raw: &str, max_len: usize) -> String {
         .collect()
 }
 
+/// Strip common Markdown syntax from a string so it reads naturally as plain text in a
+/// push-notification body. Mirrors what Orca avoids by sourcing text from the hook's
+/// `last_assistant_message` field (plain) rather than the raw transcript.
+///
+/// Rules (each applied per-line, then the result is collapsed):
+///   - Table rows / separator lines (`| … |` or `| --- |`) → dropped entirely
+///   - ATX headings (`# … ` through `###### …`) → heading text only
+///   - Block-quote markers (`> `) → stripped
+///   - Horizontal rules (`---`, `***`, `___` alone on a line) → dropped
+///   - Fenced code-block markers (``` or ~~~) → dropped
+///   - Inline: `**bold**`, `__bold__`, `*italic*`, `_italic_` → inner text
+///   - Inline: `` `code` `` → inner text
+///   - Inline: `[label](url)` → label
+///   - Inline: `![alt](url)` → alt text (or dropped when empty)
+pub fn strip_markdown_for_notification(text: &str) -> String {
+    // ---- per-line pass ----
+    let mut lines_out: Vec<&str> = Vec::new();
+    // Track whether we are inside a fenced code block.
+    let mut in_fence = false;
+
+    // We work on the raw &str slices when possible, falling back to owned Strings only when
+    // inline substitutions are needed.
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+
+        // Fenced code blocks: drop the opening/closing fence markers; pass content through.
+        if line.starts_with("```") || line.starts_with("~~~") {
+            in_fence = !in_fence;
+            continue; // drop the fence marker itself
+        }
+        if in_fence {
+            // Keep code content as-is (plain already).
+            lines_out.push(raw_line);
+            continue;
+        }
+
+        // Table rows: a line whose first non-whitespace character is `|`.
+        if line.starts_with('|') {
+            continue;
+        }
+
+        // Horizontal rules: `---`, `***`, `___` (optionally spaced).
+        {
+            let stripped = line.replace(['-', '*', '_', ' '], "");
+            if stripped.is_empty() && !line.is_empty() {
+                continue;
+            }
+        }
+
+        // ATX headings: `# Foo` → `Foo`
+        if let Some(rest) = line.strip_prefix('#') {
+            let heading = rest.trim_start_matches('#').trim();
+            if !heading.is_empty() {
+                lines_out.push(heading);
+            }
+            continue;
+        }
+
+        // Block-quote: `> text`
+        if let Some(rest) = line.strip_prefix('>') {
+            let content = rest.trim_start_matches('>').trim();
+            if !content.is_empty() {
+                lines_out.push(content);
+            }
+            continue;
+        }
+
+        lines_out.push(line);
+    }
+
+    // ---- inline pass on joined text ----
+    let joined = lines_out.join(" ");
+
+    // Apply inline substitutions with a simple character-by-character state machine to avoid
+    // pulling in a regex dependency.
+    fn strip_inline(src: &str) -> String {
+        let chars: Vec<char> = src.chars().collect();
+        let n = chars.len();
+        let mut out = String::with_capacity(src.len());
+        let mut i = 0;
+        while i < n {
+            // `![alt](url)` → alt (or nothing when alt is empty)
+            if chars[i] == '!' && i + 1 < n && chars[i + 1] == '[' {
+                if let Some((alt, skip)) = find_link_parts(&chars, i + 1) {
+                    if !alt.is_empty() {
+                        out.push_str(&alt);
+                    }
+                    i += skip + 1; // +1 for the leading '!'
+                    continue;
+                }
+            }
+            // `[label](url)` → label
+            if chars[i] == '[' {
+                if let Some((label, skip)) = find_link_parts(&chars, i) {
+                    out.push_str(&label);
+                    i += skip;
+                    continue;
+                }
+            }
+            // Bold/italic: `**`, `__`, `*`, `_`
+            if (chars[i] == '*' || chars[i] == '_') {
+                let marker = chars[i];
+                let double = i + 1 < n && chars[i + 1] == marker;
+                let fence_len = if double { 2 } else { 1 };
+                // Find the matching closing fence on the same run.
+                let search_start = i + fence_len;
+                let close = if double {
+                    find_closing(&chars, search_start, &[marker, marker])
+                } else {
+                    find_closing_single(&chars, search_start, marker)
+                };
+                if let Some(end) = close {
+                    let inner: String = chars[search_start..end].iter().collect();
+                    out.push_str(&inner);
+                    i = end + fence_len;
+                    continue;
+                }
+            }
+            // Inline code: `code`
+            if chars[i] == '`' {
+                let fence_len = if i + 1 < n && chars[i + 1] == '`' { 2 } else { 1 };
+                let search_start = i + fence_len;
+                let close = if fence_len == 2 {
+                    find_closing(&chars, search_start, &['`', '`'])
+                } else {
+                    find_closing_single(&chars, search_start, '`')
+                };
+                if let Some(end) = close {
+                    let inner: String = chars[search_start..end].iter().collect();
+                    out.push_str(&inner);
+                    i = end + fence_len;
+                    continue;
+                }
+            }
+            out.push(chars[i]);
+            i += 1;
+        }
+        out
+    }
+
+    /// Find `[label](url)` starting at `pos` (the `[`). Returns `(label, chars_consumed)`.
+    fn find_link_parts(chars: &[char], pos: usize) -> Option<(String, usize)> {
+        if chars.get(pos) != Some(&'[') {
+            return None;
+        }
+        // Find closing `]`
+        let close_bracket = chars[pos + 1..].iter().position(|&c| c == ']')? + pos + 1;
+        // Must be immediately followed by `(`
+        if chars.get(close_bracket + 1) != Some(&'(') {
+            return None;
+        }
+        let close_paren = chars[close_bracket + 2..].iter().position(|&c| c == ')')? + close_bracket + 2;
+        let label: String = chars[pos + 1..close_bracket].iter().collect();
+        let consumed = close_paren - pos + 1;
+        Some((label, consumed))
+    }
+
+    fn find_closing(chars: &[char], from: usize, pat: &[char]) -> Option<usize> {
+        let n = chars.len();
+        let plen = pat.len();
+        if from + plen > n {
+            return None;
+        }
+        for i in from..=(n - plen) {
+            if &chars[i..i + plen] == pat {
+                return Some(i);
+            }
+        }
+        None
+    }
+
+    fn find_closing_single(chars: &[char], from: usize, pat: char) -> Option<usize> {
+        chars[from..].iter().position(|&c| c == pat).map(|p| p + from)
+    }
+
+    strip_inline(&joined)
+}
+
 pub fn normalize_text(value: Option<&str>, max_chars: usize) -> String {
     let Some(raw) = value else {
         return String::new();
@@ -440,7 +618,8 @@ pub fn extract_transcript_preview(
                     }
                 }
                 (AgentLifecycleState::Done, AgentEvent::Assistant { text }) => {
-                    let s = normalize_text(Some(text), BODY_MAX_CHARS);
+                    let stripped = strip_markdown_for_notification(text);
+                    let s = normalize_text(Some(&stripped), BODY_MAX_CHARS);
                     if !s.is_empty() && !is_generic_placeholder(&s) {
                         return Some(s);
                     }
@@ -456,7 +635,8 @@ pub fn extract_transcript_preview(
             match (lifecycle, ev) {
                 (AgentLifecycleState::Waiting, AgentEvent::Assistant { text })
                 | (AgentLifecycleState::Error, AgentEvent::Assistant { text }) => {
-                    let s = normalize_text(Some(text), BODY_MAX_CHARS);
+                    let stripped = strip_markdown_for_notification(text);
+                    let s = normalize_text(Some(&stripped), BODY_MAX_CHARS);
                     if !s.is_empty() && !is_generic_placeholder(&s) {
                         return Some(s);
                     }
@@ -602,6 +782,72 @@ pub fn build_dialog_notification_content(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ── strip_markdown_for_notification ──────────────────────────────────────
+
+    #[test]
+    fn strip_bold_and_italic() {
+        assert_eq!(strip_markdown_for_notification("**bold** and *italic*"), "bold and italic");
+        assert_eq!(strip_markdown_for_notification("__bold__ and _italic_"), "bold and italic");
+    }
+
+    #[test]
+    fn strip_headings() {
+        assert_eq!(strip_markdown_for_notification("# Title\nSome text."), "Title Some text.");
+        assert_eq!(strip_markdown_for_notification("## Sub\nBody."), "Sub Body.");
+    }
+
+    #[test]
+    fn strip_inline_code() {
+        assert_eq!(strip_markdown_for_notification("Run `cargo test` to verify."), "Run cargo test to verify.");
+    }
+
+    #[test]
+    fn strip_links() {
+        assert_eq!(
+            strip_markdown_for_notification("See [the docs](https://example.com) for details."),
+            "See the docs for details."
+        );
+    }
+
+    #[test]
+    fn strip_tables() {
+        let md = "| col1 | col2 |\n| --- | --- |\n| a | b |\nDone.";
+        let out = strip_markdown_for_notification(md);
+        assert!(!out.contains('|'), "table pipes should be gone: {out}");
+        assert!(out.contains("Done"), "prose should survive: {out}");
+    }
+
+    #[test]
+    fn strip_blockquotes() {
+        assert_eq!(strip_markdown_for_notification("> Note: be careful."), "Note: be careful.");
+    }
+
+    #[test]
+    fn strip_hr() {
+        let out = strip_markdown_for_notification("Above\n---\nBelow");
+        assert!(!out.contains("---"), "hr should be dropped: {out}");
+        assert!(out.contains("Above") && out.contains("Below"));
+    }
+
+    #[test]
+    fn plain_text_passthrough() {
+        let plain = "Refactored push dispatcher and all tests pass.";
+        assert_eq!(strip_markdown_for_notification(plain), plain);
+    }
+
+    #[test]
+    fn realistic_claude_response() {
+        let md = "## Summary\n\nI've updated `server.rs` to:\n\n- **Fix** the token reload bug\n- Add `muted_categories` support\n\n| File | Change |\n| --- | --- |\n| server.rs | patched |\n\nAll tests pass.";
+        let out = strip_markdown_for_notification(md);
+        assert!(!out.contains("##"), "headings stripped: {out}");
+        assert!(!out.contains("**"), "bold stripped: {out}");
+        assert!(!out.contains('|'), "table stripped: {out}");
+        assert!(!out.contains('`'), "code stripped: {out}");
+        assert!(out.contains("server.rs"), "filenames kept: {out}");
+        assert!(out.contains("All tests pass"), "prose kept: {out}");
+    }
+
     fn write_temp_transcript(name: &str, content: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!("cmux-notif-test-{}", std::process::id()));
         let _ = std::fs::create_dir_all(&dir);
