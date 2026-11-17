@@ -5,13 +5,22 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
     <link rel="manifest" href="/manifest.webmanifest" />
-    <meta property="og:title" content="Cmob — Watch &amp; control your coding agents from your phone" />
-    <meta property="og:description" content="Mobile &amp; Web companion for cmux terminal workspaces and AI agents (Claude, AGY, Kiro, Codex)." />
+    <meta
+      property="og:title"
+      content="Cmob — Watch &amp; control your coding agents from your phone"
+    />
+    <meta
+      property="og:description"
+      content="Mobile &amp; Web companion for cmux terminal workspaces and AI agents (Claude, AGY, Kiro, Codex)."
+    />
     <meta property="og:image" content="/og-preview.png" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Cmob" />
-    <meta name="twitter:description" content="Watch &amp; control your coding agents from your phone" />
+    <meta
+      name="twitter:description"
+      content="Watch &amp; control your coding agents from your phone"
+    />
     <meta name="twitter:image" content="/og-preview.png" />
     <meta
       name="viewport"
@@ -26,7 +35,11 @@
       .scrollbar-sleek,
       :where([data-orca-scrollbars="sleek"] *) {
         scrollbar-width: thin;
-        scrollbar-color: color-mix(in srgb, var(--muted-foreground, #737373) 34%, transparent)
+        scrollbar-color: color-mix(
+            in srgb,
+            var(--muted-foreground, #737373) 34%,
+            transparent
+          )
           transparent;
       }
       .scrollbar-sleek::-webkit-scrollbar,
@@ -40,26 +53,42 @@
       }
       .scrollbar-sleek::-webkit-scrollbar-thumb,
       :where([data-orca-scrollbars="sleek"] *)::-webkit-scrollbar-thumb {
-        background: color-mix(in srgb, var(--muted-foreground, #737373) 28%, transparent);
+        background: color-mix(
+          in srgb,
+          var(--muted-foreground, #737373) 28%,
+          transparent
+        );
         border-radius: 9999px;
       }
       .scrollbar-sleek::-webkit-scrollbar-thumb:hover,
       :where([data-orca-scrollbars="sleek"] *)::-webkit-scrollbar-thumb:hover {
-        background-color: color-mix(in srgb, var(--muted-foreground, #737373) 48%, transparent);
+        background-color: color-mix(
+          in srgb,
+          var(--muted-foreground, #737373) 48%,
+          transparent
+        );
       }
     </style>
   </head>
-  <body class="bg-[#111217] text-gray-100 select-none overflow-hidden overscroll-none">
+  <body
+    class="bg-[#111217] text-gray-100 select-none overflow-hidden overscroll-none"
+  >
     <script>
       /* Standalone iOS PWA & Mobile Web Session Cross-Hydration */
       (function () {
         try {
           var searchMatch = window.location.search.match(/[?&]token=([^&#]+)/);
-          var searchToken = searchMatch ? decodeURIComponent(searchMatch[1]) : null;
+          var searchToken = searchMatch
+            ? decodeURIComponent(searchMatch[1])
+            : null;
           var hashMatch = window.location.hash.match(/[#&]token=([^&#]+)/);
           var hashToken = hashMatch ? decodeURIComponent(hashMatch[1]) : null;
-          var cookieMatch = document.cookie.match(/(?:^|;\s*)cmux_token=([^;]+)/);
-          var cookieToken = cookieMatch ? decodeURIComponent(cookieMatch[1]) : null;
+          var cookieMatch = document.cookie.match(
+            /(?:^|;\s*)cmux_token=([^;]+)/,
+          );
+          var cookieToken = cookieMatch
+            ? decodeURIComponent(cookieMatch[1])
+            : null;
           var lsToken = localStorage.getItem("cmux_token");
           var token = searchToken || hashToken || cookieToken || lsToken;
 
