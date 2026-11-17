@@ -64,3 +64,59 @@ All autonomous agents, sub-agents, and contributors working in this repository M
   * Clean, developer-friendly Chat UI inspired by **Orca** for chatting with and monitoring `agy`, `claude`, and `kiro`.
   * Responsive terminal / grid view adapted for mobile screens (handling reflow, touch gestures, and keyboard shortcuts).
 * **Security & Authentication:** Zero open-internet exposure without end-to-end encryption or secure tunnels (e.g., Bearer tokens, Tailscale HTTPS, Cloudflare Tunnels, or WireGuard).
+
+---
+
+## 5. RELEASE & HOMEBREW PROCESS
+
+### Repo layout
+* **Main repo:** `github.com/chavisnguyen/cmob` — this monorepo (`cmux-mobile`), pushed via `git@github.com:chavisnguyen/cmob.git`
+* **Homebrew tap:** `github.com/chavisnguyen/homebrew-cmob` — auto-updated by CI, never edit manually
+* **Formula template:** `packaging/homebrew/cmob.rb.template` — placeholders `{{VERSION}}`, `{{SHA_ARM}}`, `{{SHA_X64}}`, `{{REPO}}`
+
+### CI/CD workflows (`.github/workflows/`)
+* `ci.yml` — runs on every push/PR to `master`: Rust clippy + tests + client checks
+* `release.yml` — runs on **GitHub Release published**: `gate → binary (arm64 + x64) → attach → bump-tap`
+  * `gate`: verifies `Cargo.toml` version matches the tag, runs full test suite
+  * `binary`: builds macOS arm64 and x64 binaries in parallel
+  * `attach`: uploads both binaries to the GitHub Release assets
+  * `bump-tap`: generates `Formula/cmob.rb` from the template and pushes to `homebrew-cmob`
+
+### Required secrets (repo: `chavisnguyen/cmob`)
+* `TAP_TOKEN` — PAT with `contents:write` on `homebrew-cmob`. Already configured. Verify with: `gh secret list --repo chavisnguyen/cmob`
+
+### How to cut a release
+```bash
+# 1. Bump version in repos/cmux-gateway/Cargo.toml (must match the tag)
+# 2. Commit and push
+git add -A
+git commit -m "cmob X.Y.Z: <summary>"
+git push origin master
+
+# 3. Create and push the tag
+git tag vX.Y.Z
+git push origin vX.Y.Z
+
+# 4. Create the GitHub Release (this triggers the workflow)
+gh release create vX.Y.Z --title "cmob X.Y.Z" --notes "..." --repo chavisnguyen/cmob
+
+# 5. Watch the workflow
+gh run list --repo chavisnguyen/cmob --limit 5
+
+# 6. Verify Homebrew tap was updated
+gh api repos/chavisnguyen/homebrew-cmob/contents/Formula/cmob.rb --jq '.content' | base64 -d | grep version
+```
+
+> [!IMPORTANT]
+> The tag **must** be pushed to remote **before** creating the GitHub Release.
+> The `Cargo.toml` version **must** exactly match the tag (without the `v` prefix). The `gate` job will fail otherwise and block the whole pipeline.
+
+> [!NOTE]
+> If the tag already exists on remote (e.g. `rejected: already exists`), the Release may have already been created. Check with `gh release list --repo chavisnguyen/cmob` before re-tagging.
+
+### Installed versions
+| Version | Released | Homebrew tap |
+|---------|----------|-------------|
+| v0.1.0 | 2026-11-15 | ✓ |
+| v0.1.1 | 2026-11-15 | ✓ |
+| v0.1.2 | 2026-11-16 | ✓ |
