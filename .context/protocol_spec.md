@@ -220,6 +220,8 @@ Source: `repos/cmux-gateway/src/pairing_store.rs`, `server.rs` (`pair_exchange_h
 
 `mobile.chat.readSession` / `mobile.chat.update` payload also carries `has_more: bool` and `total_turns: number` (gateway `server.rs` `session_json`). Clients page older history by re-requesting with a larger `max_turns` (cap 500).
 
+When `lifecycle_state == "waiting"`, `mobile.chat.readSession` / `mobile.chat.update` also carries `awaiting_prompt: string | null` (`repos/cmux-gateway/src/server.rs`, `derive_awaiting_prompt`), prioritizing rich hook `lastBody`, then terminal approval context (`capture_pane` + `extract_approval_screen_context`), then any pending `ToolStart` in `turns`, then hook `toolName`, so Codex/Claude approvals show the actual command/reason in `OrcaChatView.tsx` (`Approve` / `Deny`). `fingerprint()` and `chat_watcher` track `last_body`, `tool_name`, and the extracted screen context so prompt updates push immediately.
+
 ## `mobile.chat.send` and per-agent input profiles (2026-11-14)
 Params: `{ surface_id, text, agent_kind?, enter? (default true) }`. Gateway (`repos/cmux-gateway/src/cmux/agent_profile.rs`, `bridge.rs::submit_prompt`): `cmux send --paste --force -- <text>`, wait `profile.submit_delay(text)`, then `cmux send-key --force enter`. A trailing `\r`/`\n` in `text` (older clients) is stripped and means submit. Clients must NOT append `\r`.
 Why: verified live on Codex 0.169.0 via the `cmux` CLI: `cmux send --force -- $'testA one line\r'` left the draft unsent in the composer; a separate `cmux send-key enter` submitted it; `--paste` keeps multi-line text as one draft (typing it presses Enter on every newline per `cmux send --help`). Orca does the same: text, settle, then Enter alone (`ref/orca/src/main/runtime/terminal/input/runtime-terminal-writer.ts:72-117`), delay = 500 ms + ingest + per-line settle (`ref/orca/src/shared/agent-launch/startup/agent-prompt-injection.ts:15-30,140-170`); per-agent table `ref/orca/src/shared/agent-launch/catalog/tui-agent-config.ts` (agy `submitLineSettleMsPerLine: 45`; codex `submitRetryDelayMs: 1200`; claude "may leave a draft unsent when paste-end and Enter share a write", 50 ms).
@@ -241,3 +243,14 @@ Client: composer is a `<textarea>` (Enter = newline, only the arrow sends); sent
 - Status/push: `spawn_dialog_watcher` (3 s) reads the screen of agent processes younger than 5 min (`ps etime`), marks the surface `waiting` in the tree (`registry::is_waiting`) and sends one push per dialog fingerprint ("<Agent> needs your answer", data.surfaceId so the notification opens the chat).
 - Verified live on Codex 0.169.0 (untrusted folder `tool-x`): snapshot choices [Trust and continue, Back to Agent Command Center]; tree status `waiting`; push dispatched; stale fingerprint and bad choice refused; choice 1 (does not trust) moved Codex to the Agent command center; `~/.codex/config.toml` unchanged. The card never auto-trusts: the user taps the option.
 - Chat watermark: `OrcaChatView` renders the agent logo (`AgentIcon`, opacity 0.07) behind the timeline; it breathes (opacity .07 -> .13, 3.6 s) while the agent works, disabled under `prefers-reduced-motion`.
+
+## Live Notification & Client Viewing Protocol (2026-11-16)
+- `mobile.client.viewing` (`repos/cmux-gateway/src/protocol/rpc.rs:53`, `repos/cmux-gateway/src/server.rs:845-865`, `repos/cmux-client/src/protocol/rpc.ts`):
+  - Request params: `{ "surface_id": string | null, "visible": boolean }`
+  - Updates `ClientInfo.viewing_surface` and `ClientInfo.client_visible` for the authenticated WebSocket session so `suppressWhileViewing` skips alerts on the currently viewed surface.
+- `mobile.notification.alert` (`repos/cmux-gateway/src/server.rs:300-314,982`, `repos/cmux-client/src/protocol/rpc.ts`):
+  - Server-push event payload: `{ notification_id, surface_id, workspace_id, category, agent, agent_display, title, subtitle, body, tag, urgent }`
+  - Categories: `"needs-permission" | "turn-finished" | "agent-error" | "cmux-dialog"` (`repos/cmux-gateway/src/push.rs:133`).
+- `mobile.notification.dismiss` (`repos/cmux-gateway/src/server.rs:327-343,983`, `repos/cmux-client/src/protocol/rpc.ts`):
+  - Server-push event payload: `{ surface_id, tags }`
+  - Emitted when a surface returns to `Working` or `Idle`, or when a startup dialog clears; instructs the client and Service Worker (`cmux.notification.dismiss`) to close open notifications matching `tags`.

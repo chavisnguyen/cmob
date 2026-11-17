@@ -40,7 +40,15 @@ import { CollapsibleText } from "./CollapsibleText";
 import { NativeChatTurnActivityLine } from "./NativeChatTurnActivityLine";
 import { AgentIcon } from "../common/AgentIcon";
 import { agentDisplayName } from "../common/agentBrand";
-import { DRAIN_SETTLE_MS, canDrain, enqueue, removeQueued, type QueuedMessage } from "./chatQueue";
+import {
+  DRAIN_SETTLE_MS,
+  canDrain,
+  enqueue,
+  queueStatusLabel,
+  removeQueued,
+  resolveEffectiveAwaiting,
+  type QueuedMessage,
+} from "./chatQueue";
 import { suggestSlashCommands } from "./slashCommands";
 import { appendDictation, canDictate, useDictation } from "./dictation";
 import { MAX_IMAGES_PER_MESSAGE, PartialSendError, prepareImageForUpload } from "./imageAttach";
@@ -56,6 +64,7 @@ interface OrcaChatViewProps {
   isWorking?: boolean;
   lifecycleState?: AgentLifecycleState;
   activityText?: string | null;
+  awaitingPrompt?: string | null;
   /** `imagePaths` are host paths of already uploaded images, pasted before the text. */
   onSend: (text: string, imagePaths?: string[]) => Promise<void>;
   /** Uploads one prepared image; resolves with its path on the host. */
@@ -102,6 +111,7 @@ export function OrcaChatView({
   isWorking = false,
   lifecycleState = "idle",
   activityText = null,
+  awaitingPrompt = null,
   onSend,
   onUploadImage,
   surfaceId,
@@ -167,6 +177,18 @@ export function OrcaChatView({
 
     return lastTurn.events[askIndex] as AwaitingInput;
   }, [turns, isWorking, lifecycleState]);
+
+  const effectiveAwaiting = useMemo(
+    () =>
+      resolveEffectiveAwaiting({
+        latestAwaiting,
+        lifecycleState,
+        isWorking,
+        startupDialog,
+        awaitingPrompt,
+      }),
+    [latestAwaiting, lifecycleState, isWorking, startupDialog, awaitingPrompt],
+  );
 
   // Windowed visible turns for pagination & performance
   const hasHiddenLocal = turns.length > visibleCount;
@@ -441,7 +463,7 @@ export function OrcaChatView({
     setImages([]);
     // Queue instead of sending while the agent is busy or waiting on an approval/question: a line typed
     // into a permission prompt would answer it by accident.
-    if (isWorking || lifecycleState === "waiting" || !!latestAwaiting || !!startupDialog) {
+    if (isWorking || lifecycleState === "waiting" || !!effectiveAwaiting || !!startupDialog) {
       setQueue((q) =>
         enqueue(q, text, `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, paths),
       );
@@ -459,7 +481,24 @@ export function OrcaChatView({
     setImages((cur) => [...remaining, ...cur].slice(0, MAX_IMAGES_PER_MESSAGE));
   };
 
-  const needsAnswer = !!latestAwaiting || !!startupDialog;
+  const needsAnswer = !!effectiveAwaiting || !!startupDialog;
+
+  const handleSendQueuedNow = async (item: QueuedMessage) => {
+    if (drainingRef.current || isSubmitting) return;
+    drainingRef.current = true;
+    setQueue((q) => removeQueued(q, item.id));
+    try {
+      const ok = await sendNow(item.text, item.images);
+      if (ok) {
+        setQueuePaused(false);
+      } else {
+        setQueue((q) => [{ ...item, images: item.images.slice(deliveredRef.current) }, ...q]);
+        setQueuePaused(true);
+      }
+    } finally {
+      drainingRef.current = false;
+    }
+  };
   useEffect(() => {
     if (queuePaused) return;
     if (
@@ -624,35 +663,37 @@ export function OrcaChatView({
         } bg-[#141416] border-t border-white/[0.08] space-y-1.5 min-w-0 max-w-full`}
       >
         {/* Orca-style Contextual Approval Card */}
-        {latestAwaiting && (!latestAwaiting.options || latestAwaiting.options.length === 0) && (
-          <div className="flex items-center justify-between p-2 rounded-lg bg-emerald-950/30 border border-emerald-500/20 gap-2">
-            <div className="flex items-center gap-1.5 min-w-0 flex-1">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span className="text-xs text-emerald-200 font-medium truncate">
-                {latestAwaiting.prompt || "Agent requested approval"}
-              </span>
+        {effectiveAwaiting &&
+          (!effectiveAwaiting.options || effectiveAwaiting.options.length === 0) && (
+            <div className="rounded-xl bg-emerald-950/30 border border-emerald-500/25 px-3 py-2.5 space-y-2">
+              <div className="flex items-start gap-2 min-w-0">
+                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                <div className="min-w-0 flex-1 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-snug text-emerald-100">
+                  {effectiveAwaiting.prompt || "Agent requested approval"}
+                </div>
+              </div>
+              <div className="flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={handleInterrupt}
+                  disabled={isStopping}
+                  className="h-9 px-3.5 bg-[#262626] hover:bg-rose-950/50 hover:text-rose-300 text-[#e5e5e5] font-medium text-[13px] rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  title="Deny"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  <span>Deny</span>
+                </button>
+                <button
+                  type="button"
+                  onClick={onApprove}
+                  className="h-9 px-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-[13px] rounded-xl transition-colors shadow-sm flex items-center gap-1.5"
+                >
+                  <CheckCircle2 className="w-3.5 h-3.5" />
+                  <span>Approve</span>
+                </button>
+              </div>
             </div>
-            <div className="flex items-center gap-1.5 shrink-0">
-              <button
-                type="button"
-                onClick={onApprove}
-                className="h-9 px-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-[13px] rounded-xl transition-colors shadow-sm flex items-center gap-1"
-              >
-                <CheckCircle2 className="w-3 h-3" />
-                <span>Approve (1-Tap)</span>
-              </button>
-              <button
-                type="button"
-                onClick={handleInterrupt}
-                disabled={isStopping}
-                className="w-9 h-9 bg-[#262626] hover:bg-rose-950/40 hover:text-rose-400 text-[#e5e5e5] flex items-center justify-center rounded-xl transition-colors"
-                title="Deny / Interrupt"
-              >
-                <X className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-        )}
+          )}
 
         {startupDialog && (
           <div
@@ -705,7 +746,7 @@ export function OrcaChatView({
                 className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.1] bg-[#1b1c22] text-[12.5px] text-[#d4d4d4]"
               >
                 <span className="shrink-0 text-[#8ab4f8] font-semibold">
-                  {queuePaused && i === 0 ? "Paused" : "Queued"}
+                  {queueStatusLabel({ index: i, queuePaused, lifecycleState, needsAnswer })}
                 </span>
                 <span className="min-w-0 flex-1 truncate">
                   {m.images.length > 0 ? `🖼 ${m.images.length} · ` : ""}
@@ -720,6 +761,14 @@ export function OrcaChatView({
                     Resume
                   </button>
                 )}
+                <button
+                  type="button"
+                  disabled={isSubmitting}
+                  onClick={() => void handleSendQueuedNow(m)}
+                  className="shrink-0 px-2 h-6 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-[#fafafa] text-[12px] font-medium disabled:opacity-40"
+                >
+                  Send now
+                </button>
                 <button
                   type="button"
                   onClick={() => setQueue((q) => removeQueued(q, m.id))}

@@ -19,10 +19,15 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::cmux::DualTransportCmuxBridge;
+use crate::notifications::{
+    build_dialog_notification_content, build_notification_content, is_generic_placeholder,
+    make_push_tag, normalize_text, EngineEvent, NotificationContent, NotificationEngine,
+    SurfaceContext,
+};
 use crate::protocol::{
     AuthError, AuthOk, AuthRequest, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     PairingOffer, METHOD_CHAT_APPROVE, METHOD_CHAT_INTERRUPT, METHOD_CHAT_READ_SESSION,
-    METHOD_CHAT_ANSWER_DIALOG, METHOD_CHAT_SEND, METHOD_CHAT_SESSIONS, METHOD_CHAT_SUBSCRIBE, METHOD_CHAT_UNSUBSCRIBE, METHOD_HOST_STATUS, METHOD_PUSH_HISTORY,
+    METHOD_CHAT_ANSWER_DIALOG, METHOD_CHAT_SEND, METHOD_CHAT_SESSIONS, METHOD_CHAT_SUBSCRIBE, METHOD_CHAT_UNSUBSCRIBE, METHOD_CLIENT_VIEWING, METHOD_HOST_STATUS, METHOD_PUSH_HISTORY,
     METHOD_AGENT_OPTIONS, METHOD_CHAT_FORK, METHOD_CHAT_SET_OPTION, METHOD_DEVICE_LIST, METHOD_DEVICE_REVOKE, METHOD_GIT_DIFF, METHOD_UPLOAD_IMAGE, METHOD_GIT_STATUS, METHOD_PUSH_PREFERENCES, METHOD_PUSH_REGISTER, METHOD_PUSH_TEST, METHOD_PUSH_VAPID_KEY, METHOD_SURFACE_CLOSE, METHOD_SURFACE_GET,
     METHOD_SURFACE_NEW, METHOD_SURFACE_RENAME, METHOD_TERMINAL_INPUT, METHOD_TERMINAL_PASTE,
     METHOD_TERMINAL_READ, METHOD_TERMINAL_REPLAY, METHOD_TERMINAL_SCROLL, METHOD_TERMINAL_SEND,
@@ -32,12 +37,19 @@ use crate::protocol::{
 };
 use crate::pairing_store::{ct_eq, DeviceRegistry};
 use crate::push::{PushService, PushSubscription};
-use crate::protocol::event::AgentLifecycleState;
+use crate::protocol::event::{AgentEvent, AgentLifecycleState, AgentTurn};
 use crate::scanner::hook_store::HookStoreIndex;
 use crate::scanner::kiro_store::KiroSessionIndex;
 use crate::scanner::transcript::TranscriptReader;
 use crate::scanner::workspace_tree::WorkspaceTreeBuilder;
 use crate::static_files::static_handler;
+
+/// Broadcast message fanned out to active WebSocket clients for live alerts/dismissals.
+#[derive(Clone, Debug)]
+pub enum NotificationBroadcast {
+    Alert { surface_id: String, frame: String },
+    Dismiss { surface_id: String, frame: String },
+}
 
 /// Shared application state for all Axum routes and WS connections.
 #[derive(Clone)]
@@ -53,6 +65,8 @@ pub struct AppState {
     pub conn_limit: Arc<tokio::sync::Semaphore>,
     /// Authenticated WebSocket sessions that are open right now (for `/api/clients`).
     pub clients: ClientRegistry,
+    /// Live notification alert/dismiss broadcast channel for connected desktop & mobile clients.
+    pub notif_tx: tokio::sync::broadcast::Sender<NotificationBroadcast>,
 }
 
 /// One authenticated, currently open WebSocket session.
@@ -65,6 +79,10 @@ pub struct ClientInfo {
     pub label: String,
     pub user_agent: String,
     pub connected_at: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub viewing_surface: Option<String>,
+    #[serde(default)]
+    pub client_visible: bool,
 }
 
 /// Live sessions keyed by session id. Entries are removed by `ClientGuard::drop`, so every exit path
@@ -79,6 +97,29 @@ impl ClientRegistry {
         let id = info.session_id.clone();
         self.inner.lock().unwrap().insert(id.clone(), info);
         ClientGuard { registry: self.clone(), id }
+    }
+
+    pub fn set_viewing(&self, session_id: &str, surface_id: Option<String>, visible: bool) {
+        if let Some(info) = self.inner.lock().unwrap().get_mut(session_id) {
+            info.viewing_surface = surface_id;
+            info.client_visible = visible;
+        }
+    }
+
+    pub fn is_session_viewing(&self, session_id: &str, surface_id: &str) -> bool {
+        self.inner.lock().unwrap().get(session_id).is_some_and(|info| {
+            info.client_visible && info.viewing_surface.as_deref() == Some(surface_id)
+        })
+    }
+
+    pub fn devices_viewing_surface(&self, surface_id: &str) -> std::collections::HashSet<String> {
+        self.inner
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|info| info.client_visible && info.viewing_surface.as_deref() == Some(surface_id))
+            .filter_map(|info| info.device_id.clone())
+            .collect()
     }
 
     /// Oldest connection first.
@@ -118,6 +159,7 @@ impl AppState {
             devices: DeviceRegistry::new(DeviceRegistry::default_path()),
             conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_WS_CONNECTIONS)),
             clients: ClientRegistry::default(),
+            notif_tx: tokio::sync::broadcast::channel(128).0,
         }
     }
 
@@ -139,17 +181,163 @@ impl AppState {
     }
 }
 
-/// Spawns the background monitor that scans active agent sessions and automatically
-/// dispatches Web Push alerts to mobile clients when approval is needed or a turn finishes.
-/// Conforms to Orca's TerminalAgentPhonePush & TerminalAgentTurnNews architecture
-/// (ref/orca/src/main/runtime/push/notifications/terminal-agent-phone-push.ts:45-135).
+fn desktop_notifications_enabled() -> bool {
+    !matches!(std::env::var("CMUX_DESKTOP_NOTIFY").as_deref(), Ok("0" | "false" | "FALSE"))
+}
+
+fn surface_context_from_tree(
+    tree: &serde_json::Value,
+    ws_dirs: &HashMap<String, String>,
+    surface_id: &str,
+    fallback_dir: Option<&str>,
+) -> SurfaceContext {
+    for win in tree.get("windows").and_then(|w| w.as_array()).into_iter().flatten() {
+        for ws in win.get("workspaces").and_then(|w| w.as_array()).into_iter().flatten() {
+            let ws_id = ws.get("id").and_then(|v| v.as_str()).unwrap_or("");
+            let ws_title = ws.get("title").and_then(|v| v.as_str()).map(str::to_string);
+            let ws_dir = ws_dirs
+                .get(ws_id)
+                .cloned()
+                .or_else(|| fallback_dir.map(str::to_string));
+            for pane in ws.get("panes").and_then(|p| p.as_array()).into_iter().flatten() {
+                for s in pane.get("surfaces").and_then(|s| s.as_array()).into_iter().flatten() {
+                    let id_match = s.get("id").and_then(|v| v.as_str()) == Some(surface_id);
+                    let ref_match = s.get("ref").and_then(|v| v.as_str()) == Some(surface_id);
+                    if id_match || ref_match {
+                        return SurfaceContext {
+                            workspace_title: ws_title,
+                            workspace_dir: ws_dir,
+                            surface_title: s.get("title").and_then(|v| v.as_str()).map(str::to_string),
+                        };
+                    }
+                }
+            }
+        }
+    }
+    SurfaceContext {
+        workspace_title: None,
+        workspace_dir: fallback_dir.map(str::to_string),
+        surface_title: None,
+    }
+}
+
+async fn workspace_dirs_map(bridge: &DualTransportCmuxBridge) -> HashMap<String, String> {
+    let mut map = HashMap::new();
+    let Ok(raw) = bridge.rpc_call("workspace.list", None).await else {
+        return map;
+    };
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(&raw) else {
+        return map;
+    };
+    for ws in val.get("workspaces").and_then(|w| w.as_array()).into_iter().flatten() {
+        if let (Some(id), Some(dir)) = (
+            ws.get("id").and_then(|v| v.as_str()),
+            ws.get("current_directory").and_then(|v| v.as_str()),
+        ) {
+            map.insert(id.to_string(), dir.to_string());
+        }
+    }
+    map
+}
+
+async fn lookup_surface_context(
+    bridge: &DualTransportCmuxBridge,
+    surface_id: &str,
+    fallback_dir: Option<&str>,
+) -> SurfaceContext {
+    let tree_fut = bridge.run_command("tree", &["--json", "--id-format", "both"]);
+    let dirs_fut = workspace_dirs_map(bridge);
+    let (tree_res, dirs) = tokio::join!(tree_fut, dirs_fut);
+    if let Ok(raw) = tree_res {
+        if let Ok(tree) = serde_json::from_str::<serde_json::Value>(&raw) {
+            return surface_context_from_tree(&tree, &dirs, surface_id, fallback_dir);
+        }
+    }
+    SurfaceContext {
+        workspace_title: None,
+        workspace_dir: fallback_dir.map(str::to_string),
+        surface_title: None,
+    }
+}
+
+async fn emit_alert(
+    state: &AppState,
+    notification_id: &str,
+    surface_id: &str,
+    workspace_id: &str,
+    content: &NotificationContent,
+) {
+    let data = serde_json::json!({
+        "notificationId": notification_id,
+        "surfaceId": surface_id,
+        "workspaceId": workspace_id,
+        "category": content.category,
+        "agent": content.agent_kind,
+        "agentDisplay": content.agent_display,
+        "urgent": content.urgent,
+        "tag": content.tag,
+    });
+    let excluded = state.clients.devices_viewing_surface(surface_id);
+    state
+        .push_service
+        .dispatch_excluding_devices(&content.title, &content.body, Some(&content.tag), data.clone(), &excluded)
+        .await;
+
+    let ws_payload = serde_json::json!({
+        "notification_id": notification_id,
+        "surface_id": surface_id,
+        "workspace_id": workspace_id,
+        "category": content.category,
+        "agent": content.agent_kind,
+        "agent_display": content.agent_display,
+        "title": content.title,
+        "subtitle": content.subtitle,
+        "body": content.body,
+        "tag": content.tag,
+        "urgent": content.urgent,
+    });
+    let frame = JsonRpcResponse::event_value(EVENT_NOTIFICATION_ALERT, ws_payload);
+    if let Ok(text) = serde_json::to_string(&frame) {
+        let _ = state.notif_tx.send(NotificationBroadcast::Alert {
+            surface_id: surface_id.to_string(),
+            frame: text,
+        });
+    }
+
+    if desktop_notifications_enabled() {
+        let _ = state
+            .cmux_bridge
+            .notify_desktop(surface_id, &content.title, content.subtitle.as_deref(), &content.body)
+            .await;
+    }
+}
+
+async fn emit_dismiss(state: &AppState, surface_id: &str, tags: &[String]) {
+    let frame = JsonRpcResponse::event_value(
+        EVENT_NOTIFICATION_DISMISS,
+        serde_json::json!({
+            "surface_id": surface_id,
+            "tags": tags,
+        }),
+    );
+    if let Ok(text) = serde_json::to_string(&frame) {
+        let _ = state.notif_tx.send(NotificationBroadcast::Dismiss {
+            surface_id: surface_id.to_string(),
+            frame: text,
+        });
+    }
+    if desktop_notifications_enabled() {
+        let _ = state.cmux_bridge.clear_notifications(surface_id).await;
+    }
+}
+
+/// Spawns the background monitor that scans active top-level agent sessions and dispatches
+/// Orca-style alerts to macOS desktop (`cmux notify --desktop true`), connected WebSocket clients,
+/// and Web Push mobile subscribers without gating on desktop idle state.
 pub fn spawn_push_dispatcher(state: AppState) -> tokio::task::JoinHandle<()> {
     tokio::spawn(async move {
-        let mut interval = tokio::time::interval(Duration::from_millis(2000));
-        // Edge-triggered: remember the last lifecycle per session and notify only on a transition.
-        // The first scan only records a baseline, so old finished sessions never alert.
-        let mut last_seen: std::collections::HashMap<String, crate::protocol::event::AgentLifecycleState> =
-            std::collections::HashMap::new();
+        let mut interval = tokio::time::interval(Duration::from_millis(500));
+        let mut engine = NotificationEngine::default();
         let mut baseline_done = false;
         let mut ticks: u64 = 0;
         loop {
@@ -158,57 +346,59 @@ pub fn spawn_push_dispatcher(state: AppState) -> tokio::task::JoinHandle<()> {
             // Every ~10 minutes: devices idle past the TTL are gone, and so must their push subscriptions
             // (otherwise agent text keeps flowing to a phone that can no longer authenticate).
             ticks += 1;
-            if ticks % 300 == 1 {
+            if ticks % 1200 == 1 {
                 for id in state.devices.prune_expired() {
                     state.push_service.unregister_device(&id);
                 }
             }
 
-            // Scan ~/.cmuxterm/*-hook-sessions.json
             let dir = HookStoreIndex::default_cmuxterm_dir();
-            let index = HookStoreIndex::scan_dir(&dir);
-            for (_session_id, record) in index.sessions_by_id {
-                let lifecycle = record.live_lifecycle();
-                let agent_name = record.agent_kind.as_deref().unwrap_or("Agent");
+            let index = match tokio::task::spawn_blocking(move || HookStoreIndex::scan_dir(&dir)).await {
+                Ok(idx) => idx,
+                Err(_) => continue,
+            };
+            let sessions = index.active_top_level_sessions_by_surface();
 
-                // Subagent turns finish constantly inside one user turn; only the top-level
-                // conversation is user-facing.
-                if record.parent_session_id().is_some() {
-                    continue;
-                }
-                let prev = last_seen.insert(record.session_id.clone(), lifecycle);
-                // Skip the baseline scan and sessions whose state did not change.
-                if !baseline_done || prev == Some(lifecycle) {
-                    continue;
-                }
+            if !baseline_done {
+                engine.seed(&sessions);
+                baseline_done = true;
+                continue;
+            }
 
-                if lifecycle == crate::protocol::event::AgentLifecycleState::Waiting {
-                    // Agent needs permission / approval
-                    if state.push_service.should_dispatch(&record.surface_id, "needs-permission", 15) {
-                        let title = format!("{agent_name} Needs Approval");
-                        let body = record.last_body.clone().unwrap_or_else(|| "Agent requested approval".to_string());
-                        let data = serde_json::json!({
-                            "surfaceId": record.surface_id,
-                            "category": "needs-permission",
-                            "agent": agent_name
-                        });
-                        state.push_service.dispatch(&title, &body, Some("cmux-agent"), data).await;
+            let events = engine.step(&sessions, Instant::now());
+            for ev in events {
+                match ev {
+                    EngineEvent::Dismiss { surface_id, tags } => {
+                        emit_dismiss(&state, &surface_id, &tags).await;
                     }
-                } else if lifecycle == crate::protocol::event::AgentLifecycleState::Done {
-                    // Agent turn finished
-                    if state.push_service.should_dispatch(&record.surface_id, "turn-finished", 20) {
-                        let title = format!("{agent_name} Turn Complete");
-                        let body = record.last_subtitle.clone().unwrap_or_else(|| "Turn finished".to_string());
-                        let data = serde_json::json!({
-                            "surfaceId": record.surface_id,
-                            "category": "turn-finished",
-                            "agent": agent_name
-                        });
-                        state.push_service.dispatch(&title, &body, Some("cmux-agent"), data).await;
+                    EngineEvent::Alert {
+                        notification_id,
+                        surface_id,
+                        workspace_id,
+                        lifecycle,
+                        record,
+                        ..
+                    } => {
+                        let ctx = lookup_surface_context(
+                            &state.cmux_bridge,
+                            &surface_id,
+                            record.cwd.as_deref(),
+                        )
+                        .await;
+                        let rec_clone = record.clone();
+                        let content = tokio::task::spawn_blocking(move || {
+                            build_notification_content(&rec_clone, lifecycle, &ctx)
+                        })
+                        .await;
+                        let Ok(content) = content else { continue };
+
+                        // Orca burst cooldown (NOTIFICATION_COOLDOWN_MS = 5000ms)
+                        if state.push_service.should_dispatch(&surface_id, content.category, 5) {
+                            emit_alert(&state, &notification_id, &surface_id, &workspace_id, &content).await;
+                        }
                     }
                 }
             }
-            baseline_done = true;
         }
     })
 }
@@ -220,44 +410,62 @@ pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
     use crate::cmux::startup_dialog::registry;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3));
+        let mut active_dialogs: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut seq: u64 = 0;
         loop {
             interval.tick().await;
             let recent = tokio::task::spawn_blocking(|| WorkspaceTreeBuilder::scan_recent_agent_ttys(300))
                 .await
                 .unwrap_or_default();
             if recent.is_empty() {
+                for sid in active_dialogs.drain() {
+                    emit_dismiss(&state, &sid, &[make_push_tag(&sid, "cmux-dialog")]).await;
+                }
                 continue;
             }
             let Ok(raw) = state.cmux_bridge.run_command("tree", &["--json", "--id-format", "both"]).await else {
                 continue;
             };
             let Ok(tree) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+            let ws_dirs = workspace_dirs_map(&state.cmux_bridge).await;
+            let mut seen_dialogs = std::collections::HashSet::new();
             for (surface_id, tty) in terminal_surfaces(&tree) {
                 let Some((_, agent)) = recent.iter().find(|(t, _)| *t == tty) else { continue };
                 match state.cmux_bridge.current_dialog(Some(&surface_id)).await {
                     Some(d) => {
                         registry::set(&surface_id, Some(&d.fingerprint));
-                        let category = format!("dialog:{}", d.fingerprint);
-                        if state.push_service.should_dispatch(&surface_id, &category, 3600) {
-                            let title = format!("{} needs your answer", display_agent(agent));
-                            let data = serde_json::json!({
-                                "surfaceId": surface_id,
-                                "category": "needs-permission",
-                                "agent": agent,
-                            });
-                            state.push_service.dispatch(&title, &d.title, Some("cmux-dialog"), data).await;
+                        seen_dialogs.insert(surface_id.clone());
+                        active_dialogs.insert(surface_id.clone());
+                        let cooldown_cat = format!("dialog:{}", d.fingerprint);
+                        if state.push_service.should_dispatch(&surface_id, &cooldown_cat, 3600) {
+                            let ctx = surface_context_from_tree(&tree, &ws_dirs, &surface_id, None);
+                            let content = build_dialog_notification_content(&surface_id, agent, &d.title, &ctx);
+                            seq = seq.wrapping_add(1);
+                            let notif_id = format!("dlg-{seq}");
+                            emit_alert(&state, &notif_id, &surface_id, "", &content).await;
                         }
                     }
-                    None => registry::set(&surface_id, None),
+                    None => {
+                        registry::set(&surface_id, None);
+                        if active_dialogs.remove(&surface_id) {
+                            emit_dismiss(&state, &surface_id, &[make_push_tag(&surface_id, "cmux-dialog")]).await;
+                        }
+                    }
                 }
+            }
+            let gone: Vec<String> = active_dialogs
+                .iter()
+                .filter(|sid| !seen_dialogs.contains(*sid))
+                .cloned()
+                .collect();
+            for sid in gone {
+                active_dialogs.remove(&sid);
+                emit_dismiss(&state, &sid, &[make_push_tag(&sid, "cmux-dialog")]).await;
             }
         }
     })
 }
 
-fn display_agent(kind: &str) -> String {
-    crate::cmux::agents::display_name(kind)
-}
 
 /// (surface uuid, tty) of every terminal surface in a `cmux tree --json --id-format both` document.
 fn terminal_surfaces(tree: &serde_json::Value) -> Vec<(String, String)> {
@@ -583,12 +791,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs())
             .unwrap_or(0),
+        viewing_surface: None,
+        client_visible: false,
     });
 
     // 2. Authenticated Message Dispatch Loop.
     // Server-push frames (chat subscriptions) arrive over `out_rx` and are interleaved with
     // client requests, so a single socket carries both request/response and event traffic.
     let (out_tx, mut out_rx) = mpsc::channel::<String>(32);
+    let mut notif_rx = state.notif_tx.subscribe();
     let mut subs: HashMap<String, JoinHandle<()>> = HashMap::new();
     let mut term_subs: HashMap<String, TerminalSubscriptionHandle> = HashMap::new();
 
@@ -631,6 +842,29 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
                                     }
                                     METHOD_TERMINAL_VIEWPORT => {
                                         handle_terminal_viewport(&rpc_req, &state, &term_subs).await
+                                    }
+                                    METHOD_CLIENT_VIEWING => {
+                                        let surface_id = rpc_req
+                                            .params
+                                            .get("surface_id")
+                                            .and_then(|v| v.as_str())
+                                            .filter(|s| !s.is_empty())
+                                            .map(str::to_string);
+                                        let visible = rpc_req
+                                            .params
+                                            .get("visible")
+                                            .and_then(|v| v.as_bool())
+                                            .unwrap_or(true);
+                                        state.clients.set_viewing(&session_id, surface_id.clone(), visible);
+                                        JsonRpcResponse::result(
+                                            rpc_req.id.clone(),
+                                            serde_json::json!({
+                                                "ok": true,
+                                                "surface_id": surface_id,
+                                                "visible": visible,
+                                            }),
+                                        )
+                                        .unwrap()
                                     }
                                     _ => {
                                         let mut rpc_req = rpc_req;
@@ -701,6 +935,28 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
                     break;
                 }
             }
+            recv_res = notif_rx.recv() => {
+                if !state.token_valid(&session_token) {
+                    warn!("Session {} closed: token revoked or expired", session_id);
+                    break;
+                }
+                match recv_res {
+                    Ok(NotificationBroadcast::Alert { surface_id, frame }) => {
+                        if !state.clients.is_session_viewing(&session_id, &surface_id)
+                            && socket.send(Message::Text(frame.into())).await.is_err()
+                        {
+                            break;
+                        }
+                    }
+                    Ok(NotificationBroadcast::Dismiss { frame, .. }) => {
+                        if socket.send(Message::Text(frame.into())).await.is_err() {
+                            break;
+                        }
+                    }
+                    Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => {}
+                    Err(tokio::sync::broadcast::error::RecvError::Closed) => break,
+                }
+            }
         }
     }
 
@@ -724,6 +980,8 @@ const MAX_SUBSCRIPTIONS: usize = 8;
 /// Event name pushed to subscribed clients; payload matches `mobile.chat.readSession`.
 pub const EVENT_CHAT_UPDATE: &str = "mobile.chat.update";
 pub const EVENT_TERMINAL_UPDATE: &str = "mobile.terminal.update";
+pub const EVENT_NOTIFICATION_ALERT: &str = "mobile.notification.alert";
+pub const EVENT_NOTIFICATION_DISMISS: &str = "mobile.notification.dismiss";
 
 #[derive(Debug, Clone)]
 struct TerminalStreamConfig {
@@ -1144,6 +1402,8 @@ struct ResolvedSession {
     lifecycle: AgentLifecycleState,
     last_event: Option<String>,
     last_subtitle: Option<String>,
+    last_body: Option<String>,
+    tool_name: Option<String>,
     /// Resolved through the (expensive) cmux tree rather than the hook store.
     from_tree: bool,
 }
@@ -1183,6 +1443,8 @@ async fn resolve_session_raw(state: &AppState, surface_id: &str, session_id: &st
             lifecycle: rec.live_lifecycle(),
             last_event: rec.hook_event_name.clone(),
             last_subtitle: rec.last_subtitle.clone(),
+            last_body: rec.last_body.clone(),
+            tool_name: rec.tool_name.clone(),
             from_tree: false,
         });
     }
@@ -1213,6 +1475,8 @@ async fn resolve_session_raw(state: &AppState, surface_id: &str, session_id: &st
         lifecycle,
         last_event: None,
         last_subtitle: subtitle,
+        last_body: None,
+        tool_name: None,
         from_tree: true,
     })
 }
@@ -1226,12 +1490,184 @@ fn empty_session_json(surface_id: &str, agent_kind: &str) -> serde_json::Value {
         "lifecycle_state": "ready",
         "last_event": serde_json::Value::Null,
         "last_subtitle": "Ready for prompt",
+        "awaiting_prompt": serde_json::Value::Null,
         "turns": []
     })
 }
 
+fn is_numbered_choice_line(line: &str, prefix: &str) -> bool {
+    let t = line.trim_start_matches(['›', '❯', '>', ' ']);
+    t.starts_with(prefix)
+}
+
+fn clean_box_line(raw: &str) -> String {
+    raw.trim()
+        .trim_matches('│')
+        .trim_matches('┃')
+        .trim()
+        .to_string()
+}
+
+fn is_box_border_line(line: &str) -> bool {
+    if line.is_empty() {
+        return false;
+    }
+    let first = line.chars().next().unwrap_or(' ');
+    if matches!(first, '╭' | '┌' | '╰' | '└') {
+        return true;
+    }
+    line.chars().count() >= 4 && line.chars().all(|c| matches!(c, '─' | '━' | '═' | '-' | ' '))
+}
+
+/// Extracts the approval question/command shown above numbered choices (`1. ...`) on the terminal screen.
+fn extract_approval_screen_context(screen: &str) -> Option<String> {
+    let lines: Vec<String> = screen.lines().map(clean_box_line).collect();
+    let first_opt_idx = lines.iter().rposition(|l| is_numbered_choice_line(l, "1."))?;
+    let lookahead_end = (first_opt_idx + 9).min(lines.len());
+    let has_dialog_tail = lines[first_opt_idx + 1..lookahead_end].iter().any(|l| {
+        let lower = l.to_ascii_lowercase();
+        is_numbered_choice_line(l, "2.")
+            || is_numbered_choice_line(l, "3.")
+            || ((lower.contains("confirm") || lower.contains("cancel") || lower.contains("select"))
+                && (lower.contains("esc") || lower.contains("enter")))
+    });
+    if !has_dialog_tail {
+        return None;
+    }
+
+    let mut collected = Vec::new();
+    let mut blank_streak = 0usize;
+    for line in lines[..first_opt_idx].iter().rev() {
+        if is_box_border_line(line) {
+            if !collected.is_empty() {
+                break;
+            }
+            continue;
+        }
+        if line.is_empty() {
+            blank_streak += 1;
+            if blank_streak >= 2 && !collected.is_empty() {
+                break;
+            }
+            continue;
+        }
+        blank_streak = 0;
+        if matches!(line.as_str(), "›" | "❯") {
+            break;
+        }
+        collected.push(line.clone());
+        if collected.len() >= 8 {
+            break;
+        }
+    }
+    if collected.is_empty() {
+        return None;
+    }
+    collected.reverse();
+    let joined = collected.join("\n");
+    let trimmed = joined.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    if trimmed.chars().count() <= 360 {
+        Some(trimmed.to_string())
+    } else {
+        let mut out: String = trimmed.chars().take(359).collect();
+        out.push('…');
+        Some(out)
+    }
+}
+
+fn summarize_tool_detail(detail: &str) -> String {
+    if let Ok(serde_json::Value::Object(map)) = serde_json::from_str::<serde_json::Value>(detail) {
+        let primary = ["cmd", "command", "file_path", "path", "patch", "url", "pattern", "query", "script"]
+            .into_iter()
+            .find_map(|k| map.get(k).and_then(|v| v.as_str()).map(|s| normalize_text(Some(s), 200)))
+            .filter(|s| !s.is_empty());
+        let reason = ["justification", "reason"]
+            .into_iter()
+            .find_map(|k| map.get(k).and_then(|v| v.as_str()).map(|s| normalize_text(Some(s), 120)))
+            .filter(|s| !s.is_empty());
+        match (primary, reason) {
+            (Some(p), Some(r)) => return format!("{r}\n{p}"),
+            (Some(p), None) => return p,
+            (None, Some(r)) => return r,
+            (None, None) => {}
+        }
+    }
+    normalize_text(Some(detail), 220)
+}
+
+fn derive_pending_tool_prompt(turns: &[AgentTurn]) -> Option<String> {
+    let mut ended = std::collections::HashSet::new();
+    for turn in turns {
+        for ev in &turn.events {
+            if let AgentEvent::ToolEnd { tool_id, .. } = ev {
+                ended.insert(tool_id.as_str());
+            }
+        }
+    }
+    for turn in turns.iter().rev() {
+        for ev in turn.events.iter().rev() {
+            if let AgentEvent::ToolStart { tool_id, name, detail } = ev {
+                if ended.contains(tool_id.as_str()) {
+                    continue;
+                }
+                let tool = normalize_text(Some(name), 60);
+                let summary = detail.as_deref().map(summarize_tool_detail).unwrap_or_default();
+                if !tool.is_empty() && !summary.is_empty() {
+                    return Some(format!("{tool}: {summary}"));
+                }
+                if !tool.is_empty() {
+                    return Some(format!("Approve tool: {tool}"));
+                }
+            }
+        }
+    }
+    None
+}
+
+fn derive_awaiting_prompt(
+    res: &ResolvedSession,
+    turns: &[AgentTurn],
+    screen_context: Option<&str>,
+) -> Option<String> {
+    if res.lifecycle != AgentLifecycleState::Waiting {
+        return None;
+    }
+    let body = normalize_text(res.last_body.as_deref(), 240);
+    if !body.is_empty()
+        && !is_generic_placeholder(&body)
+        && !body.eq_ignore_ascii_case("approval needed")
+    {
+        return Some(body);
+    }
+    if let Some(screen_text) = screen_context.map(str::trim).filter(|s| !s.is_empty()) {
+        return Some(screen_text.to_string());
+    }
+    if let Some(pending) = derive_pending_tool_prompt(turns) {
+        return Some(pending);
+    }
+    let tool = normalize_text(res.tool_name.as_deref(), 60);
+    if !tool.is_empty() {
+        return Some(format!("Approve tool: {tool}"));
+    }
+    if !body.is_empty() {
+        return Some(body);
+    }
+    let subtitle = normalize_text(res.last_subtitle.as_deref(), 160);
+    if !subtitle.is_empty() && !is_generic_placeholder(&subtitle) {
+        return Some(subtitle);
+    }
+    Some("Agent requested approval".to_string())
+}
+
 /// Build the `readSession` payload for a resolved session (blocking file IO).
-fn session_json(res: &ResolvedSession, max_turns: usize) -> Result<serde_json::Value, std::io::Error> {
+fn session_json(
+    res: &ResolvedSession,
+    max_turns: usize,
+    screen_context: Option<&str>,
+) -> Result<serde_json::Value, std::io::Error> {
     let (turns, total_turns) = match &res.transcript_path {
         Some(p) => TranscriptReader::read_recent_turns_page(std::path::Path::new(p), &res.surface_id, max_turns)?,
         None => (Vec::new(), 0),
@@ -1245,6 +1681,7 @@ fn session_json(res: &ResolvedSession, max_turns: usize) -> Result<serde_json::V
     } else {
         None
     };
+    let awaiting_prompt = derive_awaiting_prompt(res, &turns, screen_context);
     Ok(serde_json::json!({
         "activity": activity,
         "session_id": res.session_id,
@@ -1254,6 +1691,7 @@ fn session_json(res: &ResolvedSession, max_turns: usize) -> Result<serde_json::V
         "lifecycle_state": res.lifecycle,
         "last_event": res.last_event,
         "last_subtitle": res.last_subtitle,
+        "awaiting_prompt": awaiting_prompt,
         "has_more": has_more,
         "total_turns": total_turns,
         "turns": turns
@@ -1301,8 +1739,8 @@ fn fingerprint(res: &Option<ResolvedSession>) -> String {
         })
         .unwrap_or((0, 0));
     format!(
-        "{}|{:?}|{:?}|{:?}|{mtime}|{len}",
-        r.session_id, r.lifecycle, r.last_event, r.last_subtitle
+        "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{mtime}|{len}",
+        r.session_id, r.lifecycle, r.last_event, r.last_subtitle, r.last_body, r.tool_name
     )
 }
 
@@ -1325,6 +1763,7 @@ async fn chat_watcher(
     // Startup dialogs only show while the agent is not mid-turn; the screen is read at most every 2 s.
     const DIALOG_POLL: Duration = Duration::from_secs(2);
     let mut dialog: (serde_json::Value, Option<Instant>) = (serde_json::Value::Null, None);
+    let mut approval_screen: (Option<String>, Option<Instant>) = (None, None);
 
     loop {
         interval.tick().await;
@@ -1358,15 +1797,33 @@ async fn chat_watcher(
         } else if dialog.1.map_or(true, |at| at.elapsed() >= DIALOG_POLL) {
             dialog = (startup_dialog_value(&state, &surface_id).await, Some(Instant::now()));
         }
+        let waiting = resolved.as_ref().is_some_and(|r| r.lifecycle == AgentLifecycleState::Waiting);
+        if !waiting {
+            approval_screen = (None, None);
+        } else if approval_screen.1.map_or(true, |at| at.elapsed() >= DIALOG_POLL) {
+            let extracted = state
+                .cmux_bridge
+                .capture_pane(Some(&surface_id), 35, false)
+                .await
+                .ok()
+                .as_deref()
+                .and_then(extract_approval_screen_context);
+            approval_screen = (extracted, Some(Instant::now()));
+        }
         let dialog_fp = dialog.0.get("fingerprint").and_then(|f| f.as_str()).unwrap_or("");
-        let fp = format!("{}|{dialog_fp}", fingerprint(&resolved));
+        let screen_fp = approval_screen.0.as_deref().unwrap_or("");
+        let fp = format!("{}|{dialog_fp}|{screen_fp}", fingerprint(&resolved));
         if last_fp.as_deref() == Some(fp.as_str()) {
             continue;
         }
 
         let payload = match resolved {
             Some(res) => {
-                let built = tokio::task::spawn_blocking(move || session_json(&res, max_turns)).await;
+                let screen_ctx = approval_screen.0.clone();
+                let built = tokio::task::spawn_blocking(move || {
+                    session_json(&res, max_turns, screen_ctx.as_deref())
+                })
+                .await;
                 match built {
                     Ok(Ok(v)) => v,
                     _ => continue,
@@ -1549,7 +2006,22 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
             let dialog = startup_dialog_value(state, surface_id).await;
             match resolve_session(state, surface_id, session_id).await {
                 Some(res) => {
-                    match tokio::task::spawn_blocking(move || session_json(&res, max_turns)).await {
+                    let screen_ctx = if res.lifecycle == AgentLifecycleState::Waiting {
+                        state
+                            .cmux_bridge
+                            .capture_pane(Some(&res.surface_id), 35, false)
+                            .await
+                            .ok()
+                            .as_deref()
+                            .and_then(extract_approval_screen_context)
+                    } else {
+                        None
+                    };
+                    match tokio::task::spawn_blocking(move || {
+                        session_json(&res, max_turns, screen_ctx.as_deref())
+                    })
+                    .await
+                    {
                         Ok(Ok(mut v)) => {
                             v["startup_dialog"] = dialog;
                             JsonRpcResponse::result_value(req.id.clone(), v)
@@ -2479,18 +2951,117 @@ mod tests {
         let reg = ClientRegistry::default();
         let info = |id: &str, at: u64| ClientInfo {
             session_id: id.into(),
-            device_id: None,
+            device_id: Some(format!("dev-{id}")),
             label: "gateway token".into(),
             user_agent: String::new(),
             connected_at: at,
+            viewing_surface: None,
+            client_visible: false,
         };
         let a = reg.register(info("a", 2));
         let b = reg.register(info("b", 1));
         let ids: Vec<String> = reg.list().into_iter().map(|c| c.session_id).collect();
         assert_eq!(ids, ["b", "a"], "oldest connection first");
+        reg.set_viewing("a", Some("surf-1".into()), true);
+        assert!(reg.is_session_viewing("a", "surf-1"));
+        assert!(!reg.is_session_viewing("a", "surf-2"));
+        assert_eq!(reg.devices_viewing_surface("surf-1"), std::collections::HashSet::from(["dev-a".to_string()]));
+        reg.set_viewing("a", Some("surf-1".into()), false);
+        assert!(!reg.is_session_viewing("a", "surf-1"));
+        assert!(reg.devices_viewing_surface("surf-1").is_empty());
         drop(a);
         assert_eq!(reg.list().len(), 1);
         drop(b);
         assert!(reg.list().is_empty());
+    }
+
+    #[test]
+    fn derive_awaiting_prompt_prefers_rich_body_or_tool_name() {
+        let base = ResolvedSession {
+            session_id: "s1".into(),
+            surface_id: "surf-1".into(),
+            agent_kind: "codex".into(),
+            transcript_path: None,
+            lifecycle: AgentLifecycleState::Waiting,
+            last_event: Some("PermissionRequest".into()),
+            last_subtitle: Some("Permission".into()),
+            last_body: Some("Approval needed".into()),
+            tool_name: Some("Bash".into()),
+            from_tree: false,
+        };
+        assert_eq!(derive_awaiting_prompt(&base, &[], None).as_deref(), Some("Approve tool: Bash"));
+
+        let rich = ResolvedSession {
+            last_body: Some("Run npm test in workspace".into()),
+            ..base.clone()
+        };
+        assert_eq!(
+            derive_awaiting_prompt(&rich, &[], None).as_deref(),
+            Some("Run npm test in workspace")
+        );
+
+        let pending_turns = vec![AgentTurn {
+            id: "t1".into(),
+            surface_id: "surf-1".into(),
+            role: crate::protocol::event::AgentRole::Assistant,
+            timestamp: None,
+            events: vec![AgentEvent::ToolStart {
+                tool_id: "c1".into(),
+                name: "exec_command".into(),
+                detail: Some(r#"{"cmd":"npm test","justification":"Run tests"}"#.into()),
+            }],
+        }];
+        assert_eq!(
+            derive_awaiting_prompt(&base, &pending_turns, None).as_deref(),
+            Some("exec_command: Run tests\nnpm test")
+        );
+        assert_eq!(
+            derive_awaiting_prompt(
+                &base,
+                &pending_turns,
+                Some("Would you like to run the following command?\n$ touch made.txt"),
+            )
+            .as_deref(),
+            Some("Would you like to run the following command?\n$ touch made.txt")
+        );
+
+        let generic_no_tool = ResolvedSession {
+            tool_name: None,
+            ..base.clone()
+        };
+        assert_eq!(
+            derive_awaiting_prompt(&generic_no_tool, &[], None).as_deref(),
+            Some("Approval needed")
+        );
+
+        let idle = ResolvedSession {
+            lifecycle: AgentLifecycleState::Idle,
+            ..base
+        };
+        assert_eq!(derive_awaiting_prompt(&idle, &[], None), None);
+    }
+
+    #[test]
+    fn extract_approval_screen_context_parses_codex_and_claude_prompts() {
+        let codex_screen = "\
+• Checking status
+────────────────────────────────────
+Would you like to run the following command?
+
+  Reason: Check git status
+  $ git status -sb
+
+› 1. Yes, proceed (y)
+  2. Yes, and don't ask again for commands that start with `git status` (p)
+  3. No, and tell Codex what to do differently (esc)
+
+  Press enter to confirm or esc to cancel";
+        assert_eq!(
+            extract_approval_screen_context(codex_screen).as_deref(),
+            Some("Would you like to run the following command?\nReason: Check git status\n$ git status -sb")
+        );
+
+        let normal_screen = "• Done\n› Ask Codex to do anything";
+        assert_eq!(extract_approval_screen_context(normal_screen), None);
     }
 }

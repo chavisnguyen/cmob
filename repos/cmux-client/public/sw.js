@@ -1,6 +1,6 @@
 /**
  * Service Worker for cmux-mobile PWA
- * Handles Web Push notifications (VAPID) and deep-linking to active sessions.
+ * Handles Web Push notifications (VAPID), automatic dismissal, and deep-linking to active sessions.
  * Conforms to RFC 8291 / RFC 8292 standards.
  */
 
@@ -12,11 +12,25 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(self.clients.claim());
 });
 
+async function closeNotificationsByTags(tags) {
+  if (!Array.isArray(tags) || tags.length === 0) return;
+  const tagSet = new Set(tags.filter((t) => typeof t === "string" && t.length > 0));
+  if (tagSet.size === 0) return;
+  const open = await self.registration.getNotifications();
+  for (const notification of open) {
+    if (notification.tag && tagSet.has(notification.tag)) {
+      notification.close();
+    }
+  }
+}
+
 self.addEventListener("push", (event) => {
   let payload = {
     title: "cmux Agent Alert",
     body: "Agent turn completed or awaiting approval.",
     tag: "cmux-agent",
+    kind: "alert",
+    tags: [],
     data: {},
   };
 
@@ -28,10 +42,24 @@ self.addEventListener("push", (event) => {
     }
   }
 
+  if (payload.kind === "dismiss") {
+    const tags =
+      Array.isArray(payload.tags) && payload.tags.length > 0
+        ? payload.tags
+        : payload.tag
+          ? [payload.tag]
+          : [];
+    event.waitUntil(closeNotificationsByTags(tags));
+    return;
+  }
+
+  const category = payload.data?.category;
   const isPermission =
-    payload.data?.category === "needs-permission" ||
+    category === "needs-permission" ||
+    category === "cmux-dialog" ||
     payload.title?.toLowerCase().includes("approval") ||
     payload.title?.toLowerCase().includes("permission");
+  const isUrgent = isPermission || category === "agent-error" || payload.data?.urgent === true;
 
   const actions = isPermission
     ? [
@@ -48,10 +76,16 @@ self.addEventListener("push", (event) => {
     data: payload.data || {},
     actions,
     requireInteraction: isPermission,
-    renotify: true,
+    renotify: isUrgent,
   };
 
   event.waitUntil(self.registration.showNotification(payload.title, options));
+});
+
+self.addEventListener("message", (event) => {
+  if (event.data?.type === "cmux.notification.dismiss") {
+    event.waitUntil(closeNotificationsByTags(event.data.tags));
+  }
 });
 
 self.addEventListener("notificationclick", (event) => {

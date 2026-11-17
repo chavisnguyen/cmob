@@ -447,6 +447,37 @@ impl DualTransportCmuxBridge {
         self.rpc("mobile.terminal.replay", params).await
     }
 
+    /// Posts a native macOS desktop banner and cmux panel entry bound to `surface_id`.
+    pub async fn notify_desktop(
+        &self,
+        surface_id: &str,
+        title: &str,
+        subtitle: Option<&str>,
+        body: &str,
+    ) -> Result<String, CmuxBridgeError> {
+        let mut args: Vec<&str> = vec![
+            "notify",
+            "--surface",
+            surface_id,
+            "--title",
+            title,
+            "--body",
+            body,
+            "--desktop",
+            "true",
+        ];
+        if let Some(sub) = subtitle.filter(|s| !s.trim().is_empty()) {
+            args.push("--subtitle");
+            args.push(sub);
+        }
+        self.run_command(args[0], &args[1..]).await
+    }
+
+    /// Clears cmux notifications for `surface_id` once the user or agent moves on.
+    pub async fn clear_notifications(&self, surface_id: &str) -> Result<String, CmuxBridgeError> {
+        self.run_command("notify", &["--surface", surface_id, "--clear"]).await
+    }
+
     /// Registers or updates the mobile participant viewport so cmux resizes the PTY.
     pub async fn terminal_set_viewport(
         &self,

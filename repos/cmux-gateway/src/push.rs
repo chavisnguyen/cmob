@@ -130,7 +130,7 @@ pub struct PushSubscription {
 }
 
 /// Categories the gateway emits (`category` in the dispatch data, see server.rs dispatchers).
-pub const PUSH_CATEGORIES: &[&str] = &["needs-permission", "turn-finished", "cmux-dialog"];
+pub const PUSH_CATEGORIES: &[&str] = &["needs-permission", "turn-finished", "agent-error", "cmux-dialog"];
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NotificationPayload {
@@ -309,12 +309,27 @@ impl PushService {
         tag: Option<&str>,
         data: serde_json::Value,
     ) -> usize {
+        let none = std::collections::HashSet::new();
+        self.dispatch_excluding_devices(title, body, tag, data, &none).await
+    }
+
+    /// Dispatches an alert to registered subscriptions, honouring category mutes and skipping any
+    /// `device_id` currently viewing the target surface (`suppressWhileViewing`).
+    pub async fn dispatch_excluding_devices(
+        &self,
+        title: &str,
+        body: &str,
+        tag: Option<&str>,
+        data: serde_json::Value,
+        excluded_devices: &std::collections::HashSet<String>,
+    ) -> usize {
         // Honour per-subscription opt-outs for this notification's category.
         let category = data.get("category").and_then(|c| c.as_str()).unwrap_or("").to_string();
         let subs: Vec<PushSubscription> = self
             .list()
             .into_iter()
             .filter(|s| !s.muted_categories.iter().any(|m| *m == category))
+            .filter(|s| !s.device_id.as_ref().is_some_and(|id| excluded_devices.contains(id)))
             .collect();
         let count = subs.len();
         let tag_str = tag.unwrap_or("cmux-agent").to_string();
@@ -352,7 +367,7 @@ impl PushService {
                 "title": title, "body": body, "tag": tag_str, "data": data,
             })
             .to_string();
-            let urgent = data.get("category").and_then(|c| c.as_str()) == Some("needs-permission");
+            let urgent = matches!(data.get("category").and_then(|c| c.as_str()), Some("needs-permission" | "agent-error" | "cmux-dialog"));
             for sub in subs {
                 let svc = self.clone();
                 let vapid = vapid.clone();

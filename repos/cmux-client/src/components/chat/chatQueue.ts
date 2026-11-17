@@ -1,3 +1,5 @@
+import type { AgentLifecycleState, AwaitingInput, StartupDialogInfo } from "../../protocol/event";
+
 /**
  * Client-side queue of messages typed while the agent is busy.
  *
@@ -50,3 +52,44 @@ export function canDrain(s: DrainState): boolean {
 
 /** How long the agent must stay idle before the next queued message goes out. */
 export const DRAIN_SETTLE_MS = 1500;
+
+export interface EffectiveAwaitingParams {
+  latestAwaiting: AwaitingInput | null;
+  lifecycleState?: AgentLifecycleState;
+  isWorking: boolean;
+  startupDialog?: StartupDialogInfo | null;
+  awaitingPrompt?: string | null;
+}
+
+/**
+ * Resolves the active approval/question prompt. Transcript-derived `latestAwaiting` takes
+ * precedence; when the agent hook reports `waiting` without an `awaiting-input` transcript row
+ * (as Codex does on `PermissionRequest`), synthesize a 1-tap permission prompt from `awaitingPrompt`.
+ */
+export function resolveEffectiveAwaiting({
+  latestAwaiting,
+  lifecycleState,
+  isWorking,
+  startupDialog,
+  awaitingPrompt,
+}: EffectiveAwaitingParams): AwaitingInput | null {
+  if (latestAwaiting) return latestAwaiting;
+  if (lifecycleState === "waiting" && !isWorking && !startupDialog) {
+    return {
+      input_kind: "permission",
+      prompt: awaitingPrompt?.trim() || "Agent requested approval",
+    };
+  }
+  return null;
+}
+
+export function queueStatusLabel(params: {
+  index: number;
+  queuePaused: boolean;
+  lifecycleState?: AgentLifecycleState;
+  needsAnswer: boolean;
+}): string {
+  if (params.queuePaused && params.index === 0) return "Paused";
+  if (params.lifecycleState === "waiting" || params.needsAnswer) return "Waiting for approval";
+  return "Queued";
+}

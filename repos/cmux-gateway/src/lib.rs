@@ -1,6 +1,7 @@
 pub mod cmux;
 pub mod git_view;
 pub mod loopback;
+pub mod notifications;
 pub mod pairing_store;
 pub mod protocol;
 pub mod push;

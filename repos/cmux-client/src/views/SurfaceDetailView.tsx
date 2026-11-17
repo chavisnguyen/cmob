@@ -71,6 +71,7 @@ interface SessionSnapshot {
   lifecycle_state?: AgentLifecycleState;
   last_event?: string;
   last_subtitle?: string;
+  awaiting_prompt?: string | null;
   /** Live "what the agent is doing now" (e.g. "Running execute_bash"); never prose. */
   activity?: string | null;
   surface_id?: string;
@@ -126,6 +127,7 @@ export function SurfaceDetailView({
   const [isWorking, setIsWorking] = useState(false);
   const [lifecycleState, setLifecycleState] = useState<AgentLifecycleState>("idle");
   const [activityText, setActivityText] = useState<string | null>(null);
+  const [awaitingPrompt, setAwaitingPrompt] = useState<string | null>(null);
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
 
   const [showMoreMenu, setShowMoreMenu] = useState(false);
@@ -167,6 +169,7 @@ export function SurfaceDetailView({
     }
     // Gateways without the field never report a dialog.
     setStartupDialog(resp.startup_dialog ?? null);
+    setAwaitingPrompt(resp.awaiting_prompt ?? null);
     if (resp.lifecycle_state) {
       setLifecycleState(resp.lifecycle_state);
     } else if (resp.is_working !== undefined) {
@@ -721,6 +724,7 @@ export function SurfaceDetailView({
             isWorking={isWorking || hasFreshPending}
             lifecycleState={lifecycleState}
             activityText={activityText}
+            awaitingPrompt={awaitingPrompt}
             onSend={handleSendPrompt}
             onUploadImage={handleUploadImage}
             surfaceId={surface.id || surface.ref}

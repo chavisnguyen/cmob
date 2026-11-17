@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { canDrain, enqueue, removeQueued } from "./chatQueue";
+import {
+  canDrain,
+  enqueue,
+  queueStatusLabel,
+  removeQueued,
+  resolveEffectiveAwaiting,
+} from "./chatQueue";
 import { slashCommandsFor, suggestSlashCommands } from "./slashCommands";
 
 describe("slash commands", () => {
@@ -58,6 +64,50 @@ describe("message queue", () => {
     expect(canDrain({ ...idle, lifecycle: "waiting" })).toBe(false);
     expect(canDrain({ ...idle, lifecycle: "working" })).toBe(false);
     expect(canDrain({ ...idle, lifecycle: "done" })).toBe(true);
+  });
+
+  it("synthesizes a 1-tap approval prompt when lifecycle is waiting without transcript awaiting-input", () => {
+    expect(
+      resolveEffectiveAwaiting({
+        latestAwaiting: null,
+        lifecycleState: "waiting",
+        isWorking: false,
+        startupDialog: null,
+        awaitingPrompt: "Approve tool: Bash",
+      }),
+    ).toEqual({ input_kind: "permission", prompt: "Approve tool: Bash" });
+
+    expect(
+      resolveEffectiveAwaiting({
+        latestAwaiting: null,
+        lifecycleState: "waiting",
+        isWorking: true,
+        startupDialog: null,
+        awaitingPrompt: "Approve tool: Bash",
+      }),
+    ).toBeNull();
+  });
+
+  it("labels queued items accurately when paused or waiting for approval", () => {
+    expect(
+      queueStatusLabel({ index: 0, queuePaused: true, lifecycleState: "idle", needsAnswer: false }),
+    ).toBe("Paused");
+    expect(
+      queueStatusLabel({
+        index: 0,
+        queuePaused: false,
+        lifecycleState: "waiting",
+        needsAnswer: true,
+      }),
+    ).toBe("Waiting for approval");
+    expect(
+      queueStatusLabel({
+        index: 0,
+        queuePaused: false,
+        lifecycleState: "working",
+        needsAnswer: false,
+      }),
+    ).toBe("Queued");
   });
 });
 

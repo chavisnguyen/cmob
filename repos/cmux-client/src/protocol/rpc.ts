@@ -48,6 +48,7 @@ export const RPC_METHODS = {
   TERMINAL_SCROLL: "mobile.terminal.scroll",
   TERMINAL_SUBSCRIBE: "mobile.terminal.subscribe",
   TERMINAL_UNSUBSCRIBE: "mobile.terminal.unsubscribe",
+  CLIENT_VIEWING: "mobile.client.viewing",
 } as const;
 
 /** Server-push event names (frames carry `event` + `data`, no `id`). */
@@ -55,7 +56,28 @@ export const RPC_EVENTS = {
   /** Payload has the same shape as a `mobile.chat.readSession` result. */
   CHAT_UPDATE: "mobile.chat.update",
   TERMINAL_UPDATE: "mobile.terminal.update",
+  NOTIFICATION_ALERT: "mobile.notification.alert",
+  NOTIFICATION_DISMISS: "mobile.notification.dismiss",
 } as const;
+
+export interface NotificationAlertPayload {
+  notification_id: string;
+  surface_id: string;
+  workspace_id?: string;
+  category: "needs-permission" | "turn-finished" | "agent-error" | "cmux-dialog" | (string & {});
+  agent: string;
+  agent_display?: string;
+  title: string;
+  subtitle?: string | null;
+  body: string;
+  tag: string;
+  urgent: boolean;
+}
+
+export interface NotificationDismissPayload {
+  surface_id: string;
+  tags: string[];
+}
 
 export type RpcMethod = (typeof RPC_METHODS)[keyof typeof RPC_METHODS];
 

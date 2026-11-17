@@ -48,6 +48,9 @@ pub struct HookSessionRecord {
     pub agent_kind: Option<String>,
     #[serde(rename = "toolName", default)]
     pub tool_name: Option<String>,
+    /// True when this record belongs to a subagent/sidechain worker rather than the main chat.
+    #[serde(skip)]
+    pub is_subagent: bool,
 }
 
 const STALE_AFTER_SECS: f64 = 30.0 * 60.0;
@@ -175,6 +178,47 @@ pub fn resolve_codex_top_level_rollout(path: &str) -> String {
 /// transcript path -> parent session id (`None` = top-level). The first transcript line never
 /// changes, so it is read once per path.
 static PARENT_CACHE: LazyLock<Mutex<HashMap<String, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static SIDECHAIN_CACHE: LazyLock<Mutex<HashMap<String, bool>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+
+pub fn is_codex_subagent_rollout(path: &str) -> bool {
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut first = String::new();
+    if BufReader::new(std::io::Read::take(file, MAX_FIRST_LINE_BYTES))
+        .read_line(&mut first)
+        .is_err()
+        || first.trim().is_empty()
+    {
+        return false;
+    }
+    codex_parent_thread_id(&first).is_some()
+}
+
+pub fn is_claude_sidechain_file(path: &str) -> bool {
+    if let Some(hit) = SIDECHAIN_CACHE.lock().ok().and_then(|c| c.get(path).copied()) {
+        return hit;
+    }
+    let Ok(file) = fs::File::open(path) else {
+        return false;
+    };
+    let mut first = String::new();
+    if BufReader::new(std::io::Read::take(file, MAX_FIRST_LINE_BYTES))
+        .read_line(&mut first)
+        .is_err()
+        || first.trim().is_empty()
+    {
+        return false;
+    }
+    let sidechain = serde_json::from_str::<serde_json::Value>(first.trim())
+        .ok()
+        .and_then(|v| v.get("isSidechain").and_then(|s| s.as_bool()))
+        == Some(true);
+    if let Ok(mut c) = SIDECHAIN_CACHE.lock() {
+        c.insert(path.to_string(), sidechain);
+    }
+    sidechain
+}
 
 /// Parent conversation of a subagent transcript, from its first JSONL record.
 /// Verified on real Antigravity transcripts (~/.gemini/antigravity-cli/brain/<id>/.system_generated/logs/
@@ -205,6 +249,35 @@ pub fn parse_subagent_parent(first_line: &str) -> Option<String> {
 }
 
 impl HookSessionRecord {
+    /// True when this hook record represents a subagent worker (Antigravity, Claude, or Codex).
+    pub fn is_subagent_session(&self) -> bool {
+        if self.is_subagent || self.parent_session_id().is_some() {
+            return true;
+        }
+        if self.resolved_agent_kind() == "claude" {
+            if let Some(path) = self.transcript_path.as_deref() {
+                if is_claude_sidechain_file(path) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Completion timestamp of the latest finished turn in the transcript (if available), used to
+    /// deduplicate turn notifications (matching Orca `turnCompletedAt`).
+    pub fn turn_completed_stamp(&self) -> Option<f64> {
+        use crate::scanner::turn_marks::{claude_last_mark, codex_last_mark, read_tail, TurnMark};
+        let kind = crate::cmux::agents::spec_for(self.resolved_agent_kind()).map(|s| s.kind)?;
+        let path = self.transcript_path.as_deref()?;
+        let mark = match kind {
+            "claude" => claude_last_mark(&read_tail(path)?),
+            "codex" => codex_last_mark(&read_tail(path)?),
+            _ => None,
+        }?;
+        (mark.state == TurnMark::Completed).then_some(mark.at).flatten()
+    }
+
     /// `Some(parent_id)` when this session is a subagent spawned by another conversation.
     pub fn parent_session_id(&self) -> Option<String> {
         let path = self.transcript_path.as_deref()?;
@@ -240,16 +313,7 @@ impl HookSessionRecord {
             return AgentLifecycleState::Error;
         }
 
-        // 2. Waiting (needsInput, permission prompt, or ask_question tool)
-        if matches!(
-            self.agent_lifecycle.as_deref(),
-            Some("needsInput")
-        ) || matches!(
-            self.runtime_status.as_deref(),
-            Some("needsInput")
-        ) {
-            return AgentLifecycleState::Waiting;
-        }
+        // 2. Explicit Waiting hook events (permission prompt, ask_question tool, Notification needsInput)
         if let Some(event) = self.hook_event_name.as_deref() {
             if event == "PermissionRequest" {
                 return AgentLifecycleState::Waiting;
@@ -264,9 +328,15 @@ impl HookSessionRecord {
                     }
                 }
             }
+            if event == "Notification"
+                && (matches!(self.agent_lifecycle.as_deref(), Some("needsInput"))
+                    || matches!(self.runtime_status.as_deref(), Some("needsInput")))
+            {
+                return AgentLifecycleState::Waiting;
+            }
         }
 
-        // 3. Done / Finished
+        // 3. Done / Finished (authoritative Stop / turnSettled overrides stale needsInput)
         if let Some(event) = self.hook_event_name.as_deref() {
             if matches!(event, "Stop" | "session.created") {
                 return AgentLifecycleState::Done;
@@ -276,7 +346,24 @@ impl HookSessionRecord {
             return AgentLifecycleState::Done;
         }
 
-        // 4. Working / In-flight
+        // 4. Active prompt/tool hook with running status (Codex UserPromptSubmit leaves stale runtimeStatus: needsInput)
+        if matches!(
+            self.hook_event_name.as_deref(),
+            Some("PreInvocation" | "UserPromptSubmit" | "PostToolUse" | "PostInvocation")
+        ) && (self.agent_lifecycle.as_deref() == Some("running")
+            || self.runtime_status.as_deref() == Some("running"))
+        {
+            return AgentLifecycleState::Working;
+        }
+
+        // 5. Fallback Waiting when no overriding Stop/running hook supersedes needsInput
+        if matches!(self.agent_lifecycle.as_deref(), Some("needsInput"))
+            || matches!(self.runtime_status.as_deref(), Some("needsInput"))
+        {
+            return AgentLifecycleState::Waiting;
+        }
+
+        // 6. Working / In-flight
         if matches!(
             self.hook_event_name.as_deref(),
             Some("PreInvocation" | "UserPromptSubmit" | "PostToolUse" | "PostInvocation")
@@ -306,7 +393,7 @@ impl HookSessionRecord {
                 return AgentLifecycleState::Idle;
             }
         }
-        if base == AgentLifecycleState::Working {
+        if matches!(base, AgentLifecycleState::Working | AgentLifecycleState::Waiting) {
             if let Some(state) = self.transcript_override() {
                 return state;
             }
@@ -492,8 +579,14 @@ impl HookStoreIndex {
             }
             if record.agent_kind.as_deref() == Some("codex") {
                 if let Some(path) = record.transcript_path.take() {
+                    if is_codex_subagent_rollout(&path) {
+                        record.is_subagent = true;
+                    }
                     record.transcript_path = Some(resolve_codex_top_level_rollout(&path));
                 }
+            }
+            if record.is_subagent_session() {
+                record.is_subagent = true;
             }
 
             self.sessions_by_surface
@@ -517,13 +610,18 @@ impl HookStoreIndex {
     /// recently, but they are not the chat the user is having.
     pub fn get_active_session_for_surface(&self, surface_id: &str) -> Option<&HookSessionRecord> {
         let list = self.sessions_by_surface.get(surface_id)?;
-        let mut current = list.iter().max_by(|a, b| {
+        let by_latest = |a: &&HookSessionRecord, b: &&HookSessionRecord| {
             let a_time = a.updated_at.unwrap_or(0.0);
             let b_time = b.updated_at.unwrap_or(0.0);
             a_time
                 .partial_cmp(&b_time)
                 .unwrap_or(std::cmp::Ordering::Equal)
-        })?;
+        };
+        let mut current = list
+            .iter()
+            .filter(|r| !r.is_subagent_session())
+            .max_by(by_latest)
+            .or_else(|| list.iter().max_by(by_latest))?;
         for _ in 0..8 {
             match current.parent_session_id().and_then(|p| self.sessions_by_id.get(&p)) {
                 Some(parent) => current = parent,
@@ -531,6 +629,17 @@ impl HookStoreIndex {
             }
         }
         Some(current)
+    }
+
+    /// Returns one active, top-level (non-subagent) session per surface.
+    pub fn active_top_level_sessions_by_surface(&self) -> Vec<&HookSessionRecord> {
+        self.sessions_by_surface
+            .keys()
+            .filter_map(|surface_id| {
+                let rec = self.get_active_session_for_surface(surface_id)?;
+                (!rec.is_subagent_session()).then_some(rec)
+            })
+            .collect()
     }
 
     /// Check if any session belonging to this workspace is currently running
@@ -625,6 +734,7 @@ mod tests {
             launch_command: None,
             agent_kind: Some("antigravity".to_string()),
             tool_name: None,
+            is_subagent: false,
         };
 
         index.sessions_by_workspace.entry("ws1".to_string()).or_default().push(record_running.clone());
@@ -828,6 +938,54 @@ mod tests {
         let intr = format!(r#"{{"type":"user","interruptedMessageId":"x","timestamp":"{}","message":{{"role":"user","content":[{{"type":"text","text":"[Request interrupted by user]"}}]}}}}"#, iso(now - 3.0));
         fs::write(&t, format!("{prompt}\n{intr}\n{{\"type\":\"cost-state\"}}\n")).unwrap();
         assert_eq!(claude_record(now - 20.0, &path, "PreToolUse").live_lifecycle(), AgentLifecycleState::Idle);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn stale_needs_input_does_not_override_stop_or_running_user_prompt_submit() {
+        let mut codex_prompt = working_record(unix_now(), None);
+        codex_prompt.agent_kind = Some("codex".into());
+        codex_prompt.hook_event_name = Some("UserPromptSubmit".into());
+        codex_prompt.agent_lifecycle = Some("running".into());
+        codex_prompt.runtime_status = Some("needsInput".into());
+        assert_eq!(codex_prompt.resolved_lifecycle(), AgentLifecycleState::Working);
+
+        let mut codex_stop = codex_prompt.clone();
+        codex_stop.hook_event_name = Some("Stop".into());
+        codex_stop.agent_lifecycle = Some("needsInput".into());
+        assert_eq!(codex_stop.resolved_lifecycle(), AgentLifecycleState::Done);
+    }
+
+    #[test]
+    fn waiting_permission_request_is_overridden_when_codex_rollout_completes_turn() {
+        let dir = std::env::temp_dir().join(format!("cmux-codex-wait-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let t = dir.join("rollout.jsonl");
+        let now = unix_now();
+        // Write task_complete timestamp slightly newer than PermissionRequest updated_at.
+        let secs = now.floor() as i64 + 2;
+        let days = secs.div_euclid(86400);
+        let rem = secs.rem_euclid(86400);
+        let z = days + 719_468;
+        let era = z.div_euclid(146_097);
+        let doe = z - era * 146_097;
+        let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146_096) / 365;
+        let y = yoe + era * 400;
+        let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+        let mp = (5 * doy + 2) / 153;
+        let d = doy - (153 * mp + 2) / 5 + 1;
+        let m = mp + if mp < 10 { 3 } else { -9 };
+        let y = y + if m <= 2 { 1 } else { 0 };
+        let ts = format!("{y:04}-{m:02}-{d:02}T{:02}:{:02}:{:02}Z", rem / 3600, (rem % 3600) / 60, rem % 60);
+        fs::write(&t, format!(r#"{{"timestamp":"{ts}","type":"event_msg","payload":{{"type":"task_complete"}}}}"#)).unwrap();
+
+        let mut rec = working_record(now, Some(t.to_string_lossy().into_owned()));
+        rec.agent_kind = Some("codex".into());
+        rec.hook_event_name = Some("PermissionRequest".into());
+        rec.agent_lifecycle = Some("needsInput".into());
+        rec.runtime_status = Some("needsInput".into());
+        assert_eq!(rec.resolved_lifecycle(), AgentLifecycleState::Waiting);
+        assert_eq!(rec.live_lifecycle(), AgentLifecycleState::Done);
         let _ = fs::remove_dir_all(dir);
     }
 }

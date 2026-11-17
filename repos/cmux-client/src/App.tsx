@@ -24,10 +24,22 @@ import {
   Share2,
   X,
 } from "lucide-react";
-import type { SurfaceNode, WorkspaceNode } from "./protocol/rpc";
-import { RPC_METHODS } from "./protocol/rpc";
+import type {
+  NotificationAlertPayload,
+  NotificationDismissPayload,
+  SurfaceNode,
+  WorkspaceNode,
+} from "./protocol/rpc";
+import { RPC_EVENTS, RPC_METHODS } from "./protocol/rpc";
 import { wsClient, type ConnectionState } from "./transport/wsClient";
 import { pushManager } from "./notifications/pushManager";
+import {
+  isAlertSuppressedForView,
+  loadLocalNotificationPrefs,
+  parseNotificationAlert,
+  subscribeLocalNotificationPrefs,
+  type LocalNotificationPrefs,
+} from "./notifications/localPrefs";
 import { haptic, installGlobalButtonHaptics } from "./native/haptics";
 import {
   goBack,
@@ -61,10 +73,18 @@ export function App() {
     pushManager.getPermission(),
   );
   const [showIosPwaBanner, setShowIosPwaBanner] = useState<boolean>(false);
+  const [localPrefs, setLocalPrefs] = useState<LocalNotificationPrefs>(() =>
+    loadLocalNotificationPrefs(),
+  );
+  const [activeToasts, setActiveToasts] = useState<NotificationAlertPayload[]>([]);
 
   const selectedWorkspaceRef = useRef(selectedWorkspace);
   const selectedSurfaceRef = useRef(selectedSurface);
   const workspacesRef = useRef(workspaces);
+  const activeViewRef = useRef(activeView);
+  const localPrefsRef = useRef(localPrefs);
+  const seenNotifIdsRef = useRef<string[]>([]);
+  const toastTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
 
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
@@ -77,6 +97,31 @@ export function App() {
   useEffect(() => {
     workspacesRef.current = workspaces;
   }, [workspaces]);
+
+  useEffect(() => {
+    activeViewRef.current = activeView;
+  }, [activeView]);
+
+  useEffect(() => {
+    localPrefsRef.current = localPrefs;
+  }, [localPrefs]);
+
+  useEffect(() => subscribeLocalNotificationPrefs(setLocalPrefs), []);
+
+  const jumpToSurface = useCallback((targetSurfaceId: string) => {
+    const currentWorkspaces = workspacesRef.current;
+    for (const ws of currentWorkspaces) {
+      const match = ws.surfaces.find((s) => s.id === targetSurfaceId || s.ref === targetSurfaceId);
+      if (match) {
+        setSelectedWorkspace(ws);
+        setSelectedSurface(match);
+        setActiveView("detail");
+        showDetailEntry();
+        setActiveToasts((prev) => prev.filter((t) => t.surface_id !== match.id));
+        return;
+      }
+    }
+  }, []);
 
   // History API sync: system back / browser back / edge swipe pop one screen at a time.
   const handlePop = useCallback((view: AppView) => {
@@ -163,20 +208,8 @@ export function App() {
     const handleSwMessage = (event: MessageEvent) => {
       if (event.data?.type === "cmux.notification.clicked") {
         const targetSurfaceId = event.data.data?.surfaceId;
-        const currentWorkspaces = workspacesRef.current;
-        if (targetSurfaceId && currentWorkspaces.length > 0) {
-          for (const ws of currentWorkspaces) {
-            const match = ws.surfaces.find(
-              (s) => s.id === targetSurfaceId || s.ref === targetSurfaceId,
-            );
-            if (match) {
-              setSelectedWorkspace(ws);
-              setSelectedSurface(match);
-              setActiveView("detail");
-              showDetailEntry();
-              break;
-            }
-          }
+        if (typeof targetSurfaceId === "string" && targetSurfaceId) {
+          jumpToSurface(targetSurfaceId);
         }
       }
     };
@@ -185,13 +218,18 @@ export function App() {
       navigator.serviceWorker.addEventListener("message", handleSwMessage);
     }
 
+    const toastTimers = toastTimersRef.current;
     return () => {
       wsClient.disconnect();
+      for (const timer of toastTimers.values()) {
+        clearTimeout(timer);
+      }
+      toastTimers.clear();
       if ("serviceWorker" in navigator) {
         navigator.serviceWorker.removeEventListener("message", handleSwMessage);
       }
     };
-  }, []);
+  }, [jumpToSurface]);
 
   useEffect(() => {
     if (connState === "connected") {
@@ -202,6 +240,128 @@ export function App() {
       return () => clearInterval(interval);
     }
   }, [connState, fetchWorkspaces]);
+
+  const viewingSurfaceId = selectedSurface?.id ?? null;
+
+  // Report active surface & visibility to the gateway so suppressWhileViewing works across WebSocket and Web Push.
+  useEffect(() => {
+    if (connState !== "connected") return;
+    const sendViewing = () => {
+      const visible =
+        localPrefs.suppressWhileViewing &&
+        (typeof document === "undefined" || document.visibilityState === "visible");
+      const surfaceId =
+        localPrefs.suppressWhileViewing && activeView === "detail" ? viewingSurfaceId : null;
+      void wsClient
+        .call(RPC_METHODS.CLIENT_VIEWING, {
+          surface_id: surfaceId,
+          visible,
+        })
+        .catch(() => {});
+    };
+    sendViewing();
+    if (typeof document === "undefined") return;
+    document.addEventListener("visibilitychange", sendViewing);
+    return () => document.removeEventListener("visibilitychange", sendViewing);
+  }, [connState, activeView, viewingSurfaceId, localPrefs.suppressWhileViewing]);
+
+  // Clear toasts for the surface the user just opened.
+  useEffect(() => {
+    if (activeView === "detail" && selectedSurface) {
+      setActiveToasts((prev) => prev.filter((t) => t.surface_id !== selectedSurface.id));
+    }
+  }, [activeView, selectedSurface]);
+
+  // Listen to live gateway notification alerts and dismissals.
+  useEffect(() => {
+    return wsClient.onEvent((event, data) => {
+      if (event === RPC_EVENTS.NOTIFICATION_ALERT) {
+        const alert = parseNotificationAlert(data);
+        if (!alert) return;
+
+        if (seenNotifIdsRef.current.includes(alert.notification_id)) return;
+        seenNotifIdsRef.current.push(alert.notification_id);
+        if (seenNotifIdsRef.current.length > 100) {
+          seenNotifIdsRef.current.shift();
+        }
+
+        const prefs = localPrefsRef.current;
+        const tabVisible =
+          typeof document === "undefined" || document.visibilityState === "visible";
+        const viewingSurfaceId =
+          activeViewRef.current === "detail" ? (selectedSurfaceRef.current?.id ?? null) : null;
+        if (isAlertSuppressedForView(prefs, alert.surface_id, viewingSurfaceId, tabVisible)) {
+          return;
+        }
+
+        if (prefs.inAppToast) {
+          setActiveToasts((prev) => {
+            const withoutSameTag = prev.filter((t) => t.tag !== alert.tag);
+            return [alert, ...withoutSameTag].slice(0, 3);
+          });
+          const existingTimer = toastTimersRef.current.get(alert.tag);
+          if (existingTimer) clearTimeout(existingTimer);
+          if (!alert.urgent) {
+            const timer = setTimeout(() => {
+              toastTimersRef.current.delete(alert.tag);
+              setActiveToasts((prev) =>
+                prev.filter((t) => t.notification_id !== alert.notification_id),
+              );
+            }, 8000);
+            toastTimersRef.current.set(alert.tag, timer);
+          }
+        }
+
+        if (
+          prefs.desktopBrowserNotif &&
+          !tabVisible &&
+          typeof Notification !== "undefined" &&
+          Notification.permission === "granted"
+        ) {
+          void pushManager.getEndpoint().then((ep) => {
+            // Only emit a direct Browser Notification when Web Push is not already subscribed for this browser.
+            if (ep) return;
+            const n = new Notification(alert.title, {
+              body: alert.body,
+              tag: alert.tag,
+              icon: "/favicon.svg",
+            });
+            n.onclick = () => {
+              window.focus();
+              jumpToSurface(alert.surface_id);
+              n.close();
+            };
+          });
+        }
+        return;
+      }
+
+      if (event === RPC_EVENTS.NOTIFICATION_DISMISS) {
+        const payload = data as Partial<NotificationDismissPayload> | null;
+        const surfaceId = typeof payload?.surface_id === "string" ? payload.surface_id : "";
+        const tags = Array.isArray(payload?.tags)
+          ? payload.tags.filter((t): t is string => typeof t === "string")
+          : [];
+        if (surfaceId || tags.length > 0) {
+          setActiveToasts((prev) =>
+            prev.filter(
+              (t) =>
+                (surfaceId ? t.surface_id !== surfaceId : true) &&
+                (tags.length > 0 ? !tags.includes(t.tag) : true),
+            ),
+          );
+        }
+        if (tags.length > 0 && "serviceWorker" in navigator) {
+          void navigator.serviceWorker
+            .getRegistration("/")
+            .then((reg) => {
+              reg?.active?.postMessage({ type: "cmux.notification.dismiss", tags });
+            })
+            .catch(() => {});
+        }
+      }
+    });
+  }, [jumpToSurface]);
 
   // Dynamic Visual Viewport tracking for iOS Virtual Keyboard & Standalone PWA
   useEffect(() => {
@@ -489,6 +649,51 @@ export function App() {
           />
         )}
       </main>
+
+      {activeToasts.length > 0 && (
+        <div className="fixed top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
+          {activeToasts.map((toast) => (
+            <div
+              key={toast.notification_id}
+              className={`pointer-events-auto flex items-start gap-2.5 rounded-2xl border px-3.5 py-2.5 shadow-2xl backdrop-blur-md ${
+                toast.category === "agent-error"
+                  ? "bg-[#221216]/95 border-rose-500/40 text-[#fafafa]"
+                  : toast.urgent
+                    ? "bg-[#1c1a12]/95 border-amber-400/40 text-[#fafafa]"
+                    : "bg-[#17171b]/95 border-white/[0.14] text-[#fafafa]"
+              }`}
+            >
+              <button
+                type="button"
+                onClick={() => {
+                  setActiveToasts((prev) =>
+                    prev.filter((t) => t.notification_id !== toast.notification_id),
+                  );
+                  jumpToSurface(toast.surface_id);
+                }}
+                className="flex-1 min-w-0 text-left"
+              >
+                <div className="text-[13px] font-semibold leading-snug truncate">{toast.title}</div>
+                <div className="text-[12.5px] text-[#d4d4d4] leading-snug line-clamp-2 mt-0.5">
+                  {toast.body}
+                </div>
+              </button>
+              <button
+                type="button"
+                onClick={() =>
+                  setActiveToasts((prev) =>
+                    prev.filter((t) => t.notification_id !== toast.notification_id),
+                  )
+                }
+                className="w-7 h-7 rounded-lg hover:bg-white/[0.1] text-[#a3a3a3] hover:text-white flex items-center justify-center shrink-0"
+                aria-label="Dismiss notification"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
 
       {pendingPairing && (
         <PairingConfirmModal
