@@ -526,7 +526,8 @@ export function App() {
           } relative bg-[#141416] border-b border-white/[0.08] shrink-0 z-30`}
         >
           <div className="flex items-center gap-2.5">
-            <span className="text-[17px] font-bold tracking-tight text-[#fafafa]">cmux</span>
+            <img src="/favicon.svg" alt="Cmob" className="w-6 h-6 shrink-0" />
+            <span className="text-[17px] font-bold tracking-tight text-[#fafafa]">Cmob</span>
             <span
               className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-medium ${
                 connState === "connected"

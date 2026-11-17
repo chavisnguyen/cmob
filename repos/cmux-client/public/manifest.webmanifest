@@ -1,7 +1,7 @@
 {
-  "name": "cmux mobile",
-  "short_name": "cmux",
-  "description": "Mobile & Web Companion for cmux terminal workspaces and AI agents",
+  "name": "Cmob",
+  "short_name": "Cmob",
+  "description": "Watch & control your coding agents from your phone. Mobile & Web companion for cmux terminal workspaces.",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
@@ -13,7 +13,19 @@
       "src": "/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "/cmob-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
       "purpose": "any maskable"
+    },
+    {
+      "src": "/apple-touch-icon.png",
+      "sizes": "180x180",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }
