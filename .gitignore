@@ -21,7 +21,6 @@ target/
 # Build outputs
 dist/
 dist-ssr/
-repos/cmux-gateway/assets/
 
 # Secrets
 secrets/*

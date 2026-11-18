@@ -43,7 +43,6 @@ use crate::scanner::hook_store::HookStoreIndex;
 use crate::scanner::kiro_store::KiroSessionIndex;
 use crate::scanner::transcript::TranscriptReader;
 use crate::scanner::workspace_tree::WorkspaceTreeBuilder;
-use crate::static_files::static_handler;
 
 /// Broadcast message fanned out to active WebSocket clients for live alerts/dismissals.
 #[derive(Clone, Debug)]
@@ -527,7 +526,6 @@ pub fn create_router(state: AppState) -> Router {
         .route("/api/devices", get(devices_handler))
         .route("/api/devices/{id}", delete(device_revoke_handler))
         .route("/ws", get(ws_handler))
-        .fallback(static_handler)
         .layer(middleware::from_fn(host_and_origin_guard))
         .layer(cors)
         .with_state(state)

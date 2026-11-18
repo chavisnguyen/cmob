@@ -13,7 +13,7 @@ init: ## Verify prerequisites and install dependencies across all repos
 dev: ## Launch Gateway and Vite+ Client concurrently in development mode
 	@scripts/dev.sh
 
-build: ## Build client PWA bundle and compile single release Rust binary
+build: ## Compile the release Rust binary (the web app is deployed to GitHub Pages)
 	@scripts/build.sh
 
 test: ## Run unit and integration tests across Gateway and Client
@@ -29,5 +29,5 @@ status: ## Show gateway health, connected clients and paired devices
 	@$(CMOB) status
 
 clean: ## Clean build artifacts and dist directories
-	@rm -rf repos/cmux-gateway/target repos/cmux-gateway/assets repos/cmux-client/dist
+	@rm -rf repos/cmux-gateway/target repos/cmux-client/dist
 	@echo "Cleaned build artifacts."

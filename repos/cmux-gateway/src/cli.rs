@@ -507,7 +507,11 @@ pub fn uninstall() -> Res<()> {
 
 // ---------------------------------------------------------------- qr
 
-/// Link that opens the web app and redeems a single-use ticket for a per-device token.
+/// The web app lives on GitHub Pages; the gateway only serves the API and the websocket.
+const PWA_URL: &str = "https://chavisnguyen.github.io/cmob/";
+
+/// Link that opens the web app (on Pages) and redeems a single-use ticket for a per-device token.
+/// `base` is where the gateway is reachable from the phone; it ends up in the link as the `endpoint`.
 pub fn pairing_url(base: &str, ticket: &str) -> String {
     let ws = format!(
         "{}://{}/ws",
@@ -516,7 +520,7 @@ pub fn pairing_url(base: &str, ticket: &str) -> String {
     );
     let offer = serde_json::json!({ "v": 1, "endpoint": ws, "token": "", "ticket": ticket });
     let code = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(offer.to_string());
-    format!("{base}/#code={code}")
+    format!("{PWA_URL}#code={code}")
 }
 
 /// Half-block QR with explicit black/white colours, so it scans on light and dark terminal themes.
@@ -780,7 +784,7 @@ mod tests {
         assert_eq!(v["endpoint"], "wss://mac.tail.ts.net/ws");
         assert_eq!(v["ticket"], "tk1");
         assert_eq!(v["token"], "");
-        assert!(url.starts_with("https://mac.tail.ts.net/#code="));
+        assert!(url.starts_with("https://chavisnguyen.github.io/cmob/#code="));
         let local = pairing_url("http://127.0.0.1:8088", "t");
         let v: serde_json::Value = serde_json::from_slice(
             &base64::engine::general_purpose::URL_SAFE_NO_PAD.decode(local.split("#code=").nth(1).unwrap()).unwrap(),

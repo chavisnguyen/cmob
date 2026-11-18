@@ -7,7 +7,6 @@ pub mod protocol;
 pub mod push;
 pub mod scanner;
 pub mod server;
-pub mod static_files;
 pub mod uploads;
 
 mod cli;

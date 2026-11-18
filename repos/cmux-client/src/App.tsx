@@ -430,6 +430,39 @@ export function App() {
     });
   }, []);
 
+  // Dynamic Visual Viewport tracking for iOS Virtual Keyboard & Standalone PWA: index.css sizes the
+  // fixed root with --app-height/--app-top, so the composer rides above the keyboard.
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.visualViewport) return;
+
+    const preventWindowScroll = () => {
+      if (window.scrollY !== 0) {
+        window.scrollTo(0, 0);
+      }
+    };
+
+    const updateViewportHeight = () => {
+      const vv = window.visualViewport;
+      if (!vv) return;
+      document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
+      // iOS scrolls the visual viewport to reveal a focused input; keep the fixed root glued to it
+      // so no gap opens between the composer and the keyboard.
+      document.documentElement.style.setProperty("--app-top", `${vv.offsetTop}px`);
+      preventWindowScroll();
+    };
+
+    window.visualViewport.addEventListener("resize", updateViewportHeight);
+    window.visualViewport.addEventListener("scroll", updateViewportHeight);
+    window.addEventListener("scroll", preventWindowScroll, { passive: true });
+    updateViewportHeight();
+
+    return () => {
+      window.visualViewport?.removeEventListener("resize", updateViewportHeight);
+      window.visualViewport?.removeEventListener("scroll", updateViewportHeight);
+      window.removeEventListener("scroll", preventWindowScroll);
+    };
+  }, []);
+
   const handleForceReload = () => {
     haptic("medium");
     try {

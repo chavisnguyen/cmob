@@ -36,7 +36,7 @@ jobs:
       - run: npm install -g vite-plus
       - name: Client checks and tests
         run: cd repos/cmux-client && vp check && vp test --run
-      - name: Build (the client is embedded in the binary)
+      - name: Build
         run: make build
       - name: Gateway tests
         run: cd repos/cmux-gateway && cargo test --all
@@ -58,14 +58,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: repos/cmux-gateway
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-      - uses: pnpm/action-setup@v4
-        with:
-          version: latest
-      - run: cd repos/cmux-client && pnpm install --frozen-lockfile
-      - run: npm install -g vite-plus
       - name: Build
         run: make build
       - name: Stage and smoke-test the binary

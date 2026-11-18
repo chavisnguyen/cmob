@@ -1,52 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" fill="none">
-  <defs>
-    <linearGradient id="bgGrad" x1="0" y1="0" x2="512" y2="512" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#1a1a2e"/>
-      <stop offset="100%" stop-color="#111217"/>
-    </linearGradient>
-    <linearGradient id="boltGrad" x1="200" y1="100" x2="310" y2="410" gradientUnits="userSpaceOnUse">
-      <stop offset="0%" stop-color="#c084fc"/>
-      <stop offset="100%" stop-color="#7c3aed"/>
-    </linearGradient>
-    <filter id="glow" x="-30%" y="-30%" width="160%" height="160%" color-interpolation-filters="sRGB">
-      <feGaussianBlur in="SourceGraphic" stdDeviation="12" result="blur"/>
-      <feComposite in="SourceGraphic" in2="blur" operator="over"/>
-    </filter>
-  </defs>
-
-  <!-- Background -->
-  <rect width="512" height="512" rx="88" fill="url(#bgGrad)"/>
-
-  <!-- Phone outline -->
-  <rect x="136" y="56" width="240" height="400" rx="36" fill="none" stroke="#ffffff" stroke-width="16" stroke-opacity="0.14"/>
-  <!-- Camera / notch bar -->
-  <rect x="206" y="80" width="100" height="12" rx="6" fill="#ffffff" fill-opacity="0.12"/>
-  <!-- Home bar -->
-  <rect x="206" y="420" width="100" height="10" rx="5" fill="#ffffff" fill-opacity="0.12"/>
-
-  <!-- Lightning bolt glow layer -->
-  <g filter="url(#glow)">
-    <path
-      d="M 296 112
-         L 220 272
-         L 268 272
-         L 216 400
-         L 292 240
-         L 244 240
-         Z"
-      fill="#8b5cf6" fill-opacity="0.5"
-    />
-  </g>
-
-  <!-- Lightning bolt main -->
-  <path
-    d="M 296 112
-       L 220 272
-       L 268 272
-       L 216 400
-       L 292 240
-       L 244 240
-       Z"
-    fill="url(#boltGrad)"
-  />
+  <rect width="512" height="512" rx="112" fill="#141413"/>
+  <path d="M160 168 L292 256 L160 344" stroke="#cf6a3a" stroke-width="48" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M316 352 H388" stroke="#eca17c" stroke-width="48" stroke-linecap="round"/>
 </svg>
