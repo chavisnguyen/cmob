@@ -201,6 +201,27 @@ describe("Pairing Protocol", () => {
     expect(nextPairingHash("", "a b/c")).toBe("#token=a%20b%2Fc");
   });
 
+  it("handles bare tokens appropriately based on host origin", () => {
+    const loc = {
+      protocol: "https:",
+      host: "my-mac.tailnet.ts.net",
+      hostname: "my-mac.tailnet.ts.net",
+      origin: "https://my-mac.tailnet.ts.net",
+    };
+    const offer = parsePairingInput("cmux_sec_abc12345", loc);
+    expect(offer?.token).toBe("cmux_sec_abc12345");
+    expect(offer?.endpoint).toBe("wss://my-mac.tailnet.ts.net/ws");
+
+    // Static host should not fabricate endpoint from bare token
+    const staticLoc = {
+      protocol: "https:",
+      host: "chavisnguyen.github.io",
+      hostname: "chavisnguyen.github.io",
+      origin: "https://chavisnguyen.github.io",
+    };
+    expect(parsePairingInput("cmux_sec_abc12345", staticLoc)).toBeNull();
+  });
+
   it("lists the address-bar token first, then remembered ones, without duplicates or blanks", () => {
     expect(
       collectTokenCandidates("url", ["local", "url", null, "", undefined, "local", "cookie"]),

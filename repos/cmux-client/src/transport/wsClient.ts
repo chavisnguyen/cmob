@@ -189,6 +189,8 @@ export class GatewayWsClient {
   private hostNameHint: string | null = null;
   /** Other remembered tokens to try, in order, when the gateway rejects the current one. */
   private fallbackTokens: string[] = [];
+  /** Descriptive message explaining why the last connection or pairing attempt failed. */
+  private lastErrorMessage: string | null = null;
 
   constructor() {
     // Nothing is written back yet: a token from the address bar may be stale, and overwriting the
@@ -250,7 +252,10 @@ export class GatewayWsClient {
   private async redeemPendingTicket(): Promise<boolean> {
     const pending = this.pendingTicket;
     if (!pending) return true;
-    if (!isValidGatewayEndpoint(pending.endpoint)) return false;
+    if (!isValidGatewayEndpoint(pending.endpoint)) {
+      this.lastErrorMessage = `Invalid gateway endpoint: ${pending.endpoint}`;
+      return false;
+    }
     const generation = this.hostGeneration;
     try {
       const resp = await fetch(`${endpointToHttpBase(pending.endpoint)}/api/pair/exchange`, {
@@ -258,14 +263,29 @@ export class GatewayWsClient {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ ticket: pending.ticket, label: deviceLabel() }),
       });
-      if (!resp.ok) return false;
+      if (!resp.ok) {
+        if (resp.status === 403) {
+          this.lastErrorMessage =
+            "Gateway rejected pairing request (forbidden origin). Please restart gateway: cmob restart";
+        } else if (resp.status === 401) {
+          this.lastErrorMessage =
+            "Pairing ticket expired or already used. Run `cmob qr --tailscale` for a new code.";
+        } else {
+          this.lastErrorMessage = `Pairing ticket exchange failed (HTTP ${resp.status}).`;
+        }
+        return false;
+      }
       const body = (await resp.json()) as { token?: string };
-      if (!body.token) return false;
+      if (!body.token) {
+        this.lastErrorMessage = "Gateway did not return a device token.";
+        return false;
+      }
       // The user switched host / confirmed another pairing while this request was in flight: this token
       // belongs to the old host and must not be adopted. Report success so connect() re-runs and redeems
       // whatever ticket is pending now.
       if (generation !== this.hostGeneration) return true;
       this.token = body.token;
+      this.lastErrorMessage = null;
       persistStoredToken(body.token);
       this.pendingTicket = null;
       stripPairingCodeFromAddressBar();
@@ -274,8 +294,17 @@ export class GatewayWsClient {
       }
       return true;
     } catch {
+      this.lastErrorMessage = `Cannot reach gateway at ${pending.endpoint}. Ensure Tailscale is connected and gateway is running.`;
       return false;
     }
+  }
+
+  public getLastErrorMessage(): string | null {
+    return this.lastErrorMessage;
+  }
+
+  public clearLastErrorMessage(): void {
+    this.lastErrorMessage = null;
   }
 
   public getToken(): string {
@@ -566,6 +595,7 @@ export class GatewayWsClient {
           const raw = JSON.parse(event.data);
           // Handle auth response frame
           if (raw.type === "auth_ok") {
+            this.lastErrorMessage = null;
             this.reconnectAttempts = 0;
             this.fallbackTokens = [];
             persistStoredToken(this.token);
@@ -574,6 +604,7 @@ export class GatewayWsClient {
             return;
           }
           if (raw.type === "auth_error") {
+            this.lastErrorMessage = "Authentication failed: invalid token.";
             if (this.useNextToken()) return;
             this.shouldReconnect = false;
             this.setState("error");

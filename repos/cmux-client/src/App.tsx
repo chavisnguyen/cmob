@@ -174,9 +174,6 @@ export function App() {
   useEffect(() => {
     return wsClient.onStateChange((state) => {
       setConnState(state);
-      if (state === "error" && !wsClient.getToken()) {
-        setShowTokenModal(true);
-      }
     });
   }, []);
 
@@ -661,6 +658,19 @@ export function App() {
             onSelectHost={handleSwitchHost}
             onAddHost={() => setShowPairModal(true)}
           />
+
+          {connState === "error" && wsClient.getLastErrorMessage() && (
+            <div className="mx-4 my-2 px-3.5 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-300 text-[12.5px] flex items-center justify-between gap-2 animate-fade-in">
+              <span className="leading-tight">{wsClient.getLastErrorMessage()}</span>
+              <button
+                type="button"
+                onClick={() => wsClient.connect()}
+                className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-[11.5px] font-semibold shrink-0"
+              >
+                Retry
+              </button>
+            </div>
+          )}
         </div>
       )}
 

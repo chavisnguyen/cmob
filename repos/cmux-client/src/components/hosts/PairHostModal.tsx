@@ -1,6 +1,6 @@
 import { useState, useCallback, useEffect, type ReactElement } from "react";
 import { Laptop, QrCode, Server, X } from "lucide-react";
-import { parsePairingInput } from "../../protocol/pairing";
+import { parsePairingInput, isStaticHostOrigin } from "../../protocol/pairing";
 import { wsClient } from "../../transport/wsClient";
 import { canScanQr } from "./deviceUtils";
 import { QrScanModal } from "./QrScanModal";
@@ -27,7 +27,18 @@ export function PairHostModal({
 
   const propose = useCallback(
     (text: string): boolean => {
-      const offer = parsePairingInput(text.trim());
+      const trimmed = text.trim();
+      if (
+        (trimmed.startsWith("cmux_sec_") || trimmed.startsWith("cmux_dev_")) &&
+        typeof window !== "undefined" &&
+        isStaticHostOrigin(window.location)
+      ) {
+        setPasteError(
+          "On GitHub Pages, please paste the full pairing link (https://...#code=...) or scan the QR code.",
+        );
+        return false;
+      }
+      const offer = parsePairingInput(trimmed);
       if (!offer) {
         setPasteError("Invalid pairing link or QR payload. Please try again.");
         return false;

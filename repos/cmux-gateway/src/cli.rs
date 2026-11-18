@@ -561,6 +561,12 @@ pub fn qr(tailscale: bool) -> Res<()> {
         .ok_or("the gateway did not return a pairing ticket")?;
     let base = if tailscale {
         ensure_tailscale_serve()?
+    } else if let Some(dns) = tailscale_dns() {
+        if ensure_tailscale_serve().is_ok() {
+            format!("https://{dns}")
+        } else {
+            format!("http://127.0.0.1:{}", port())
+        }
     } else {
         format!("http://127.0.0.1:{}", port())
     };
@@ -570,8 +576,8 @@ pub fn qr(tailscale: bool) -> Res<()> {
     println!("\nScan with the camera in the app: menu → Hosts & devices → Scan.");
     println!("Single-use link, expires in 10 minutes. Run `cmob qr` again for another phone.");
     println!("\n{url}\n");
-    if !tailscale {
-        warn("This link only works on this Mac. Use `cmob qr --tailscale` for a phone.");
+    if !base.starts_with("https://") {
+        warn("This link only works on this Mac. Sign into Tailscale for phone pairing.");
     }
     Ok(())
 }

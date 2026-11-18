@@ -26,18 +26,26 @@ While Tailscale provides secure network-layer routing and node identity, an **Ap
 
 #### cmux-mobile Phase 1 Pairing Implementation:
 * **Terminal QR Code Output:**
-  Upon gateway startup, the CLI prints a QR code containing the deep link and web URL:
-  - Deep-link URI: `cmux-mobile://pair?code=<base64url>`
-  - Direct Web PWA URL: `https://<tailscale-domain>:8088/#token=<token>` or `http://<tailscale-ip>:8088/#token=<token>`
-* **Base64URL Payload Structure (`cmux-mobile`):**
-  ```json
-  {
-    "v": 1,
-    "endpoint": "ws://100.x.y.z:8088/ws",
-    "token": "48_char_random_hex_string_or_uuid",
-    "host_name": "macbook-pro"
-  }
-  ```
+  Upon gateway startup or running `cmob qr`, the CLI prints a QR code containing the web pairing URL with a single-use ticket:
+  - Format: `https://<tailscale-magicdns>/#code=<base64url(PairingOffer)>`
+  - Ticket Offer Payload (`v: 1`):
+    ```json
+    {
+      "v": 1,
+      "endpoint": "wss://<tailscale-magicdns>/ws",
+      "token": "",
+      "ticket": "cmux_tkt_..."
+    }
+    ```
+* **Single-Use Ticket Redemption Flow:**
+  1. The pairing QR code never carries the permanent master token; it provides a short-lived ticket (TTL: 10 min).
+  2. The mobile client calls `POST /api/pair/exchange` with `{ "ticket": "cmux_tkt_...", "label": "iPhone" }`.
+  3. The gateway redeems the ticket, creates a scoped device token (`cmux_dev_...`), registers the device in `DeviceRegistry`, and returns `{ "token": "cmux_dev_..." }`.
+  4. The client uses this device token for all subsequent WebSocket authentication frames (`{ "type": "auth", "token": "cmux_dev_..." }`).
+* **Cross-Origin & CORS Support (GitHub Pages):**
+  - When hosted on GitHub Pages (`https://chavisnguyen.github.io/cmob/`), requests to the gateway are cross-origin.
+  - The gateway middleware (`host_and_origin_guard` and `CorsLayer`) explicitly permits `Origin: https://chavisnguyen.github.io` and sets `Access-Control-Allow-Credentials: true`.
+  - If ticket redemption fails (e.g. 403, 401, or unreachable), the client displays inline error banners rather than erroneously prompting for manual token entry.
 * **Address Bar Secret Sanitization (Orca Pattern, `ref/orca/src/renderer/src/web/web-pairing.ts:107-116`):**
   Upon reading the pairing token from the URL fragment (`#token=...`) into `localStorage`, the web client immediately calls:
   ```typescript

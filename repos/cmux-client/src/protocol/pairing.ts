@@ -147,7 +147,15 @@ export function extractCodeFromUri(uri: string): string | null {
 /**
  * Parses user input string (either deep-link URI, raw base64url, or JSON).
  */
-export function parsePairingInput(input: string): PairingOffer | null {
+export function parsePairingInput(
+  input: string,
+  loc:
+    | (Pick<Location, "protocol" | "host" | "origin"> & {
+        hostname?: string;
+        port?: string;
+      })
+    | null = typeof window !== "undefined" ? window.location : null,
+): PairingOffer | null {
   if (input.length > PAIRING_INPUT_MAX_CHARACTERS) {
     return null;
   }
@@ -170,10 +178,28 @@ export function parsePairingInput(input: string): PairingOffer | null {
         hash: url.hash,
         origin: url.origin,
         protocol: url.protocol,
+        host: url.host,
+        hostname: url.hostname,
+        port: url.port,
       });
     } catch {
       return null;
     }
+  }
+
+  // Bare gateway or device token (valid on same-origin self-hosted companion)
+  if (
+    loc &&
+    !isStaticHostOrigin(loc) &&
+    (trimmed.startsWith("cmux_sec_") || trimmed.startsWith("cmux_dev_"))
+  ) {
+    const isHttps = loc.protocol === "https:";
+    const endpoint = `${isHttps ? "wss" : "ws"}://${loc.host}/ws`;
+    return {
+      v: PAIRING_OFFER_VERSION,
+      endpoint,
+      token: trimmed,
+    };
   }
 
   return decodePairingPayload(trimmed);
