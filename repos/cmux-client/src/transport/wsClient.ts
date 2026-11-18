@@ -15,6 +15,7 @@ import {
 import {
   collectTokenCandidates,
   endpointToHttpBase,
+  isStaticHostOrigin,
   isValidGatewayEndpoint,
   readPairingFromLocation,
   type PairingOffer,
@@ -125,7 +126,7 @@ function persistStoredToken(token: string): void {
   }
   setCookie("cmux_token", token, 365);
   // Only sanitize address bar if we are connected to the same origin; never write a remote token to the host origin's address bar.
-  if (!getStoredEndpoint()) {
+  if (!getStoredEndpoint() && !isStaticHostOrigin(window.location)) {
     sanitizePairingInAddressBar(token);
   }
 }
@@ -206,6 +207,23 @@ export class GatewayWsClient {
       } else {
         this.endpoint = getStoredEndpoint();
       }
+
+      // If no endpoint is stored in ENDPOINT_KEY, fallback to active host from hostStore
+      if (!this.endpoint) {
+        try {
+          const activeId = getActiveHostId(localStorage);
+          const hosts = loadHosts(localStorage);
+          const activeHost = (activeId ? hosts.find((h) => h.id === activeId) : null) ?? hosts[0];
+          if (activeHost) {
+            this.endpoint = activeHost.endpoint;
+            this.token = activeHost.token;
+            this.hostNameHint = activeHost.name;
+          }
+        } catch {
+          // ignore localStorage access errors
+        }
+      }
+
       if (offer?.ticket && !offer.token && !this.pendingPairing) {
         this.pendingTicket = { ticket: offer.ticket, endpoint: offer.endpoint };
       }
@@ -214,7 +232,14 @@ export class GatewayWsClient {
 
   /** WebSocket URL this client connects to. */
   public getEndpoint(): string {
-    return this.endpoint ?? sameOriginEndpoint(window.location);
+    if (this.endpoint) return this.endpoint;
+    if (typeof window !== "undefined") {
+      if (isStaticHostOrigin(window.location)) {
+        return "";
+      }
+      return sameOriginEndpoint(window.location);
+    }
+    return "";
   }
 
   /**
@@ -242,7 +267,9 @@ export class GatewayWsClient {
       persistStoredToken(body.token);
       this.pendingTicket = null;
       stripPairingCodeFromAddressBar();
-      sanitizePairingInAddressBar(body.token); // keep the device token in the hash for iOS WebClips
+      if (!getStoredEndpoint() && !isStaticHostOrigin(window.location)) {
+        sanitizePairingInAddressBar(body.token); // keep the device token in the hash for iOS WebClips
+      }
       return true;
     } catch {
       return false;
@@ -469,7 +496,17 @@ export class GatewayWsClient {
     }
 
     if (!this.token) {
+      if (typeof window !== "undefined" && isStaticHostOrigin(window.location)) {
+        this.setState("disconnected");
+        return;
+      }
       this.setState("error");
+      return;
+    }
+
+    const wsUrl = this.getEndpoint();
+    if (!wsUrl) {
+      this.setState("disconnected");
       return;
     }
 
@@ -482,8 +519,6 @@ export class GatewayWsClient {
 
     this.shouldReconnect = true;
     this.setState("connecting");
-
-    const wsUrl = this.getEndpoint();
 
     try {
       const socket = new WebSocket(wsUrl);

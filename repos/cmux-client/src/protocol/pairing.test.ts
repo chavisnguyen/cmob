@@ -3,6 +3,7 @@ import {
   collectTokenCandidates,
   decodePairingPayload,
   endpointToHttpBase,
+  isStaticHostOrigin,
   isValidGatewayEndpoint,
   nextPairingHash,
   sameOriginEndpoint,
@@ -147,6 +148,31 @@ describe("Pairing Protocol", () => {
     expect(sameOriginEndpoint({ protocol: "http:", host: "127.0.0.1:8088" })).toBe(
       "ws://127.0.0.1:8088/ws",
     );
+  });
+
+  it("identifies static host origins", () => {
+    expect(isStaticHostOrigin({ hostname: "github.io" })).toBe(true);
+    expect(isStaticHostOrigin({ hostname: "chavisnguyen.github.io" })).toBe(true);
+    expect(isStaticHostOrigin({ hostname: "localhost", host: "localhost:5173" })).toBe(true);
+    expect(isStaticHostOrigin({ hostname: "127.0.0.1", host: "127.0.0.1:5173" })).toBe(true);
+    expect(isStaticHostOrigin({ hostname: "127.0.0.1", host: "127.0.0.1:5174" })).toBe(true);
+    expect(isStaticHostOrigin({ hostname: "localhost", host: "localhost:5544" })).toBe(false);
+    expect(isStaticHostOrigin({ hostname: "mac.tailnet.ts.net", host: "mac.tailnet.ts.net" })).toBe(
+      false,
+    );
+    expect(isStaticHostOrigin({ hostname: "192.168.1.10", host: "192.168.1.10:5544" })).toBe(false);
+  });
+
+  it("does not fabricate same-origin endpoints for bare tokens on static origins", () => {
+    const loc = {
+      search: "",
+      hash: "#token=secret123",
+      origin: "https://chavisnguyen.github.io",
+      protocol: "https:",
+      hostname: "chavisnguyen.github.io",
+      host: "chavisnguyen.github.io",
+    };
+    expect(readPairingFromLocation(loc)).toBeNull();
   });
 
   it("accepts the companion web URL that `cmux-mobile qr` encodes", () => {

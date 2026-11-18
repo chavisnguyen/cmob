@@ -1,5 +1,6 @@
-import { Pin, RefreshCw, Terminal, ChevronRight, FolderGit2 } from "lucide-react";
+import { Pin, RefreshCw, Terminal, ChevronRight, FolderGit2, QrCode } from "lucide-react";
 import type { WorkspaceNode } from "../protocol/rpc";
+import type { ConnectionState } from "../transport/wsClient";
 import { Pressable } from "../components/common/Pressable";
 import { plainSnippet, shortPath } from "../components/chat/textUtils";
 
@@ -8,6 +9,9 @@ interface WorkspaceListViewProps {
   loading: boolean;
   onRefresh: () => void;
   onSelectWorkspace: (workspace: WorkspaceNode) => void;
+  hostsCount?: number;
+  connState?: ConnectionState;
+  onPairHost?: () => void;
 }
 
 export function WorkspaceListView({
@@ -15,7 +19,17 @@ export function WorkspaceListView({
   loading,
   onRefresh,
   onSelectWorkspace,
+  hostsCount,
+  connState,
+  onPairHost,
 }: WorkspaceListViewProps) {
+  const isConnecting = connState === "connecting" || connState === "authenticating";
+  const hasNoHosts =
+    typeof hostsCount === "number" &&
+    hostsCount === 0 &&
+    connState !== "connected" &&
+    !isConnecting;
+
   return (
     <div className="flex flex-col h-full w-full max-w-3xl mx-auto bg-[#0a0a0a] text-[#fafafa]">
       <header className="flex items-center justify-between px-4 min-h-[52px] bg-[#141416] border-b border-white/[0.08] w-full shrink-0">
@@ -28,7 +42,7 @@ export function WorkspaceListView({
         <button
           type="button"
           onClick={onRefresh}
-          disabled={loading}
+          disabled={loading || hasNoHosts}
           className="w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] active:opacity-75 text-[#e5e5e5] flex items-center justify-center transition-colors disabled:opacity-40"
           title="Refresh workspaces"
           aria-label="Refresh workspaces"
@@ -38,7 +52,36 @@ export function WorkspaceListView({
       </header>
 
       <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06] pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
-        {workspaces.length === 0 && !loading && (
+        {hasNoHosts && !loading && (
+          <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
+            <div className="w-16 h-16 rounded-3xl bg-[#1c1c20] border border-white/[0.1] flex items-center justify-center text-[#3276f2] mb-5 shadow-lg">
+              <QrCode className="w-8 h-8 text-[#3276f2]" />
+            </div>
+            <h2 className="text-[20px] font-bold text-white tracking-tight mb-2">
+              Welcome to Cmob
+            </h2>
+            <p className="text-[14px] text-[#a3a3a3] max-w-sm leading-relaxed mb-6">
+              Connect your computer to monitor terminal workspaces and control coding agents like
+              Claude Code, AGY, and Kiro from your phone.
+            </p>
+            {onPairHost && (
+              <button
+                type="button"
+                onClick={onPairHost}
+                className="inline-flex items-center gap-2 px-5 py-3 rounded-2xl bg-[#3276f2] hover:bg-[#2b66d4] active:scale-[0.98] text-white text-[15px] font-semibold shadow-lg shadow-[#3276f2]/20 transition-all cursor-pointer"
+              >
+                <QrCode className="w-5 h-5" />
+                <span>Connect Your Computer</span>
+              </button>
+            )}
+            <div className="mt-8 p-3.5 rounded-xl bg-[#141416] border border-white/[0.06] text-[12px] text-[#737373] max-w-xs text-left font-mono">
+              <span className="text-[#a3a3a3] block mb-1">Terminal command:</span>
+              <span className="text-emerald-400">$ cmob qr --tailscale</span>
+            </div>
+          </div>
+        )}
+
+        {!hasNoHosts && workspaces.length === 0 && !loading && (
           <div className="px-6 py-12 text-center text-[#898989] text-[14px]">
             No active workspaces found in cmux.
           </div>

@@ -24,7 +24,14 @@ export class PushManager {
     }
 
     try {
-      const reg = await navigator.serviceWorker.register("/sw.js", { scope: "/" });
+      const base =
+        typeof window !== "undefined"
+          ? window.location.pathname.endsWith("/")
+            ? window.location.href
+            : `${window.location.origin}${window.location.pathname}/`
+          : "./";
+      const swUrl = new URL("sw.js", base).href;
+      const reg = await navigator.serviceWorker.register(swUrl);
       this.swRegistration = reg;
       return reg;
     } catch (err) {
@@ -133,7 +140,7 @@ export class PushManager {
   /** Endpoint of this browser's current push subscription, or null when not subscribed. */
   async getEndpoint(): Promise<string | null> {
     try {
-      const reg = this.swRegistration ?? (await navigator.serviceWorker?.getRegistration("/"));
+      const reg = this.swRegistration ?? (await navigator.serviceWorker?.getRegistration());
       const sub = await reg?.pushManager.getSubscription();
       return sub?.endpoint ?? null;
     } catch {

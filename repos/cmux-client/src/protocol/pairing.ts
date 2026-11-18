@@ -42,6 +42,46 @@ export function sameOriginEndpoint(location: Pick<Location, "protocol" | "host">
 }
 
 /**
+ * Returns true if the page origin is known to be a static client host (e.g. GitHub Pages or Vite dev)
+ * without an embedded cmux-gateway backend.
+ */
+export function isStaticHostOrigin(location: {
+  host?: string;
+  hostname?: string;
+  port?: string;
+  origin?: string;
+}): boolean {
+  try {
+    let hostname = location.hostname;
+    let host = location.host;
+    let portStr = location.port;
+
+    if (!hostname && location.origin) {
+      try {
+        const u = new URL(location.origin);
+        hostname = u.hostname;
+        host = u.host;
+        portStr = u.port;
+      } catch {
+        // ignore invalid origin
+      }
+    }
+
+    const normHostname = (hostname ?? host?.split(":")[0] ?? "").toLowerCase();
+    const normHost = (host ?? "").toLowerCase();
+    const port = parseInt(portStr ?? normHost.split(":")[1] ?? "", 10);
+    return (
+      normHostname === "github.io" ||
+      normHostname.endsWith(".github.io") ||
+      ((normHostname === "localhost" || normHostname === "127.0.0.1") &&
+        ((port >= 5173 && port <= 5180) || port === 4173))
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Normalizes URL-safe base64 string for standard atob decoding.
  */
 export function normalizeBase64Url(base64url: string): string {
@@ -143,7 +183,11 @@ export function parsePairingInput(input: string): PairingOffer | null {
  * Reads pairing offer or token from browser location (query params or hash fragment).
  */
 export function readPairingFromLocation(
-  location: Pick<Location, "search" | "hash" | "origin" | "protocol">,
+  location: Pick<Location, "search" | "hash" | "origin" | "protocol"> & {
+    host?: string;
+    hostname?: string;
+    port?: string;
+  },
 ): PairingOffer | null {
   // 1. Check URL query parameters (?code= or ?token=)
   if (location.search) {
@@ -155,6 +199,9 @@ export function readPairingFromLocation(
     }
     const token = searchParams.get("token");
     if (token) {
+      if (isStaticHostOrigin(location)) {
+        return null;
+      }
       const isHttps = location.protocol === "https:";
       const endpoint = `${isHttps ? "wss" : "ws"}://${location.origin.replace(/^https?:\/\//, "")}/ws`;
       return {
@@ -177,6 +224,9 @@ export function readPairingFromLocation(
       }
       const token = hashParams.get("token");
       if (token) {
+        if (isStaticHostOrigin(location)) {
+          return null;
+        }
         const isHttps = location.protocol === "https:";
         const endpoint = `${isHttps ? "wss" : "ws"}://${location.origin.replace(/^https?:\/\//, "")}/ws`;
         return {

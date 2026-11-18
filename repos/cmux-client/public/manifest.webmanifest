@@ -2,27 +2,27 @@
   "name": "Cmob",
   "short_name": "Cmob",
   "description": "Watch & control your coding agents from your phone. Mobile & Web companion for cmux terminal workspaces.",
-  "start_url": "/",
-  "scope": "/",
+  "start_url": "./",
+  "scope": "./",
   "display": "standalone",
   "background_color": "#111217",
   "theme_color": "#111217",
   "orientation": "portrait-primary",
   "icons": [
     {
-      "src": "/favicon.svg",
+      "src": "./favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml",
       "purpose": "any"
     },
     {
-      "src": "/cmob-icon-512.png",
+      "src": "./cmob-icon-512.png",
       "sizes": "512x512",
       "type": "image/png",
       "purpose": "any maskable"
     },
     {
-      "src": "/apple-touch-icon.png",
+      "src": "./apple-touch-icon.png",
       "sizes": "180x180",
       "type": "image/png",
       "purpose": "any"

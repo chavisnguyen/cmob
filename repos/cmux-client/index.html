@@ -2,9 +2,9 @@
 <html lang="en" data-orca-scrollbars="sleek">
   <head>
     <meta charset="UTF-8" />
-    <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
-    <link rel="manifest" href="/manifest.webmanifest" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <link rel="manifest" href="./manifest.webmanifest" />
     <meta
       property="og:title"
       content="Cmob — Watch &amp; control your coding agents from your phone"
@@ -13,7 +13,7 @@
       property="og:description"
       content="Mobile &amp; Web companion for cmux terminal workspaces and AI agents (Claude, AGY, Kiro, Codex)."
     />
-    <meta property="og:image" content="/og-preview.png" />
+    <meta property="og:image" content="https://chavisnguyen.github.io/cmob/og-preview.png" />
     <meta property="og:type" content="website" />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content="Cmob" />
@@ -21,7 +21,7 @@
       name="twitter:description"
       content="Watch &amp; control your coding agents from your phone"
     />
-    <meta name="twitter:image" content="/og-preview.png" />
+    <meta name="twitter:image" content="https://chavisnguyen.github.io/cmob/og-preview.png" />
     <meta
       name="viewport"
       content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover"
@@ -74,12 +74,17 @@
 
           if (token) {
             localStorage.setItem("cmux_token", token);
-            document.cookie =
-              "cmux_token=" +
-              encodeURIComponent(token) +
-              "; path=/; max-age=31536000; SameSite=Lax";
-            if (!window.location.hash || window.location.hash === "#") {
-              window.location.hash = "token=" + encodeURIComponent(token);
+            var isStatic =
+              window.location.hostname === "github.io" ||
+              window.location.hostname.endsWith(".github.io");
+            if (!isStatic) {
+              document.cookie =
+                "cmux_token=" +
+                encodeURIComponent(token) +
+                "; path=/; max-age=31536000; SameSite=Lax";
+              if (!window.location.hash || window.location.hash === "#") {
+                window.location.hash = "token=" + encodeURIComponent(token);
+              }
             }
           }
         } catch (e) {

@@ -1,10 +1,28 @@
 # Context Verification & Audit Report
 
 **Project:** `cmux-mobile`  
-**Auditor:** Sub-agent `Context Verification & Audit Reviewer`  
-**Date:** 2026-11-12  
+**Date:** 2026-11-18  
+**Audit:** Tri-Agent Parallel Clean-Context Review (GitHub Pages PWA Deployment, CORS, Multi-Host Support)  
+**Auditors:** Subagents 1, 2, and 3 (Independent clean-context reviewers)  
 **Standard:** Strict Evidence-Based Standard (100% verified citations, zero guessing, per `AGENTS.md`)  
-**Target Directory:** `/path/to/cmux-mobile/.context/`  
+
+---
+
+## 0. Multi-Agent Audit Summary (2026-11-18): GitHub Pages & Multi-Host Changes
+
+Three independent subagents with fresh context were spawned concurrently to audit all working copy changes comparing against `master`. All three auditors converged on critical/high issues which have been remediated:
+
+| Finding ID | Area | Severity | Description & Evidence | Resolution & File:Line |
+|---|---|---|---|---|
+| **CORS-01** | Gateway CORS | **CRITICAL** | `CorsLayer` discarded `_parts` and evaluated `origin_allowed(s, None)`, completely bypassing the same-origin check for all LAN IPs, direct Tailscale IPs, and custom hosts during CORS preflight. | Resolved: Extracted `Host` header from `parts.headers` in `server.rs:499-505`. |
+| **PWA-01** | Client Pairing & State | **CRITICAL** | `readPairingFromLocation` synthesized a same-origin endpoint (`wss://<origin>/ws`) from bare `#token=...` placed by `index.html`. On GitHub Pages, `wsClient` treated this as same-origin, executing `persistEndpoint(null)` and wiping the stored remote gateway on every reload! | Resolved: `pairing.ts:183, 208` returns `null` for bare tokens on static origins; `index.html:84` skips hash injection and cookie path leakage on `github.io`. |
+| **SEC-01** | Origin Allowlist | **HIGH** | Insecure wildcard `*.github.io` allowed any GitHub user hosting on `<any>.github.io` to probe `http://127.0.0.1:8088/health` and exhaust WS connection permits. | Resolved: Restricted default allowed GitHub Pages origin to `chavisnguyen.github.io` in `server.rs:739`. |
+| **SEC-02** | DNS Rebinding | **HIGH** | `Method::OPTIONS` in `host_and_origin_guard` exited early before validating `host_allowed(h)`, bypassing DNS rebinding checks. | Resolved: Enforced `host_allowed(h)` check unconditionally before OPTIONS pass-through in `server.rs:767-775`. |
+| **PWA-02** | Service Worker | **HIGH** | Visiting `https://chavisnguyen.github.io/cmob` without a trailing slash caused `new URL("sw.js", window.location.href)` to resolve to `/sw.js` (404), breaking SW registration. | Resolved: Base URL normalization with trailing slash in `pushManager.ts:27-32`. |
+| **PWA-03** | Service Worker Scope | **HIGH** | `pushManager.getEndpoint()` called `navigator.serviceWorker.getRegistration("/")`, returning `undefined` for apps hosted on subpaths like `/cmob/`. `sw.js` `notificationclick` matched any page on `self.location.origin`. | Resolved: Query registration without `"/"` in `pushManager.ts:143`; filter windows by `self.registration.scope` in `sw.js:106`. |
+| **UX-01** | Deep-linking | **MEDIUM** | When launched cold from notification click (`openWindow("?surface=...")`), `App.tsx` did not parse `?surface=` from URL query parameters. | Resolved: Added `pendingSurfaceJumpRef` and initial query param reader in `App.tsx:274, 325`. |
+| **UX-02** | Onboarding Card | **LOW** | Welcome screen card suggested `$ cmob`, which fails because clap requires a subcommand. Screen flashed during initial connecting state. | Resolved: Updated command to `$ cmob qr --tailscale` in `WorkspaceListView.tsx:75` and `WorkspaceListView.test.tsx:21`; guarded against connecting flash. |
+| **CI-01** | GitHub Actions | **MEDIUM** | `deploy-pages.yml` ran `vp build` directly, bypassing `tsc -b` and unit tests. | Resolved: Added `vp check`, `vp test --run`, `pnpm run build` (`tsc -b && vp build`), and `touch dist/.nojekyll`. |
 
 ---
 

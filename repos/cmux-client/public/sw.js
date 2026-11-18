@@ -68,10 +68,11 @@ self.addEventListener("push", (event) => {
       ]
     : [{ action: "open", title: "View" }];
 
+  const iconUrl = new URL("favicon.svg", self.registration.scope).href;
   const options = {
     body: payload.body,
-    icon: "/favicon.svg",
-    badge: "/favicon.svg",
+    icon: iconUrl,
+    badge: iconUrl,
     tag: payload.tag || "cmux-notification",
     data: payload.data || {},
     actions,
@@ -93,13 +94,16 @@ self.addEventListener("notificationclick", (event) => {
 
   const data = event.notification.data || {};
   const surfaceId = data.surfaceId;
-  const targetUrl = surfaceId ? `/?surface=${encodeURIComponent(surfaceId)}` : "/";
+  const targetUrl = new URL(
+    surfaceId ? `?surface=${encodeURIComponent(surfaceId)}` : "./",
+    self.registration.scope,
+  ).href;
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {
       for (const client of clientList) {
         if ("focus" in client) {
-          if (client.url.includes(self.location.origin)) {
+          if (client.url.startsWith(self.registration.scope)) {
             client.postMessage({
               type: "cmux.notification.clicked",
               action: event.action,

@@ -105,6 +105,7 @@ export function App() {
   const seenNotifIdsRef = useRef<string[]>([]);
   const toastTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
   const isFetchingRef = useRef<boolean>(false);
+  const pendingSurfaceJumpRef = useRef<string | null>(null);
 
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
@@ -270,6 +271,15 @@ export function App() {
     wsClient.connect();
     void pushManager.registerServiceWorker();
 
+    // Check for cold-start deep link from Web Push notifications: ?surface=<id>
+    if (typeof window !== "undefined") {
+      const urlSurfaceId = new URLSearchParams(window.location.search).get("surface");
+      if (urlSurfaceId) {
+        pendingSurfaceJumpRef.current = urlSurfaceId;
+        jumpToSurface(urlSurfaceId);
+      }
+    }
+
     // Check iOS PWA status
     if (pushManager.needsIosPwaInstall()) {
       setShowIosPwaBanner(true);
@@ -311,6 +321,20 @@ export function App() {
       return () => clearInterval(interval);
     }
   }, [connState, fetchWorkspaces]);
+
+  // Resolve cold-start deep-link to surface once workspaces are loaded
+  useEffect(() => {
+    if (pendingSurfaceJumpRef.current && workspaces.length > 0) {
+      const target = pendingSurfaceJumpRef.current;
+      jumpToSurface(target);
+      for (const ws of workspaces) {
+        if (ws.surfaces.some((s) => s.id === target || s.ref === target)) {
+          pendingSurfaceJumpRef.current = null;
+          break;
+        }
+      }
+    }
+  }, [workspaces, jumpToSurface]);
 
   const viewingSurfaceId = selectedSurface?.id ?? null;
 
@@ -537,7 +561,7 @@ export function App() {
             } relative bg-[#141416] border-b border-white/[0.08]`}
           >
             <div className="flex items-center gap-2.5">
-              <img src="/favicon.svg" alt="Cmob" className="w-6 h-6 shrink-0" />
+              <img src="./favicon.svg" alt="Cmob" className="w-6 h-6 shrink-0" />
               <span className="text-[17px] font-bold tracking-tight text-[#fafafa]">Cmob</span>
               <span
                 className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-medium ${
@@ -644,6 +668,9 @@ export function App() {
                 loading={loading}
                 onRefresh={fetchWorkspaces}
                 onSelectWorkspace={handleSelectWorkspace}
+                hostsCount={hosts.length}
+                connState={connState}
+                onPairHost={() => setShowPairModal(true)}
               />
             )}
 

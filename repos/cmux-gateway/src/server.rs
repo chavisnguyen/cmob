@@ -3,12 +3,13 @@ use axum::{
         ws::{Message, WebSocket, WebSocketUpgrade},
         Path, Request, State,
     },
-    http::{header, HeaderMap, StatusCode},
+    http::{header, HeaderMap, Method, StatusCode},
     middleware::{self, Next},
     response::{IntoResponse, Json, Response},
     routing::{delete, get, post},
     Router,
 };
+use tower_http::cors::{AllowOrigin, CorsLayer};
 use futures_util::StreamExt;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -494,6 +495,30 @@ pub fn create_router(state: AppState) -> Router {
     spawn_push_dispatcher(state.clone());
     spawn_dialog_watcher(state.clone());
 
+    let cors = CorsLayer::new()
+        .allow_origin(AllowOrigin::predicate(|origin: &axum::http::HeaderValue, parts: &axum::http::request::Parts| {
+            if let Ok(s) = origin.to_str() {
+                let host = parts.headers.get(header::HOST).and_then(|v| v.to_str().ok());
+                origin_allowed(s, host)
+            } else {
+                false
+            }
+        }))
+        .allow_methods([
+            Method::GET,
+            Method::POST,
+            Method::DELETE,
+            Method::OPTIONS,
+        ])
+        .allow_headers([
+            header::AUTHORIZATION,
+            header::CONTENT_TYPE,
+            header::ACCEPT,
+            header::UPGRADE,
+            header::CONNECTION,
+        ])
+        .allow_credentials(true);
+
     Router::new()
         .route("/health", get(health_handler))
         .route("/api/pairing", get(pairing_handler))
@@ -504,6 +529,7 @@ pub fn create_router(state: AppState) -> Router {
         .route("/ws", get(ws_handler))
         .fallback(static_handler)
         .layer(middleware::from_fn(host_and_origin_guard))
+        .layer(cors)
         .with_state(state)
 }
 
@@ -654,9 +680,98 @@ pub fn host_allowed(host_header: &str) -> bool {
         .any(|h| !h.is_empty() && h == name)
 }
 
-/// Rejects requests whose `Host` is not an expected name (DNS rebinding) or whose `Origin` is a different
-/// site than the page was served from (cross-site WebSocket / POST). Requests without these headers
+/// Origins permitted to connect via WebSocket or REST API:
+/// 1. Same-origin (matches Host header authority)
+/// 2. Loopback / localhost (http://localhost:*, http://127.0.0.1:*, etc.)
+/// 3. Tailscale MagicDNS nodes (*.ts.net)
+/// 4. GitHub Pages (github.io, *.github.io)
+/// 5. Origins or hosts in CMUX_ALLOWED_ORIGINS or CMUX_ALLOWED_HOSTS
+pub fn origin_allowed(origin_str: &str, host_header: Option<&str>) -> bool {
+    let origin_str = origin_str.trim();
+    if origin_str.is_empty() {
+        return false;
+    }
+    let lower = origin_str.to_ascii_lowercase();
+
+    // Extract authority: strip scheme (e.g. "https://", "http://", "ws://", "wss://")
+    let authority = lower
+        .split("://")
+        .nth(1)
+        .unwrap_or(&lower)
+        .split('/')
+        .next()
+        .unwrap_or("");
+
+    if authority.is_empty() {
+        return false;
+    }
+
+    // 1. Same-origin check against Host header
+    if let Some(host) = host_header {
+        let host_lower = host.trim().to_ascii_lowercase();
+        if authority == host_lower {
+            return true;
+        }
+    }
+
+    // Extract hostname without port or IPv6 brackets
+    let host_name = authority
+        .strip_prefix('[')
+        .and_then(|r| r.split(']').next())
+        .unwrap_or_else(|| authority.rsplit_once(':').map(|(h, _)| h).unwrap_or(authority));
+
+    if host_name.is_empty() {
+        return false;
+    }
+
+    // 2. Localhost / Loopback
+    if host_name == "localhost"
+        || host_name.ends_with(".localhost")
+        || host_name.parse::<std::net::IpAddr>().map(|ip| ip.is_loopback()).unwrap_or(false)
+    {
+        return true;
+    }
+
+    // 3. Tailscale MagicDNS (*.ts.net)
+    if host_name.ends_with(".ts.net") {
+        return true;
+    }
+
+    // 4. Official GitHub Pages deployment (custom forks use CMUX_ALLOWED_ORIGINS)
+    if host_name == "chavisnguyen.github.io" {
+        return true;
+    }
+
+    // 5. CMUX_ALLOWED_ORIGINS (matches full origin, authority, or hostname)
+    if let Ok(allowed) = std::env::var("CMUX_ALLOWED_ORIGINS") {
+        for a in allowed.split(',') {
+            let a = a.trim().to_ascii_lowercase();
+            if a.is_empty() {
+                continue;
+            }
+            if a == lower || a == authority || a == host_name {
+                return true;
+            }
+        }
+    }
+
+    // 6. CMUX_ALLOWED_HOSTS
+    if let Ok(allowed_hosts) = std::env::var("CMUX_ALLOWED_HOSTS") {
+        for h in allowed_hosts.split(',') {
+            let h = h.trim().to_ascii_lowercase();
+            if !h.is_empty() && h == host_name {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Rejects requests whose `Host` is not an expected name (DNS rebinding) or whose `Origin` is not
+/// an allowed site (cross-site WebSocket / POST). Requests without these headers
 /// (curl, native clients) pass; they still need a token.
+/// OPTIONS requests pass through to the CORS layer.
 async fn host_and_origin_guard(req: Request, next: Next) -> Response {
     let host = req
         .headers()
@@ -669,12 +784,11 @@ async fn host_and_origin_guard(req: Request, next: Next) -> Response {
             return (StatusCode::FORBIDDEN, "forbidden host").into_response();
         }
     }
+    if req.method() == Method::OPTIONS {
+        return next.run(req).await;
+    }
     if let Some(origin) = req.headers().get(header::ORIGIN).and_then(|v| v.to_str().ok()) {
-        let origin_authority = origin.split("://").nth(1).unwrap_or(origin).to_ascii_lowercase();
-        let same = host
-            .as_deref()
-            .is_some_and(|h| h.trim().to_ascii_lowercase() == origin_authority);
-        if !same {
+        if !origin_allowed(origin, host.as_deref()) {
             warn!("Rejected cross-origin request from Origin: {origin}");
             return (StatusCode::FORBIDDEN, "forbidden origin").into_response();
         }
@@ -2828,6 +2942,20 @@ mod tests {
         assert!(!host_allowed("localhost.evil.test"));
     }
 
+    #[test]
+    fn origin_allowlist_permits_github_pages_and_tailscale_cross_origin() {
+        assert!(origin_allowed("https://chavisnguyen.github.io", Some("mac.tail1234.ts.net")));
+        assert!(origin_allowed("https://chavisnguyen.github.io", Some("127.0.0.1:8088")));
+        assert!(!origin_allowed("https://attacker.github.io", None));
+        assert!(origin_allowed("http://localhost:5173", Some("mac.tail1234.ts.net:8088")));
+        assert!(origin_allowed("http://127.0.0.1:5173", Some("mac.tail1234.ts.net:8088")));
+        assert!(origin_allowed("https://node1.tail1234.ts.net", Some("node2.tail1234.ts.net:8088")));
+        assert!(origin_allowed("http://my-host.test:8088", Some("my-host.test:8088")));
+        assert!(!origin_allowed("https://evil.test", Some("127.0.0.1:8088")));
+        assert!(!origin_allowed("https://evil-github.io.phish.com", Some("127.0.0.1:8088")));
+        assert!(!origin_allowed("", Some("127.0.0.1:8088")));
+    }
+
     #[tokio::test]
     async fn guard_rejects_bad_host_and_cross_origin() {
         let mut state = AppState::new("127.0.0.1".into(), 8088, "master-secret".into());
@@ -2846,6 +2974,11 @@ mod tests {
             &[auth, ("host", "127.0.0.1:8088"), ("origin", "http://127.0.0.1:8088")],
         ).await;
         assert_eq!(st, 200, "same-origin allowed");
+        let (st, _) = http_with(
+            &mut router, "GET", "/api/pairing", "",
+            &[auth, ("host", "127.0.0.1:8088"), ("origin", "https://chavisnguyen.github.io")],
+        ).await;
+        assert_eq!(st, 200, "github pages origin allowed");
     }
 
     #[tokio::test]
