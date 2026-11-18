@@ -450,7 +450,7 @@ pub fn strip_markdown_for_notification(text: &str) -> String {
                 }
             }
             // Bold/italic: `**`, `__`, `*`, `_`
-            if (chars[i] == '*' || chars[i] == '_') {
+            if chars[i] == '*' || chars[i] == '_' {
                 let marker = chars[i];
                 let double = i + 1 < n && chars[i + 1] == marker;
                 let fence_len = if double { 2 } else { 1 };

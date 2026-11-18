@@ -66,7 +66,7 @@ function blobToBase64(blob: Blob): Promise<string> {
     const reader = new FileReader();
     reader.onerror = () => reject(new Error("Could not read the image."));
     reader.onload = () => {
-      const url = String(reader.result);
+      const url = typeof reader.result === "string" ? reader.result : "";
       resolve(url.slice(url.indexOf(",") + 1));
     };
     reader.readAsDataURL(blob);

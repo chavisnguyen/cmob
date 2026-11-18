@@ -87,6 +87,30 @@ export class PushManager {
     if (!reg) throw new Error("Service Worker not active");
 
     const convertedVapidKey = this.urlBase64ToUint8Array(vapidPublicKey);
+    const existing = await reg.pushManager.getSubscription();
+    if (existing) {
+      try {
+        const currentKey = existing.options.applicationServerKey;
+        if (currentKey) {
+          const currentArr = new Uint8Array(currentKey);
+          let match = currentArr.length === convertedVapidKey.length;
+          if (match) {
+            for (let i = 0; i < currentArr.length; i++) {
+              if (currentArr[i] !== convertedVapidKey[i]) {
+                match = false;
+                break;
+              }
+            }
+          }
+          if (!match) {
+            await existing.unsubscribe();
+          }
+        }
+      } catch {
+        await existing.unsubscribe().catch(() => {});
+      }
+    }
+
     const subscription = await reg.pushManager.subscribe({
       userVisibleOnly: true,
       applicationServerKey: convertedVapidKey as unknown as BufferSource,

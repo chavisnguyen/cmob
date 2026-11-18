@@ -13,11 +13,6 @@ function detectorCtor(): BarcodeDetectorCtor | null {
   return g.BarcodeDetector ?? null;
 }
 
-/** True when the browser can open a camera. Decoding falls back to jsQR where BarcodeDetector is missing (iOS Safari). */
-export function canScanQr(): boolean {
-  return typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia;
-}
-
 type Decode = (video: HTMLVideoElement) => Promise<string | null>;
 
 function makeDecoder(): Decode {

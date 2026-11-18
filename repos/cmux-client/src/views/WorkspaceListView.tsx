@@ -37,7 +37,7 @@ export function WorkspaceListView({
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06]">
+      <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06] pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
         {workspaces.length === 0 && !loading && (
           <div className="px-6 py-12 text-center text-[#898989] text-[14px]">
             No active workspaces found in cmux.

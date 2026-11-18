@@ -4,6 +4,11 @@
  * - Level 1: WorkspaceListView
  * - Level 2: SurfaceListView
  * - Level 3: SurfaceDetailView (Adaptive Orca Chat vs Raw Terminal)
+ * Multi-Device & Companion Features:
+ * - Top DeviceTabStrip: Fast 1-tap switching between paired Mac/Linux computers
+ * - BottomTabBar: Workspaces, Devices, and Settings navigation (Orca Mobile design)
+ * - DeviceListView: Comprehensive device and client token manager
+ * - SettingsView: Notification preferences, connectivity, app diagnostics
  * Push & PWA Features:
  * - Service Worker & Web Push Registration (RFC 8292 / VAPID)
  * - iOS Safari PWA Onboarding Banner
@@ -11,6 +16,8 @@
  * Sources:
  * - architecture.md: Section 5
  * - notification_system.md: Section 3
+ * - ref/orca/mobile/src/home/tabs/MobileHomeTabBar.tsx
+ * - ref/orca/mobile/src/session/tabs/MobileSessionTabStrip.tsx
  */
 
 import { useState, useEffect, useCallback, useRef } from "react";
@@ -19,8 +26,10 @@ import {
   BellRing,
   KeyRound,
   MoreHorizontal,
+  Plus,
   RefreshCw,
   Server,
+  Settings,
   Share2,
   X,
 } from "lucide-react";
@@ -44,6 +53,7 @@ import { haptic, installGlobalButtonHaptics } from "./native/haptics";
 import {
   goBack,
   pushView,
+  replaceView,
   showDetailEntry,
   useHistoryNavigation,
   type AppView,
@@ -51,22 +61,31 @@ import {
 import { WorkspaceListView } from "./views/WorkspaceListView";
 import { SurfaceListView } from "./views/SurfaceListView";
 import { SurfaceDetailView } from "./views/SurfaceDetailView";
-import { HostsModal } from "./components/hosts/HostsModal";
+import { DeviceListView } from "./views/DeviceListView";
+import { SettingsView } from "./views/SettingsView";
+import { PairHostModal } from "./components/hosts/PairHostModal";
+import { DeviceTabStrip } from "./components/hosts/DeviceTabStrip";
+import { BottomTabBar, type MainNavTab } from "./components/navigation/BottomTabBar";
 import type { CreateSurfaceParams } from "./components/surface/NewSurfaceModal";
 import { PairingConfirmModal } from "./components/hosts/PairingConfirmModal";
+import { useHosts } from "./hosts/useHosts";
+import type { SavedHost } from "./hosts/hostStore";
 
 export function App() {
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
   const [workspaces, setWorkspaces] = useState<WorkspaceNode[]>([]);
   const [loading, setLoading] = useState(false);
+  const [mainTab, setMainTab] = useState<MainNavTab>("workspaces");
   const [activeView, setActiveView] = useState<"workspaces" | "surfaces" | "detail">("workspaces");
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceNode | null>(null);
   const [selectedSurface, setSelectedSurface] = useState<SurfaceNode | null>(null);
   const [tokenInput, setTokenInput] = useState(wsClient.getToken());
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [showAppMenu, setShowAppMenu] = useState(false);
-  const [showHostsModal, setShowHostsModal] = useState(false);
+  const [showPairModal, setShowPairModal] = useState(false);
   const [pendingPairing, setPendingPairing] = useState(wsClient.getPendingPairing());
+
+  const { hosts, activeHostId, activeHost, switchHost, removeHost, renameHost } = useHosts();
 
   // Push notification & iOS PWA Onboarding state
   const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
@@ -85,6 +104,7 @@ export function App() {
   const localPrefsRef = useRef(localPrefs);
   const seenNotifIdsRef = useRef<string[]>([]);
   const toastTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const isFetchingRef = useRef<boolean>(false);
 
   useEffect(() => {
     selectedWorkspaceRef.current = selectedWorkspace;
@@ -113,6 +133,7 @@ export function App() {
     for (const ws of currentWorkspaces) {
       const match = ws.surfaces.find((s) => s.id === targetSurfaceId || s.ref === targetSurfaceId);
       if (match) {
+        setMainTab("workspaces");
         setSelectedWorkspace(ws);
         setSelectedSurface(match);
         setActiveView("detail");
@@ -124,18 +145,25 @@ export function App() {
   }, []);
 
   // History API sync: system back / browser back / edge swipe pop one screen at a time.
-  const handlePop = useCallback((view: AppView) => {
-    if (view === "workspaces") {
-      setActiveView("workspaces");
-      setSelectedWorkspace(null);
-      setSelectedSurface(null);
-    } else if (view === "surfaces") {
-      setActiveView(selectedWorkspaceRef.current ? "surfaces" : "workspaces");
-      setSelectedSurface(null);
-    } else {
-      setActiveView(selectedSurfaceRef.current ? "detail" : "surfaces");
-    }
-  }, []);
+  const handlePop = useCallback(
+    (view: AppView) => {
+      if (mainTab !== "workspaces") {
+        setMainTab("workspaces");
+        return;
+      }
+      if (view === "workspaces") {
+        setActiveView("workspaces");
+        setSelectedWorkspace(null);
+        setSelectedSurface(null);
+      } else if (view === "surfaces") {
+        setActiveView(selectedWorkspaceRef.current ? "surfaces" : "workspaces");
+        setSelectedSurface(null);
+      } else {
+        setActiveView(selectedSurfaceRef.current ? "detail" : "surfaces");
+      }
+    },
+    [mainTab],
+  );
   useHistoryNavigation(handlePop);
 
   useEffect(() => installGlobalButtonHaptics(), []);
@@ -158,6 +186,8 @@ export function App() {
   // Fetch workspaces tree from Gateway
   const fetchWorkspaces = useCallback(async () => {
     if (wsClient.getState() !== "connected") return;
+    if (isFetchingRef.current) return;
+    isFetchingRef.current = true;
     setLoading(true);
     try {
       const resp = await wsClient.call<{ workspaces: WorkspaceNode[] }>(RPC_METHODS.WORKSPACE_TREE);
@@ -190,9 +220,50 @@ export function App() {
     } catch (err) {
       console.warn("Failed to fetch workspaces:", err);
     } finally {
+      isFetchingRef.current = false;
       setLoading(false);
     }
   }, []);
+
+  const handleSwitchHost = useCallback(
+    (host: SavedHost) => {
+      setSelectedWorkspace(null);
+      setSelectedSurface(null);
+      setActiveView("workspaces");
+      replaceView("workspaces");
+      setWorkspaces([]);
+      for (const timer of toastTimersRef.current.values()) {
+        clearTimeout(timer);
+      }
+      toastTimersRef.current.clear();
+      setActiveToasts([]);
+      switchHost(host);
+    },
+    [switchHost],
+  );
+
+  const handleRemoveHost = useCallback(
+    (id: string) => {
+      if (activeHostId === id) {
+        setSelectedWorkspace(null);
+        setSelectedSurface(null);
+        setActiveView("workspaces");
+        replaceView("workspaces");
+        setWorkspaces([]);
+        for (const timer of toastTimersRef.current.values()) {
+          clearTimeout(timer);
+        }
+        toastTimersRef.current.clear();
+        setActiveToasts([]);
+      }
+      removeHost(id);
+    },
+    [activeHostId, removeHost],
+  );
+
+  useEffect(() => {
+    setTokenInput(wsClient.getToken());
+  }, [activeHostId]);
 
   // Connect on mount & initialize Service Worker
   useEffect(() => {
@@ -299,103 +370,41 @@ export function App() {
             const withoutSameTag = prev.filter((t) => t.tag !== alert.tag);
             return [alert, ...withoutSameTag].slice(0, 3);
           });
-          const existingTimer = toastTimersRef.current.get(alert.tag);
-          if (existingTimer) clearTimeout(existingTimer);
-          if (!alert.urgent) {
-            const timer = setTimeout(() => {
-              toastTimersRef.current.delete(alert.tag);
-              setActiveToasts((prev) =>
-                prev.filter((t) => t.notification_id !== alert.notification_id),
-              );
-            }, 8000);
-            toastTimersRef.current.set(alert.tag, timer);
-          }
+
+          const timer = setTimeout(() => {
+            setActiveToasts((prev) =>
+              prev.filter((t) => t.notification_id !== alert.notification_id),
+            );
+            toastTimersRef.current.delete(alert.notification_id);
+          }, 8000);
+          toastTimersRef.current.set(alert.notification_id, timer);
         }
 
-        if (
-          prefs.desktopBrowserNotif &&
-          !tabVisible &&
-          typeof Notification !== "undefined" &&
-          Notification.permission === "granted"
-        ) {
-          void pushManager.getEndpoint().then((ep) => {
-            // Only emit a direct Browser Notification when Web Push is not already subscribed for this browser.
-            if (ep) return;
-            const n = new Notification(alert.title, {
-              body: alert.body,
-              tag: alert.tag,
-              icon: "/favicon.svg",
-            });
-            n.onclick = () => {
-              window.focus();
-              jumpToSurface(alert.surface_id);
-              n.close();
-            };
-          });
-        }
-        return;
-      }
-
-      if (event === RPC_EVENTS.NOTIFICATION_DISMISS) {
-        const payload = data as Partial<NotificationDismissPayload> | null;
-        const surfaceId = typeof payload?.surface_id === "string" ? payload.surface_id : "";
-        const tags = Array.isArray(payload?.tags)
-          ? payload.tags.filter((t): t is string => typeof t === "string")
-          : [];
-        if (surfaceId || tags.length > 0) {
+        haptic(alert.urgent ? "medium" : "light");
+      } else if (event === RPC_EVENTS.NOTIFICATION_DISMISS) {
+        const payload = data as NotificationDismissPayload;
+        if (payload?.tags) {
+          const dismissTags = new Set(payload.tags);
           setActiveToasts((prev) =>
-            prev.filter(
-              (t) =>
-                (surfaceId ? t.surface_id !== surfaceId : true) &&
-                (tags.length > 0 ? !tags.includes(t.tag) : true),
-            ),
+            prev.filter((t) => {
+              if (t.surface_id === payload.surface_id && dismissTags.has(t.tag)) {
+                const timer = toastTimersRef.current.get(t.notification_id);
+                if (timer) {
+                  clearTimeout(timer);
+                  toastTimersRef.current.delete(t.notification_id);
+                }
+                return false;
+              }
+              return true;
+            }),
           );
-        }
-        if (tags.length > 0 && "serviceWorker" in navigator) {
-          void navigator.serviceWorker
-            .getRegistration("/")
-            .then((reg) => {
-              reg?.active?.postMessage({ type: "cmux.notification.dismiss", tags });
-            })
-            .catch(() => {});
         }
       }
     });
-  }, [jumpToSurface]);
-
-  // Dynamic Visual Viewport tracking for iOS Virtual Keyboard & Standalone PWA
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
-
-    const preventWindowScroll = () => {
-      if (window.scrollY !== 0) {
-        window.scrollTo(0, 0);
-      }
-    };
-
-    const updateViewportHeight = () => {
-      const vv = window.visualViewport;
-      if (!vv) return;
-      document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
-      // iOS scrolls the visual viewport to reveal a focused input; keep the fixed root glued to it
-      // so no gap opens between the composer and the keyboard.
-      document.documentElement.style.setProperty("--app-top", `${vv.offsetTop}px`);
-      preventWindowScroll();
-    };
-
-    window.visualViewport.addEventListener("resize", updateViewportHeight);
-    window.visualViewport.addEventListener("scroll", updateViewportHeight);
-    window.addEventListener("scroll", preventWindowScroll, { passive: true });
-    updateViewportHeight();
-
-    return () => {
-      window.visualViewport?.removeEventListener("resize", updateViewportHeight);
-      window.visualViewport?.removeEventListener("scroll", updateViewportHeight);
-      window.removeEventListener("scroll", preventWindowScroll);
-    };
   }, []);
 
   const handleForceReload = () => {
+    haptic("medium");
     try {
       const url = new URL(window.location.href);
       url.searchParams.set("reload", Date.now().toString());
@@ -497,7 +506,7 @@ export function App() {
   );
 
   return (
-    <div className="flex flex-col h-full w-full max-w-full overflow-hidden bg-[#0a0a0a] font-sans antialiased select-none">
+    <div className="flex flex-col h-full w-full max-w-full overflow-hidden bg-[#0a0a0c] font-sans antialiased select-none">
       {showIosPwaBanner && (
         <div className="flex items-center justify-between gap-2 px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 bg-[#171717] border-b border-white/[0.08] text-[13px] text-[#e5e5e5] shrink-0">
           <div className="flex items-center gap-2 min-w-0">
@@ -517,142 +526,195 @@ export function App() {
         </div>
       )}
 
+      {/* Top Header & Device Tab Strip */}
       {activeView !== "detail" && (
-        <div
-          className={`flex items-center justify-between px-4 ${
-            showIosPwaBanner
-              ? "min-h-[52px]"
-              : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))]"
-          } relative bg-[#141416] border-b border-white/[0.08] shrink-0 z-30`}
-        >
-          <div className="flex items-center gap-2.5">
-            <img src="/favicon.svg" alt="Cmob" className="w-6 h-6 shrink-0" />
-            <span className="text-[17px] font-bold tracking-tight text-[#fafafa]">Cmob</span>
-            <span
-              className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-medium ${
-                connState === "connected"
-                  ? "bg-emerald-500/15 text-emerald-400"
-                  : connState === "connecting" || connState === "authenticating"
-                    ? "bg-amber-500/15 text-amber-300"
-                    : "bg-rose-500/15 text-rose-400"
-              }`}
-            >
+        <div className="flex flex-col shrink-0 z-30">
+          <div
+            className={`flex items-center justify-between px-4 ${
+              showIosPwaBanner
+                ? "min-h-[50px]"
+                : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))]"
+            } relative bg-[#141416] border-b border-white/[0.08]`}
+          >
+            <div className="flex items-center gap-2.5">
+              <img src="/favicon.svg" alt="Cmob" className="w-6 h-6 shrink-0" />
+              <span className="text-[17px] font-bold tracking-tight text-[#fafafa]">Cmob</span>
               <span
-                className={`w-1.5 h-1.5 rounded-full ${
+                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-medium ${
                   connState === "connected"
-                    ? "bg-emerald-400"
+                    ? "bg-emerald-500/15 text-emerald-400"
                     : connState === "connecting" || connState === "authenticating"
-                      ? "bg-amber-400"
-                      : "bg-rose-400"
+                      ? "bg-amber-500/15 text-amber-300"
+                      : "bg-rose-500/15 text-rose-400"
                 }`}
-              />
-              <span className="capitalize">{connState}</span>
-            </span>
-          </div>
+              >
+                <span
+                  className={`w-1.5 h-1.5 rounded-full ${
+                    connState === "connected"
+                      ? "bg-emerald-400"
+                      : connState === "connecting" || connState === "authenticating"
+                        ? "bg-amber-400"
+                        : "bg-rose-400"
+                  }`}
+                />
+                <span className="capitalize">{connState}</span>
+              </span>
+            </div>
 
-          <div className="flex items-center gap-1.5">
-            <button
-              type="button"
-              onClick={handleToggleNotifications}
-              className={`w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] flex items-center justify-center transition-colors ${
-                notifPermission === "granted"
-                  ? "text-emerald-400"
-                  : notifPermission === "denied"
-                    ? "text-[#525252] cursor-not-allowed"
-                    : "text-amber-300"
-              }`}
-              title={`Notifications: ${notifPermission}`}
-              aria-label="Notifications"
-            >
-              {notifPermission === "granted" ? (
-                <BellRing className="w-[18px] h-[18px]" />
-              ) : (
-                <Bell className="w-[18px] h-[18px]" />
+            <div className="flex items-center gap-1.5">
+              <button
+                type="button"
+                onClick={handleToggleNotifications}
+                className={`w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] flex items-center justify-center transition-colors ${
+                  notifPermission === "granted"
+                    ? "text-emerald-400"
+                    : notifPermission === "denied"
+                      ? "text-[#525252] cursor-not-allowed"
+                      : "text-amber-300"
+                }`}
+                title={`Notifications: ${notifPermission}`}
+                aria-label="Notifications"
+              >
+                {notifPermission === "granted" ? (
+                  <BellRing className="w-[18px] h-[18px]" />
+                ) : (
+                  <Bell className="w-[18px] h-[18px]" />
+                )}
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setShowAppMenu((v) => !v)}
+                className="w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] text-[#e5e5e5] flex items-center justify-center transition-colors"
+                title="Menu"
+                aria-label="Menu"
+                aria-expanded={showAppMenu}
+              >
+                <MoreHorizontal className="w-[18px] h-[18px]" />
+              </button>
+
+              {showAppMenu && (
+                <>
+                  <div className="fixed inset-0 z-40" onClick={() => setShowAppMenu(false)} />
+                  <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-[#1c1c20] border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
+                    {[
+                      { label: "Pair new device", icon: Plus, run: () => setShowPairModal(true) },
+                      { label: "Hosts & devices", icon: Server, run: () => setMainTab("devices") },
+                      { label: "Settings", icon: Settings, run: () => setMainTab("settings") },
+                      { label: "Auth token", icon: KeyRound, run: () => setShowTokenModal(true) },
+                      { label: "Reload app", icon: RefreshCw, run: handleForceReload },
+                    ].map(({ label, icon: Icon, run }) => (
+                      <button
+                        key={label}
+                        type="button"
+                        onClick={() => {
+                          setShowAppMenu(false);
+                          run();
+                        }}
+                        className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                      >
+                        <Icon className="w-4 h-4 text-[#a3a3a3]" />
+                        <span>{label}</span>
+                      </button>
+                    ))}
+                  </div>
+                </>
               )}
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowAppMenu((v) => !v)}
-              className="w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] text-[#e5e5e5] flex items-center justify-center transition-colors"
-              title="Menu"
-              aria-label="Menu"
-              aria-expanded={showAppMenu}
-            >
-              <MoreHorizontal className="w-[18px] h-[18px]" />
-            </button>
-
-            {showAppMenu && (
-              <>
-                <div className="fixed inset-0 z-40" onClick={() => setShowAppMenu(false)} />
-                <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-[#1c1c20] border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
-                  {[
-                    { label: "Hosts & devices", icon: Server, run: () => setShowHostsModal(true) },
-                    { label: "Auth token", icon: KeyRound, run: () => setShowTokenModal(true) },
-                    { label: "Reload app", icon: RefreshCw, run: handleForceReload },
-                  ].map(({ label, icon: Icon, run }) => (
-                    <button
-                      key={label}
-                      type="button"
-                      onClick={() => {
-                        setShowAppMenu(false);
-                        run();
-                      }}
-                      className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
-                    >
-                      <Icon className="w-4 h-4 text-[#a3a3a3]" />
-                      <span>{label}</span>
-                    </button>
-                  ))}
-                </div>
-              </>
-            )}
+            </div>
           </div>
+
+          {/* Top Device Tab Strip */}
+          <DeviceTabStrip
+            hosts={hosts}
+            activeHostId={activeHostId}
+            connState={connState}
+            onSelectHost={handleSwitchHost}
+            onAddHost={() => setShowPairModal(true)}
+          />
         </div>
       )}
 
-      {/* Main 3-Level Content Area */}
-      <main className="flex-1 overflow-hidden">
-        {activeView === "workspaces" && (
-          <WorkspaceListView
-            workspaces={workspaces}
-            loading={loading}
-            onRefresh={fetchWorkspaces}
-            onSelectWorkspace={handleSelectWorkspace}
+      {/* Main Content Area */}
+      <main className="flex-1 overflow-hidden relative">
+        {mainTab === "workspaces" && (
+          <>
+            {activeView === "workspaces" && (
+              <WorkspaceListView
+                workspaces={workspaces}
+                loading={loading}
+                onRefresh={fetchWorkspaces}
+                onSelectWorkspace={handleSelectWorkspace}
+              />
+            )}
+
+            {activeView === "surfaces" && selectedWorkspace && (
+              <SurfaceListView
+                workspace={selectedWorkspace}
+                onBack={handleBackToWorkspaces}
+                onSelectSurface={handleSelectSurface}
+                onCreateSurface={handleCreateSurface}
+                onRenameSurface={handleRenameSurface}
+                onCloseSurface={handleCloseSurface}
+                onRefresh={fetchWorkspaces}
+              />
+            )}
+
+            {activeView === "detail" && selectedWorkspace && selectedSurface && (
+              <SurfaceDetailView
+                // Per-surface state (pending sends, working flag, history paging) must not leak between tabs.
+                key={selectedSurface.id || selectedSurface.ref}
+                surface={selectedSurface}
+                workspace={selectedWorkspace}
+                onBack={handleBackToSurfaces}
+                allSurfaces={selectedWorkspace.surfaces}
+                onSelectSurface={handleSelectSurface}
+                onCreateSurface={handleCreateSurface}
+                onRenameSurface={handleRenameSurface}
+                onCloseSurface={handleCloseSurface}
+                onRefresh={fetchWorkspaces}
+              />
+            )}
+          </>
+        )}
+
+        {mainTab === "devices" && (
+          <DeviceListView
+            hosts={hosts}
+            activeHostId={activeHostId}
+            connState={connState}
+            onSelectHost={(h) => {
+              handleSwitchHost(h);
+              setMainTab("workspaces");
+            }}
+            onRemoveHost={handleRemoveHost}
+            onRenameHost={renameHost}
           />
         )}
 
-        {activeView === "surfaces" && selectedWorkspace && (
-          <SurfaceListView
-            workspace={selectedWorkspace}
-            onBack={handleBackToWorkspaces}
-            onSelectSurface={handleSelectSurface}
-            onCreateSurface={handleCreateSurface}
-            onRenameSurface={handleRenameSurface}
-            onCloseSurface={handleCloseSurface}
-            onRefresh={fetchWorkspaces}
-          />
-        )}
-
-        {activeView === "detail" && selectedWorkspace && selectedSurface && (
-          <SurfaceDetailView
-            // Per-surface state (pending sends, working flag, history paging) must not leak between tabs.
-            key={selectedSurface.id || selectedSurface.ref}
-            surface={selectedSurface}
-            workspace={selectedWorkspace}
-            onBack={handleBackToSurfaces}
-            allSurfaces={selectedWorkspace.surfaces}
-            onSelectSurface={handleSelectSurface}
-            onCreateSurface={handleCreateSurface}
-            onRenameSurface={handleRenameSurface}
-            onCloseSurface={handleCloseSurface}
-            onRefresh={fetchWorkspaces}
+        {mainTab === "settings" && (
+          <SettingsView
+            activeHost={activeHost}
+            connState={connState}
+            onOpenTokenModal={() => setShowTokenModal(true)}
+            onNavigateToDevices={() => setMainTab("devices")}
+            localPrefs={localPrefs}
+            onUpdateLocalPrefs={setLocalPrefs}
           />
         )}
       </main>
 
+      {/* Bottom Navigation Bar */}
+      {activeView !== "detail" && (
+        <BottomTabBar
+          activeTab={mainTab}
+          onSelectTab={setMainTab}
+          workspaceBadge={activeToasts.length}
+        />
+      )}
+
+      {/* Floating In-App Toast Banners */}
       {activeToasts.length > 0 && (
-        <div className="fixed top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
+        <div className="fixed top-[calc(6.5rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
           {activeToasts.map((toast) => (
             <div
               key={toast.notification_id}
@@ -696,6 +758,16 @@ export function App() {
         </div>
       )}
 
+      {/* Modals */}
+      {showPairModal && (
+        <PairHostModal
+          onClose={() => setShowPairModal(false)}
+          onPaired={() => {
+            void fetchWorkspaces();
+          }}
+        />
+      )}
+
       {pendingPairing && (
         <PairingConfirmModal
           offer={pendingPairing}
@@ -703,7 +775,6 @@ export function App() {
           onReject={() => wsClient.rejectPendingPairing()}
         />
       )}
-      {showHostsModal && <HostsModal onClose={() => setShowHostsModal(false)} />}
 
       {showTokenModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">

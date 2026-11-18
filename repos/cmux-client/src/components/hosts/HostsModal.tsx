@@ -5,21 +5,14 @@ import { parsePairingInput } from "../../protocol/pairing";
 import { RPC_METHODS } from "../../protocol/rpc";
 import { wsClient } from "../../transport/wsClient";
 import { NotificationPrefs } from "./NotificationPrefs";
-import { QrScanModal, canScanQr } from "./QrScanModal";
+import { QrScanModal } from "./QrScanModal";
+import { canScanQr, relativeTime } from "./deviceUtils";
 
 interface DeviceInfo {
   id: string;
   label: string;
   created_at: number;
   last_seen: number;
-}
-
-export function relativeTime(unixSeconds: number, nowMs = Date.now()): string {
-  const diff = Math.max(0, Math.floor(nowMs / 1000) - unixSeconds);
-  if (diff < 90) return "just now";
-  if (diff < 3600) return `${Math.floor(diff / 60)} min ago`;
-  if (diff < 86400) return `${Math.floor(diff / 3600)} h ago`;
-  return `${Math.floor(diff / 86400)} d ago`;
 }
 
 export function HostsModal({ onClose }: { onClose: () => void }) {

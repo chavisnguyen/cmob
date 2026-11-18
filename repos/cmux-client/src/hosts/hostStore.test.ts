@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  classifyHostType,
+  emitHostsChange,
   getActiveHostId,
   hostNameFromEndpoint,
   loadHosts,
   removeHost,
   renameHost,
+  sanitizeHostName,
   setActiveHostId,
+  subscribeHosts,
   upsertHost,
 } from "./hostStore";
 
@@ -66,5 +70,60 @@ describe("hostStore", () => {
 
   it("falls back to the raw string for an unparsable endpoint", () => {
     expect(hostNameFromEndpoint("not a url")).toBe("not a url");
+  });
+
+  it("classifies host machine types based on name/endpoint keywords", () => {
+    expect(classifyHostType("Linux VPS Cloud")).toBe("server");
+    expect(classifyHostType("ubuntu-server-01")).toBe("server");
+    expect(classifyHostType("Mac Studio M2")).toBe("desktop");
+    expect(classifyHostType("Workstation Tower")).toBe("desktop");
+    expect(classifyHostType("MacBook Pro M3")).toBe("laptop");
+    expect(classifyHostType("My Laptop")).toBe("laptop");
+  });
+
+  it("notifies subscribers when hosts are upserted, renamed, or removed", () => {
+    const s = memoryStorage();
+    let callCount = 0;
+    const unsub = subscribeHosts(() => {
+      callCount += 1;
+    });
+
+    upsertHost(s, { endpoint: "ws://host1/ws", token: "tok1", name: "Host 1" });
+    expect(callCount).toBe(1);
+
+    renameHost(s, "ws://host1/ws", "New Name");
+    expect(callCount).toBe(2);
+
+    removeHost(s, "ws://host1/ws");
+    expect(callCount).toBe(3);
+
+    unsub();
+    upsertHost(s, { endpoint: "ws://host2/ws", token: "tok2" });
+    expect(callCount).toBe(3); // unsubscribed
+  });
+
+  it("sanitizes host names by stripping control characters and truncating", () => {
+    expect(sanitizeHostName("  \tMacBook\r\nPro\x00  ")).toBe("MacBook  Pro");
+    const longName = "A".repeat(60);
+    expect(sanitizeHostName(longName)).toBe("A".repeat(40));
+    expect(sanitizeHostName("Normal Host")).toBe("Normal Host");
+  });
+
+  it("isolates subscriber errors so other subscribers still receive updates", () => {
+    const s = memoryStorage();
+    let secondSubscriberCalled = false;
+
+    const unsub1 = subscribeHosts(() => {
+      throw new Error("Explosive subscriber");
+    });
+    const unsub2 = subscribeHosts(() => {
+      secondSubscriberCalled = true;
+    });
+
+    emitHostsChange(s);
+    expect(secondSubscriberCalled).toBe(true);
+
+    unsub1();
+    unsub2();
   });
 });

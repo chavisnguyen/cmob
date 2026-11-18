@@ -239,11 +239,14 @@ export function SurfaceDetailView({
         if (!controller.signal.aborted) setSubscribed(true);
       })
       .catch((err) => console.warn("Chat subscribe failed, falling back to polling:", err));
+    const mountedEndpoint = wsClient.getEndpoint();
     return () => {
       controller.abort();
       offEvent();
       setSubscribed(false);
-      void wsClient.call("mobile.chat.unsubscribe", { surface_id: surfaceKey }).catch(() => {});
+      if (wsClient.getEndpoint() === mountedEndpoint && wsClient.getState() === "connected") {
+        void wsClient.call("mobile.chat.unsubscribe", { surface_id: surfaceKey }).catch(() => {});
+      }
     };
   }, [
     connState,

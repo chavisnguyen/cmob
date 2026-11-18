@@ -5,7 +5,13 @@
  * - ref/cmux-pocket/crates/cmux-pocket-gateway/src/server.rs
  */
 
-import { getActiveHostId, setActiveHostId, upsertHost, type SavedHost } from "../hosts/hostStore";
+import {
+  getActiveHostId,
+  loadHosts,
+  setActiveHostId,
+  upsertHost,
+  type SavedHost,
+} from "../hosts/hostStore";
 import {
   collectTokenCandidates,
   endpointToHttpBase,
@@ -118,7 +124,10 @@ function persistStoredToken(token: string): void {
     // Ignore
   }
   setCookie("cmux_token", token, 365);
-  sanitizePairingInAddressBar(token);
+  // Only sanitize address bar if we are connected to the same origin; never write a remote token to the host origin's address bar.
+  if (!getStoredEndpoint()) {
+    sanitizePairingInAddressBar(token);
+  }
 }
 
 const ENDPOINT_KEY = "cmux_endpoint";
@@ -376,6 +385,11 @@ export class GatewayWsClient {
     const here = typeof window !== "undefined" ? sameOriginEndpoint(window.location) : null;
     this.endpoint = offer.endpoint === here ? null : offer.endpoint;
     persistEndpoint(this.endpoint);
+    try {
+      setActiveHostId(localStorage, offer.endpoint);
+    } catch {
+      // ignore
+    }
     this.pendingTicket =
       offer.ticket && !offer.token ? { ticket: offer.ticket, endpoint: offer.endpoint } : null;
     // Never present the previous host's credential to the new host.
@@ -417,10 +431,11 @@ export class GatewayWsClient {
     if (typeof window === "undefined" || !this.token) return;
     try {
       const endpoint = this.getEndpoint();
+      const existing = loadHosts(localStorage).find((h) => h.id === endpoint);
       upsertHost(localStorage, {
         endpoint,
         token: this.token,
-        name: this.hostNameHint ?? undefined,
+        name: existing?.name || this.hostNameHint || undefined,
       });
       if (!getActiveHostId(localStorage) || getActiveHostId(localStorage) !== endpoint) {
         setActiveHostId(localStorage, endpoint);

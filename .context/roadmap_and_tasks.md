@@ -190,3 +190,35 @@ This document defines the actionable milestones, implementation phases, and test
   - Decluttered Level 3 header (`repos/cmux-client/src/views/SurfaceDetailView.tsx:222-358`): removed 4 cramped `12px` icon buttons from the top bar, expanded header height to `52px` + safe-area-top with readable `15px` title, `Chat | Term` segmented control, and a single `⋯` (`MoreHorizontal`) menu (`44px` rows for New Tab, Rename Tab, Reload App, Close Tab).
   - Upgraded tap targets & typography across `App.tsx:266-352`, `WorkspaceListView.tsx:16-94`, `SurfaceListView.tsx:45-210`, `QuickSurfaceSwitcher.tsx:28-112`, `RawTerminalView.tsx:830-1030` (`36px` Orca keycaps matching `ref/orca/mobile/src/terminal/session/terminal-dock-styles.ts:4-110`, `13px` key labels, white latch border & inverted solid-white lock), `OrcaChatView.tsx:400-450` (`15px` input to avoid iOS Safari auto-zoom, `36px` Send/Stop button), and `NewSurfaceModal.tsx` / `RenameSurfaceModal.tsx` / `CloseSurfaceDialog.tsx` (`44px` inputs & buttons).
   - Verified with `make test` (41 lib + 41 bin + 2 integration Rust tests; `vp check` clean; 35/35 client tests), `make build`, and live restart inside `surface:1000050047` (`PID 84611`, `HTTP/2 200 OK` on `/assets/index-BANQd68Z.js`, `cmux_alive: true`).
+
+- [x] **M5.8: Multi-Device Support, Device TabStrip, Bottom Navigation & Settings (2026-11-18):**
+  - **Multi-Device Architecture:** One mobile/web companion client connects to and switches between multiple host machines/computers (e.g. MacBook, Mac Studio, Linux VPS).
+  - **Top DeviceTabStrip (`repos/cmux-client/src/components/hosts/DeviceTabStrip.tsx`):**
+    - Horizontal scroll strip with active host auto-scrolling (`scrollIntoView({ inline: "center" })`).
+    - Device categorization glyphs (`classifyHostType`: Laptop, Desktop/Monitor, Server) inspired by Orca (`ref/orca/mobile/`).
+    - Real-time connection status dot (green connected, pulsing amber connecting/authenticating, rose disconnected/error).
+    - Quick "+ Add" button to pair new hosts via QR code or pairing URL.
+    - W3C ARIA Tab pattern compliance with ArrowLeft/ArrowRight keyboard navigation and min 36px touch bounds.
+  - **Bottom Navigation Bar (`repos/cmux-client/src/components/navigation/BottomTabBar.tsx`):**
+    - 3-tab navigation hierarchy: `Workspaces`, `Devices`, `Settings`.
+    - Live workspace badge counter for pending agent toasts/alerts.
+    - Full safe-area-inset-bottom support for notched mobile displays (iPhone/Android).
+  - **Dedicated Devices View (`repos/cmux-client/src/views/DeviceListView.tsx`):**
+    - Paired Computers list with live active status, 1-tap switch button, host renaming modal (`RenameHostModal.tsx`), and two-step confirmable removal.
+    - Authorized Mobile Devices on the active gateway with last-seen relative timestamps and two-step revoke button via `RPC_METHODS.DEVICE_REVOKE`.
+  - **Settings View (`repos/cmux-client/src/views/SettingsView.tsx`):**
+    - Active connection status card with 1-tap navigation to Devices and Gateway Auth Token modal.
+    - Push notifications permission toggle with system permission status and per-category Web Push opt-outs (`NotificationPrefs.tsx`).
+    - App & diagnostics card with force reload, app version (`v0.1.3`), theme indicator (`Orca Dark`), and GitHub repository link.
+  - **Reactive Host Store (`repos/cmux-client/src/hosts/hostStore.ts` & `useHosts.ts`):**
+    - Pub/sub pattern (`subscribeHosts`, `emitHostsChange`) synchronizing host list and active host ID across components.
+    - Input sanitization (`sanitizeHostName` stripping control characters and truncating to 40 chars).
+    - In-memory fallback (`isDefaultStorage`) preserving hosts in private browsing mode while isolating unit tests.
+  - **Independent Audits & Code Quality:**
+    - 3 independent sub-agents ran in parallel (Protocol Auditor, Mobile UX Auditor, Code Quality & Security Auditor) identifying 49 specific issues.
+    - All audited findings resolved: address bar token hash poisoning on remote hosts prevented, rename persistence protected against hint overwrites, list bottom scroll padding added (`pb-[calc(5rem+env(safe-area-inset-bottom))]`), in-flight polling race conditions guarded (`isFetchingRef`), history state cleaned on host switch (`replaceView("workspaces")`), toast banner positioned below header and tab strip, duplicate notification toggles consolidated into `NotificationPrefs`, and touch targets widened to meet Apple HIG (>= 44px).
+  - **Verification:**
+    - All 136 Gateway Rust unit tests pass.
+    - All 20 Client test suites (106 tests) pass with 0 errors.
+    - `vp check` clean (0 warnings, 0 lint errors, 0 type errors, 100% formatted).
+    - Client PWA production bundle built successfully (`tsc -b && vp build`).
