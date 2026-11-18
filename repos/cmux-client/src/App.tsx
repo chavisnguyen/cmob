@@ -70,6 +70,7 @@ import type { CreateSurfaceParams } from "./components/surface/NewSurfaceModal";
 import { PairingConfirmModal } from "./components/hosts/PairingConfirmModal";
 import { useHosts } from "./hosts/useHosts";
 import type { SavedHost } from "./hosts/hostStore";
+import { isDemoMode } from "./demo/demoData";
 
 export function App() {
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
@@ -583,6 +584,11 @@ export function App() {
                 />
                 <span className="capitalize">{connState}</span>
               </span>
+              {isDemoMode() && (
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                  Demo
+                </span>
+              )}
             </div>
 
             <div className="flex items-center gap-1.5">

@@ -30,6 +30,8 @@ import {
   type JsonRpcResponse,
   type RequestId,
 } from "../protocol/rpc";
+import { isDemoMode } from "../demo/demoData";
+import { handleDemoRpc } from "../demo/demoMode";
 
 function getCookie(name: string): string | null {
   if (typeof document === "undefined") return null;
@@ -300,7 +302,18 @@ export class GatewayWsClient {
   }
 
   public getState(): ConnectionState {
+    if (isDemoMode()) return "connected";
     return this.currentState;
+  }
+
+  public dispatchDemoEvent(event: string, data: unknown): void {
+    for (const listener of this.eventListeners) {
+      try {
+        listener(event, data);
+      } catch (err) {
+        console.error("Demo event dispatch error:", err);
+      }
+    }
   }
 
   public onStateChange(listener: (state: ConnectionState) => void): () => void {
@@ -366,6 +379,7 @@ export class GatewayWsClient {
   }
 
   private async probe(timeoutMs: number): Promise<void> {
+    if (isDemoMode()) return;
     if (this.probing || this.currentState !== "connected") return;
     const socket = this.ws;
     this.probing = true;
@@ -439,6 +453,16 @@ export class GatewayWsClient {
 
   /** Switches to an already saved host. */
   public switchHost(host: SavedHost): void {
+    if (isDemoMode()) {
+      this.hostNameHint = host.name;
+      try {
+        setActiveHostId(localStorage, host.id);
+      } catch {
+        // ignore
+      }
+      this.setState("connected");
+      return;
+    }
     this.hostGeneration += 1;
     const here = typeof window !== "undefined" ? sameOriginEndpoint(window.location) : null;
     this.endpoint = host.endpoint === here ? null : host.endpoint;
@@ -473,6 +497,10 @@ export class GatewayWsClient {
   }
 
   public connect(): void {
+    if (isDemoMode()) {
+      this.setState("connected");
+      return;
+    }
     if (this.pendingPairing) {
       // Waiting for the user to confirm pairing with another host.
       this.setState("disconnected");
@@ -620,6 +648,10 @@ export class GatewayWsClient {
   }
 
   public reconnect(): void {
+    if (isDemoMode()) {
+      this.setState("connected");
+      return;
+    }
     this.disconnect();
     this.connect();
   }
@@ -660,6 +692,10 @@ export class GatewayWsClient {
     params?: Record<string, unknown>,
     options?: { timeoutMs?: number },
   ): Promise<T> {
+    if (isDemoMode()) {
+      return handleDemoRpc<T>(method, params, (event, data) => this.dispatchDemoEvent(event, data));
+    }
+
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.currentState !== "connected") {
       throw new Error(`Gateway unavailable (code ${CODE_BACKEND_UNAVAILABLE})`);
     }

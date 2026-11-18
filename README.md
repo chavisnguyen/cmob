@@ -8,7 +8,8 @@
 **Watch and control your AI coding agents & cmux workspaces from your phone.**  
 Unified mobile companion (iOS, Android, and Web PWA) for [cmux](https://cmux.com/), inspired by Orca for Claude Code, Antigravity (AGY), Codex, and Kiro.
 
-📱 **Official Web & PWA App:** [https://chavisnguyen.github.io/cmob/](https://chavisnguyen.github.io/cmob/)
+📱 **Official Web & PWA App:** [https://chavisnguyen.github.io/cmob/](https://chavisnguyen.github.io/cmob/)  
+🎮 **Live Interactive Demo (Zero-setup):** [https://chavisnguyen.github.io/cmob/?demo=1](https://chavisnguyen.github.io/cmob/?demo=1)
 
 ---
 

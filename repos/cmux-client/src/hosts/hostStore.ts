@@ -6,6 +6,8 @@
  * (ref/orca/mobile/src/host-catalog/host-store.ts) — this is a smaller web version of it.
  */
 
+import { DEMO_HOSTS, isDemoMode } from "../demo/demoData";
+
 export interface SavedHost {
   /** Stable id: the gateway WebSocket endpoint. */
   id: string;
@@ -113,12 +115,17 @@ function isHost(v: unknown): v is SavedHost {
 export function loadHosts(storage: StorageLike): SavedHost[] {
   try {
     const raw = storage.getItem(HOSTS_KEY);
-    if (!raw) return isDefaultStorage(storage) ? (memoryHostsFallback ?? []) : [];
+    if (!raw) {
+      if (isDemoMode()) return DEMO_HOSTS;
+      return isDefaultStorage(storage) ? (memoryHostsFallback ?? []) : [];
+    }
     const parsed: unknown = JSON.parse(raw);
     const valid = Array.isArray(parsed) ? parsed.filter(isHost) : [];
     if (valid.length > 0 && isDefaultStorage(storage)) memoryHostsFallback = valid;
+    if (valid.length === 0 && isDemoMode()) return DEMO_HOSTS;
     return valid;
   } catch {
+    if (isDemoMode()) return DEMO_HOSTS;
     return isDefaultStorage(storage) ? (memoryHostsFallback ?? []) : [];
   }
 }
@@ -203,9 +210,17 @@ export function renameHost(storage: StorageLike, id: string, name: string): Save
 export function getActiveHostId(storage: StorageLike): string | null {
   try {
     const val = storage.getItem(ACTIVE_KEY);
-    return val ?? (isDefaultStorage(storage) ? memoryActiveFallback : null);
+    if (!val && isDemoMode()) return DEMO_HOSTS[0].id;
+    return (
+      val ??
+      (isDefaultStorage(storage)
+        ? (memoryActiveFallback ?? (isDemoMode() ? DEMO_HOSTS[0].id : null))
+        : null)
+    );
   } catch {
-    return isDefaultStorage(storage) ? memoryActiveFallback : null;
+    return isDefaultStorage(storage)
+      ? (memoryActiveFallback ?? (isDemoMode() ? DEMO_HOSTS[0].id : null))
+      : null;
   }
 }
 
