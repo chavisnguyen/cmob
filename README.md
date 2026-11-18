@@ -1,103 +1,181 @@
-# cmob
+# cmob — Cmux Mobile
 
 [![release](https://img.shields.io/github/v/release/chavisnguyen/cmob)](https://github.com/chavisnguyen/cmob/releases)
+[![PWA Live](https://img.shields.io/badge/PWA-Live%20on%20GitHub%20Pages-success)](https://chavisnguyen.github.io/cmob/)
 [![license](https://img.shields.io/badge/license-MIT-blue)](./LICENSE)
+[![Tailscale](https://img.shields.io/badge/Tailscale-Ready-1004a6)](https://tailscale.com/)
 
-**Cmux Mobile.** Your coding agents keep working in [cmux](https://cmux.com/) on your Mac. **cmob puts them on your phone**: see which ones are running, read what they did, answer when they need you, and type into the terminal, from anywhere on your own Tailscale network.
+**Watch and control your AI coding agents & cmux workspaces from your phone.**  
+Unified mobile companion (iOS, Android, and Web PWA) for [cmux](https://cmux.com/), inspired by Orca for Claude Code, Antigravity (AGY), Codex, and Kiro.
+
+📱 **Official Web & PWA App:** [https://chavisnguyen.github.io/cmob/](https://chavisnguyen.github.io/cmob/)
+
+---
 
 ![cmob on a phone: workspaces, chat, terminal](docs/images/demo.png)
 
-*Invented demo projects. cmob runs against your real cmux.*
+*Invented demo projects. cmob runs against your real cmux workspaces and coding agents.*
 
-## What you can do
+---
 
-- **See everything at a glance.** Every cmux workspace and tab, with whether its agent is running or idle and the last thing it said.
-- **Read the work, not a wall of text.** The chat view shows replies with code blocks and tables, tool calls, reasoning, diffs and sub-agents. Long messages fold.
-- **Answer from the couch.** Send a message, approve a permission prompt, interrupt a turn, attach a photo or dictate. Slash commands work too.
-- **Get pinged.** A push notification when an agent needs approval, finishes a turn, or shows a dialog. Pick which ones you want.
-- **Drop into the real terminal** when chat is not enough, with a key row (Ctrl, Alt, Esc, Tab, arrows) built for a phone.
-- **Review changes.** A git diff view for the workspace, and buttons to open, rename or close tabs.
+## Highlights
 
-Built for Claude Code, Codex, Kiro and Antigravity. cmob also recognises OpenCode, Grok, Gemini, Aider and a few others, but those are less tested.
+- 🌐 **Single Central PWA ([chavisnguyen.github.io/cmob](https://chavisnguyen.github.io/cmob/))**: Install once on your phone's Home Screen and control all your computers in one place. No domain fragmentation or lost settings.
+- 💻 **Multi-Device Tab Strip (Orca-Style)**: Switch seamlessly between your MacBook, Mac Studio, or Cloud Devbox with a single tap. Live indicator dots reflect each machine's connection state.
+- 💬 **Agent-Aware Chat UI**: Formatted markdown, syntax-highlighted code blocks, interactive startup choice dialogs, tool execution pills, collapsible reasoning blocks, and subagent collaboration cards.
+- ⚡ **Instant Remote Control**: Send instructions, approve permission prompts, interrupt stuck agent turns, dictate voice prompts, attach photos from your phone camera, or run slash commands.
+- 🔔 **Real-Time Push Notifications**: Web Push (RFC 8291 / RFC 8292 VAPID) alerts wake your phone when background coding agents need approval, finish a turn, or report errors.
+- 🖥️ **Full Hardware-Accelerated Terminal**: Integrated xterm.js terminal with a phone-optimized key bar (`Ctrl`, `Alt`, `Esc`, `Tab`, arrow keys, function keys).
+- 🔒 **Zero-Trust & Private**: Securely routed through your private [Tailscale](https://tailscale.com/) network (`*.ts.net`) or loopback. Zero open ports to the public internet. Single-use pairing tickets with cryptographically secure per-device tokens.
 
-## Install
+---
 
-You need: a Mac with the [cmux](https://cmux.com/) app, and [Tailscale](https://tailscale.com/) on the Mac and on your phone. No Node, no Rust, no repo clone.
+## Architecture & Multi-Device Topology
+
+```mermaid
+graph TD
+    subgraph Mobile ["📱 Mobile Companion"]
+        PWA["Cmob PWA / Web App<br/><b>chavisnguyen.github.io/cmob</b><br/><i>(iOS Safari / Android Chrome / Web)</i>"]
+    end
+
+    subgraph Mesh ["🔒 Tailscale Encrypted WireGuard Network (*.ts.net)"]
+        TS["Tailscale MagicDNS & Serve HTTPS"]
+    end
+
+    subgraph Host1 ["💻 Primary Machine (MacBook Pro)"]
+        G1["cmob Gateway Daemon<br/><code>127.0.0.1:8088</code>"]
+        C1["cmux Terminal Workspaces<br/><i>Claude Code & Antigravity</i>"]
+        G1 <-->|Unix Domain Socket| C1
+    end
+
+    subgraph Host2 ["🖥️ Secondary Machine (Mac Studio / Server)"]
+        G2["cmob Gateway Daemon<br/><code>127.0.0.1:8088</code>"]
+        C2["cmux Terminal Workspaces<br/><i>Codex & Kiro</i>"]
+        G2 <-->|Unix Domain Socket| C2
+    end
+
+    PWA <-->|WSS & HTTPS| TS
+    TS <--> G1
+    TS <--> G2
+```
+
+---
+
+## Quick Start (60 Seconds)
+
+### Prerequisites
+
+1. A Mac with the [cmux](https://cmux.com/) application installed.
+2. [Tailscale](https://tailscale.com/) installed and signed in on both your Mac and your phone.
+
+### Step 1: Install `cmob` on your Mac
 
 ```bash
 brew tap chavisnguyen/cmob
 brew install cmob
 ```
 
-## Set up
+*(Or download prebuilt binaries directly from [GitHub Releases](https://github.com/chavisnguyen/cmob/releases)).*
+
+### Step 2: Set up in cmux
 
 In a terminal **inside cmux**:
 
 ```bash
-cmob setup            # one time
-cmob qr --tailscale   # prints a QR code
+cmob setup            # One-time setup: installs autostart hook into cmux
+cmob qr --tailscale   # Starts the gateway and prints a secure pairing QR code
 ```
 
-On your phone, open the address printed under the QR code (or scan it with the camera), then in the app: menu → **Hosts & devices** → **Scan**. Add the page to your Home Screen on iPhone to get notifications.
+### Step 3: Open on your phone
+
+1. Open **[https://chavisnguyen.github.io/cmob/](https://chavisnguyen.github.io/cmob/)** on your phone (Safari on iOS or Chrome on Android).
+2. Tap **Share** → **Add to Home Screen** to install it as a standalone app.
+3. Tap **Connect Your Computer** and scan the QR code displayed in your terminal (or open the companion link directly).
+4. **Repeat `cmob qr --tailscale` on your other computers** to add them as additional tabs in the top device strip!
 
 ![from the workspace list to chat to the terminal](docs/images/demo.gif)
 
-Check that everything is healthy at any time:
+---
+
+## Check System Status
+
+Check gateway health, cmux connectivity, and connected devices at any time:
 
 ```bash
 cmob status
 ```
 
-```
-Gateway     ✓ running on 127.0.0.1:8088 (v0.1.1)
+```text
+Gateway     ✓ running on 127.0.0.1:8088 (v0.1.5)
 cmux        ✓ connected
 Autostart   ✓ installed
 Tailscale   ✓ https://your-mac.your-tailnet.ts.net
 Connected   1 client
-  - device          Safari · iPhone    up 3m
-Paired      1 device (cmob devices)
+  - device          Safari · iPhone    up 5m
+Paired      2 devices (cmob devices)
 ```
 
-Stuck? See [Troubleshooting](docs/troubleshooting.md).
+---
 
-## Commands
+## Command Reference
 
-| Command | What it does |
+| Command | Description |
 |---|---|
-| `cmob setup` | One-time setup (run inside cmux). Safe to run again |
-| `cmob qr --tailscale` | QR code that pairs a phone. Run it again for another phone |
-| `cmob status` | Gateway, cmux, Tailscale, connected clients, paired devices |
-| `cmob devices` | List paired phones |
-| `cmob devices revoke <id>` | Cut one phone off. It is disconnected and gets no more notifications |
-| `cmob start` / `stop` / `restart` | Control the background gateway |
-| `cmob logs [-f]` | Show or follow the gateway log |
-| `cmob uninstall` | Remove autostart and stop the gateway |
+| `cmob setup` | One-time setup: configures autostart inside cmux. Safe to re-run. |
+| `cmob qr --tailscale` | Generates a single-use pairing QR code via Tailscale HTTPS. Run again to pair more devices. |
+| `cmob qr` | Generates a local loopback pairing QR code (`http://127.0.0.1:8088`). |
+| `cmob status` | Displays gateway status, cmux socket health, Tailscale domain, and active clients. |
+| `cmob devices` | Lists all paired mobile devices and their last-seen timestamps. |
+| `cmob devices revoke <id>` | Immediately revokes a device token and disconnects that device. |
+| `cmob start` / `stop` / `restart` | Controls the background gateway daemon. |
+| `cmob logs [-f]` | Views or follows live gateway server logs. |
+| `cmob uninstall` | Removes autostart hooks and terminates the background gateway. |
 
-`cmob setup` adds a small, marked block to `~/.zshrc` so the gateway starts whenever a terminal opens inside cmux (your old file is kept as `.zshrc.cmob.bak`). `cmob uninstall` removes it.
+---
 
-## Is it safe?
+## Supported AI Coding Agents
 
-The gateway only listens on your Mac (`127.0.0.1`). Your phone reaches it through Tailscale, so it is visible to your tailnet and not to the internet. Each phone gets its own token from a single-use QR code, and you can revoke any of them.
+`cmob` features deep protocol awareness, structured turn classification, and transcript parsing for:
 
-**Anyone you pair can read and type into your terminals and agents**, so pair only devices you control. Details: [Security](docs/security.md).
+| Agent | CLI / Binary | Features & Capabilities |
+|---|---|---|
+| **Antigravity (AGY)** | `agy` | Structured subagent cards, reasoning fold-outs, status detection, adaptive submit delay. |
+| **Claude Code** | `claude` | Tool-use badges, live turn streaming, quiet-window completion debounce, permission approval prompt cards. |
+| **Codex** | `codex` | Interactive trust & folder approval dialogs, rollout pagination, numbered choice keys. |
+| **Kiro** | `kiro` | Unresolved tool confirmation handling, session index polling, hook merge tracking. |
 
-## Docs
+*(OpenCode, Grok, Gemini CLI, and Aider are also automatically detected, with full terminal fallback).*
 
-- [Security](docs/security.md): how pairing and tokens work, what is stored where
-- [Troubleshooting](docs/troubleshooting.md): `ERR_NAME_NOT_RESOLVED`, empty workspace list, camera, tokens
-- [Configuration](docs/configuration.md): environment variables
-- [Development](docs/development.md): build from source, tests, releases
+---
 
-## Limitations
+## Security & Privacy Architecture
 
-- macOS only. Linux and Windows are not supported.
-- The Back gesture, swipe navigation and notifications with the app closed have been checked only in part on real devices.
-- Each phone's requests are handled one at a time, so one slow request delays that phone's others.
+- **Private Network Only:** The gateway binds to `127.0.0.1`. Remote access is routed strictly through Tailscale WireGuard tunnels.
+- **Strict CORS & Host Verification:** The gateway enforces DNS-rebinding protection and restricts CORS headers strictly to same-origin requests, loopback addresses, Tailscale MagicDNS nodes, and the official PWA host (`chavisnguyen.github.io`).
+- **Single-Use Cryptographic Pairing:** Pairing offers contain single-use tickets that are redeemed at `/api/pair/exchange` for random 256-bit device bearer tokens. Tickets expire automatically and replay attempts are rejected.
+- **Zero Third-Party Telemetry:** No user analytics, no tracking pixels, and no external servers. Notifications use standard VAPID Web Push directly from your machine to Apple APNs or Google FCM.
 
-## Credits
+> [!WARNING]
+> Anyone with access to a paired device can read and type into your terminal sessions and execute commands. Only pair devices that you personally own and trust.
 
-Built for [cmux](https://github.com/manaflow-ai/cmux). UI ideas from [Orca](https://github.com/stablyai/orca) and [cmux-pocket](https://github.com/shiquda/cmux-pocket).
+---
+
+## Documentation
+
+- [Security Architecture](docs/security.md): Detailed token lifecycle, cryptographic exchange, and storage isolation.
+- [Troubleshooting Guide](docs/troubleshooting.md): Solutions for `ERR_NAME_NOT_RESOLVED`, empty workspace lists, camera permissions, and Tailscale Serve SNI.
+- [Configuration Reference](docs/configuration.md): Complete list of environment variables (`CMUX_ALLOWED_ORIGINS`, `CMUX_PORT`, etc.).
+- [Development Guide](docs/development.md): Instructions for building from source, running the test suite, and releasing formulas.
+
+---
+
+## Credits & Inspiration
+
+- Built for the [cmux](https://github.com/manaflow-ai/cmux) macOS terminal workspace multiplexer.
+- UI & UX concepts inspired by [Orca](https://github.com/stablyai/orca) and [cmux-pocket](https://github.com/shiquda/cmux-pocket).
+
+---
 
 ## License
 
-[MIT](LICENSE)
+[MIT](LICENSE) © 2026 Chavis Nguyen
