@@ -19,7 +19,7 @@ body,
   position: fixed;
   inset: 0;
   top: var(--app-top, 0px);
-  background-color: #0a0a0c;
+  background-color: #141413;
   color: #f3f4f6;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -97,4 +97,24 @@ code {
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+/* One palette for every screen: use these names (bg-surface, text-muted, ...) instead of raw hex. */
+@theme {
+  --color-bg: #141413;
+  --color-surface: #1c1c1a;
+  --color-raised: #262624;
+  --color-line: #343431;
+  --color-fg: #f4f3ef;
+  --color-fg-soft: #deddd7;
+  --color-muted: #b8b6ae;
+  --color-dim: #908e86;
+  --color-accent: #cf6a3a;
+  --color-accent-strong: #b85a2e;
+  --color-accent-soft: #eca17c;
+}
+
+:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }

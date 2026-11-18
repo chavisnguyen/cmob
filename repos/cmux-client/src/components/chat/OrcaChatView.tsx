@@ -99,7 +99,10 @@ function cleanUserPrompt(text: string): string {
     return promptMatch[1].trim();
   }
   s = s.replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gi, "").trim();
-  return s;
+  // Image placeholders the agent CLI inserts: "[Image #3]" and "[Image: source: /path/file.png]".
+  return s
+    .replace(/\[Image(?: #(\d+))?(?::[^\]]*)?\]/g, (_, n) => (n ? `🖼 Image ${n}` : "🖼 Image"))
+    .trim();
 }
 
 const WINDOW_CHUNK_SIZE = 30;
@@ -410,7 +413,7 @@ export function OrcaChatView({
   const [uploading, setUploading] = useState(0);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const handlePickImages = async (files: FileList | null) => {
+  const handlePickImages = async (files: FileList | File[] | null) => {
     if (!files || !onUploadImage) return;
     const room = MAX_IMAGES_PER_MESSAGE - images.length - uploading;
     const picked = Array.from(files).slice(0, Math.max(0, room));
@@ -544,7 +547,7 @@ export function OrcaChatView({
   );
 
   return (
-    <div className="flex flex-col h-full w-full max-w-full bg-[#12131a] text-[#f3f4f6] relative overflow-hidden">
+    <div className="flex flex-col h-full w-full max-w-full bg-bg text-fg relative overflow-hidden">
       {/* Timeline with the agent's logo as a faint watermark behind the messages */}
       <div className="relative flex-1 min-h-0 min-w-0">
         <div
@@ -574,9 +577,9 @@ export function OrcaChatView({
                   type="button"
                   onClick={handleLoadEarlier}
                   disabled={isLoadingOlder}
-                  className="flex items-center gap-1 px-3 py-1 rounded-full bg-[#1b1c26] hover:bg-[#262837] border border-[#2d3042] text-[11px] text-gray-400 hover:text-gray-200 transition-colors shadow-sm"
+                  className="flex items-center gap-1 px-3 py-1 rounded-full bg-surface hover:bg-raised border border-line text-[11px] text-muted hover:text-fg-soft transition-colors shadow-sm"
                 >
-                  <ChevronUp className="w-3 h-3 text-gray-400" />
+                  <ChevronUp className="w-3 h-3 text-muted" />
                   <span>
                     {isLoadingOlder
                       ? "Loading earlier messages…"
@@ -592,17 +595,17 @@ export function OrcaChatView({
               <div
                 role="status"
                 aria-live="polite"
-                className="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-6 text-gray-500 my-auto"
+                className="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto"
               >
-                <Loader2 className="w-6 h-6 animate-spin text-indigo-400 mb-2.5" />
-                <p className="text-sm font-medium text-gray-300">Loading conversation…</p>
+                <Loader2 className="w-6 h-6 animate-spin text-accent-soft mb-2.5" />
+                <p className="text-sm font-medium text-fg-soft">Loading conversation…</p>
               </div>
             ) : turns.length === 0 ? (
-              <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-6 text-gray-500 my-auto">
-                <p className="text-sm font-medium text-gray-300">
+              <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto">
+                <p className="text-sm font-medium text-fg-soft">
                   Active Session with {agentDisplayName(agentKind)}
                 </p>
-                <p className="text-xs text-gray-500 mt-1 max-w-xs">
+                <p className="text-xs text-dim mt-1 max-w-xs">
                   Direct bidirectional chat control connected to cmux host.
                 </p>
               </div>
@@ -618,7 +621,7 @@ export function OrcaChatView({
                   >
                     {isUser ? (
                       /* User Prompt Bubble matching Orca dark capsule */
-                      <div className="max-w-[88%] bg-[#262626] border border-white/10 text-gray-100 rounded-2xl rounded-tr-sm px-3.5 py-2 text-[13px] leading-relaxed shadow-sm min-w-0 break-words [overflow-wrap:anywhere]">
+                      <div className="max-w-[88%] bg-raised border border-white/10 text-fg rounded-2xl rounded-tr-sm px-3.5 py-2 text-[13px] leading-relaxed shadow-sm min-w-0 break-words [overflow-wrap:anywhere]">
                         {turn.events.map((ev, eIdx) =>
                           ev.kind === "user" ? (
                             <CollapsibleText
@@ -651,16 +654,14 @@ export function OrcaChatView({
             <div ref={bottomAnchorRef} className="h-px w-full" />
           </div>
         </div>
+        <NativeChatJumpToLatest visible={isScrolledUp} onJump={handleJumpToTail} />
       </div>
-
-      {/* Orca Floating Jump to Latest Pill */}
-      <NativeChatJumpToLatest visible={isScrolledUp} onJump={handleJumpToTail} />
 
       {/* Sticky Bottom Actions & Prompt Composer */}
       <div
         className={`shrink-0 z-30 px-3 ${
           isKeyboardVisible ? "pt-1.5 pb-1.5" : "pt-2 safe-bottom"
-        } bg-[#141416] border-t border-white/[0.08] space-y-1.5 min-w-0 max-w-full`}
+        } bg-bg border-t border-white/[0.08] space-y-1.5 min-w-0 max-w-full`}
       >
         {/* Orca-style Contextual Approval Card */}
         {effectiveAwaiting &&
@@ -677,7 +678,7 @@ export function OrcaChatView({
                   type="button"
                   onClick={handleInterrupt}
                   disabled={isStopping}
-                  className="h-9 px-3.5 bg-[#262626] hover:bg-rose-950/50 hover:text-rose-300 text-[#e5e5e5] font-medium text-[13px] rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                  className="h-9 px-3.5 bg-raised hover:bg-rose-950/50 hover:text-rose-300 text-fg-soft font-medium text-[13px] rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50"
                   title="Deny"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -705,7 +706,7 @@ export function OrcaChatView({
               <div className="text-[13px] font-semibold text-amber-200">
                 {agentDisplayName(agentKind)} is asking: {startupDialog.title}
               </div>
-              <pre className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12.5px] leading-snug text-gray-300">
+              <pre className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12.5px] leading-snug text-fg-soft">
                 {startupDialog.description}
               </pre>
             </div>
@@ -717,7 +718,7 @@ export function OrcaChatView({
                     type="button"
                     disabled={answeringChoice !== null || !onAnswerDialog}
                     onClick={() => void handleAnswer(index)}
-                    className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-[#24242a] hover:bg-[#2e2e36] active:opacity-80 text-left text-[13.5px] text-[#fafafa] disabled:opacity-50 flex items-center justify-between gap-2"
+                    className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line active:opacity-80 text-left text-[13.5px] text-fg disabled:opacity-50 flex items-center justify-between gap-2"
                   >
                     <span className="truncate">{choice.label}</span>
                     {answeringChoice === index && (
@@ -729,7 +730,7 @@ export function OrcaChatView({
                 <button
                   type="button"
                   onClick={onOpenTerminal}
-                  className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-[#24242a] hover:bg-[#2e2e36] text-[13.5px] text-[#fafafa]"
+                  className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line text-[13.5px] text-fg"
                 >
                   Answer in the Terminal tab
                 </button>
@@ -743,9 +744,9 @@ export function OrcaChatView({
             {queue.map((m, i) => (
               <div
                 key={m.id}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.1] bg-[#1b1c22] text-[12.5px] text-[#d4d4d4]"
+                className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.1] bg-surface text-[12.5px] text-fg-soft"
               >
-                <span className="shrink-0 text-[#8ab4f8] font-semibold">
+                <span className="shrink-0 text-accent-soft font-semibold">
                   {queueStatusLabel({ index: i, queuePaused, lifecycleState, needsAnswer })}
                 </span>
                 <span className="min-w-0 flex-1 truncate">
@@ -756,7 +757,7 @@ export function OrcaChatView({
                   <button
                     type="button"
                     onClick={() => setQueuePaused(false)}
-                    className="shrink-0 px-2 h-6 rounded-md bg-[#3276f2] text-white text-[12px] font-semibold"
+                    className="shrink-0 px-2 h-6 rounded-md bg-accent text-white text-[12px] font-semibold"
                   >
                     Resume
                   </button>
@@ -765,14 +766,14 @@ export function OrcaChatView({
                   type="button"
                   disabled={isSubmitting}
                   onClick={() => void handleSendQueuedNow(m)}
-                  className="shrink-0 px-2 h-6 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-[#fafafa] text-[12px] font-medium disabled:opacity-40"
+                  className="shrink-0 px-2 h-6 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-fg text-[12px] font-medium disabled:opacity-40"
                 >
                   Send now
                 </button>
                 <button
                   type="button"
                   onClick={() => setQueue((q) => removeQueued(q, m.id))}
-                  className="shrink-0 w-6 h-6 rounded-md hover:bg-white/[0.08] text-[#a3a3a3] flex items-center justify-center"
+                  className="shrink-0 w-6 h-6 rounded-md hover:bg-white/[0.08] text-muted flex items-center justify-center"
                   aria-label="Remove queued message"
                 >
                   <X className="w-3.5 h-3.5" />
@@ -786,7 +787,7 @@ export function OrcaChatView({
           <div
             role="listbox"
             aria-label="Slash commands"
-            className="mb-1.5 rounded-xl border border-white/[0.1] bg-[#1b1c22] overflow-hidden"
+            className="mb-1.5 rounded-xl border border-white/[0.1] bg-surface overflow-hidden"
           >
             {slashSuggestions.map((c) => (
               <button
@@ -800,8 +801,8 @@ export function OrcaChatView({
                 }}
                 className="w-full flex items-baseline gap-2 px-3 py-2 text-left hover:bg-white/[0.06]"
               >
-                <span className="text-[13.5px] font-mono text-[#8ab4f8]">/{c.name}</span>
-                <span className="min-w-0 truncate text-[12px] text-[#a3a3a3]">{c.description}</span>
+                <span className="text-[13.5px] font-mono text-accent-soft">/{c.name}</span>
+                <span className="min-w-0 truncate text-[12px] text-muted">{c.description}</span>
               </button>
             ))}
           </div>
@@ -845,7 +846,7 @@ export function OrcaChatView({
             ))}
             {uploading > 0 && (
               <div className="w-14 h-14 rounded-xl border border-white/[0.14] flex items-center justify-center">
-                <Loader2 className="w-4 h-4 animate-spin text-[#8ab4f8]" />
+                <Loader2 className="w-4 h-4 animate-spin text-accent-soft" />
               </div>
             )}
           </div>
@@ -854,7 +855,7 @@ export function OrcaChatView({
         {(usage || canSetOptions) && (
           <div className="mb-1 px-1 flex items-center justify-between gap-2">
             <div
-              className="min-w-0 text-[11.5px] text-[#737373] truncate"
+              className="min-w-0 text-[11.5px] text-dim truncate"
               title={
                 usage
                   ? `Input ${usage.input_tokens} · output ${usage.output_tokens} · cache read ${usage.cache_read_tokens ?? 0} · cache write ${usage.cache_creation_tokens ?? 0}`
@@ -869,7 +870,7 @@ export function OrcaChatView({
               <button
                 type="button"
                 onClick={() => setShowOptions(true)}
-                className="shrink-0 h-7 px-2.5 rounded-lg bg-[#262626] hover:bg-[#303036] text-[12px] font-semibold text-[#d4d4d4] inline-flex items-center gap-1.5"
+                className="shrink-0 h-7 px-2.5 rounded-lg bg-raised hover:bg-line text-[12px] font-semibold text-fg-soft inline-flex items-center gap-1.5"
                 aria-label="Model and effort"
               >
                 <SlidersHorizontal className="w-3.5 h-3.5" />
@@ -890,7 +891,7 @@ export function OrcaChatView({
         )}
 
         {/* Floating Mobile Prompt Composer with Orca Rounded Capsule */}
-        <div className="flex items-center gap-1.5 bg-[#1f1f23] border border-white/[0.1] rounded-[24px] px-4 py-1.5 shadow-sm">
+        <div className="flex items-end gap-1 bg-surface border border-line rounded-[24px] pl-4 pr-1.5 py-1.5">
           {/* Enter inserts a newline; only the blue arrow sends. */}
           <textarea
             ref={composerRef}
@@ -901,9 +902,18 @@ export function OrcaChatView({
               if (sendError) setSendError(null);
             }}
             onFocus={handleInputFocus}
+            onPaste={(e) => {
+              // Pasting a copied photo (iOS "Copy" on an image) arrives as a clipboard file, not text.
+              const pasted = Array.from(e.clipboardData.files).filter((f) =>
+                f.type.startsWith("image/"),
+              );
+              if (pasted.length === 0 || !onUploadImage) return;
+              e.preventDefault();
+              void handlePickImages(pasted);
+            }}
             enterKeyHint="enter"
             placeholder={`Message ${agentDisplayName(agentKind)}...`}
-            className="flex-1 bg-transparent border-0 text-[15px] leading-[22px] text-[#fafafa] placeholder-[#737373] outline-none transition-colors py-1.5 min-w-0 resize-none max-h-[132px]"
+            className="flex-1 bg-transparent border-0 text-[15px] leading-[22px] text-fg placeholder-dim outline-none transition-colors py-[7px] min-w-0 resize-none max-h-[132px]"
           />
 
           {onUploadImage && (
@@ -920,11 +930,11 @@ export function OrcaChatView({
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={images.length + uploading >= MAX_IMAGES_PER_MESSAGE}
-                className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-[#a3a3a3] hover:text-white disabled:opacity-30"
+                className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-muted hover:text-white disabled:opacity-30"
                 title="Attach image"
                 aria-label="Attach image"
               >
-                <ImagePlus className="w-4 h-4" />
+                <ImagePlus className="w-[18px] h-[18px]" />
               </button>
             </>
           )}
@@ -934,15 +944,17 @@ export function OrcaChatView({
               type="button"
               onClick={() => (dictation.listening ? dictation.stop() : dictation.start())}
               className={`w-9 h-9 rounded-full shrink-0 flex items-center justify-center transition-colors ${
-                dictation.listening
-                  ? "bg-rose-500/20 text-rose-400"
-                  : "text-[#a3a3a3] hover:text-white"
+                dictation.listening ? "bg-rose-500/20 text-rose-400" : "text-muted hover:text-white"
               }`}
               title={dictation.listening ? "Stop dictation" : "Dictate"}
               aria-label={dictation.listening ? "Stop dictation" : "Dictate"}
               aria-pressed={dictation.listening}
             >
-              {dictation.listening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
+              {dictation.listening ? (
+                <MicOff className="w-[18px] h-[18px]" />
+              ) : (
+                <Mic className="w-[18px] h-[18px]" />
+              )}
             </button>
           )}
 
@@ -952,7 +964,7 @@ export function OrcaChatView({
               type="button"
               onClick={handleInterrupt}
               disabled={isStopping}
-              className="w-9 h-9 bg-[#262626] hover:bg-rose-950/60 hover:text-rose-400 border border-[#3b3e50] text-gray-300 rounded-full transition-colors shadow-sm shrink-0 flex items-center justify-center disabled:opacity-50"
+              className="w-9 h-9 bg-raised hover:bg-rose-950/60 hover:text-rose-400 border border-line text-fg-soft rounded-full transition-colors shadow-sm shrink-0 flex items-center justify-center disabled:opacity-50"
               title={isStopping ? "Stopping..." : "Stop the agent (Ctrl+C)"}
               aria-label={isStopping ? "Stopping" : "Stop"}
             >
@@ -967,14 +979,14 @@ export function OrcaChatView({
               type="button"
               onClick={handleSendPrompt}
               disabled={(!inputText.trim() && images.length === 0) || isSubmitting || uploading > 0}
-              className="w-9 h-9 bg-[#3276f2] hover:bg-[#2563eb] disabled:opacity-30 text-white rounded-full transition-colors shadow-sm shrink-0 flex items-center justify-center"
+              className="w-9 h-9 bg-accent hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-white rounded-full transition-colors shrink-0 flex items-center justify-center"
               title="Send prompt"
               aria-label="Send"
             >
               {isSubmitting ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Send className="w-4 h-4" />
+                <Send className="w-[18px] h-[18px]" />
               )}
             </button>
           )}
@@ -1094,11 +1106,11 @@ function renderAssistantTurnEvents(
         renderedElements.push(
           <div
             key={`ask-${idx}`}
-            className="p-2.5 my-1.5 rounded-xl bg-[#1a1b26] border border-[#2e303e] text-xs text-gray-400 flex items-center justify-between gap-2"
+            className="p-2.5 my-1.5 rounded-xl bg-surface border border-line text-xs text-muted flex items-center justify-between gap-2"
           >
             <div className="flex items-center gap-2 min-w-0">
               <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span className="truncate font-medium text-gray-300">
+              <span className="truncate font-medium text-fg-soft">
                 {ev.prompt || "User input requested"}
               </span>
             </div>
@@ -1135,8 +1147,8 @@ function renderAssistantTurnEvents(
     // 6. Status notification
     if (ev.kind === "status") {
       renderedElements.push(
-        <div key={`st-${idx}`} className="flex items-center gap-1.5 text-xs text-gray-400 py-0.5">
-          <Clock className="w-3.5 h-3.5 text-indigo-400" />
+        <div key={`st-${idx}`} className="flex items-center gap-1.5 text-xs text-muted py-0.5">
+          <Clock className="w-3.5 h-3.5 text-accent-soft" />
           <span>{ev.text}</span>
         </div>,
       );

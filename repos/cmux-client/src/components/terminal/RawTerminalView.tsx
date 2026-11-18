@@ -236,12 +236,14 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
     const rect = container.getBoundingClientRect();
     const { cellWidth } = readXtermCellMetrics(term);
     const cols = colsOverride ?? term.cols;
+    // Measure the grid as rendered; cellWidth*cols relies on xterm internals and can be off.
+    const screenWidth = term.element?.querySelector<HTMLElement>(".xterm-screen")?.offsetWidth ?? 0;
     const scrollWidth = term.element?.scrollWidth ?? 0;
     const nextFitScale = computeDesktopFitScale({
       viewportWidth: rect.width,
       cols,
-      cellWidth,
-      scrollWidth,
+      cellWidth: screenWidth > 0 ? 0 : cellWidth,
+      scrollWidth: screenWidth > 0 ? screenWidth + XTERM_PADDING_PX * 2 : scrollWidth,
     });
     setFitScale(nextFitScale);
 
@@ -834,10 +836,10 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
 
   return (
     <div
-      className="flex flex-col h-full bg-[#0a0a0a] text-[#fafafa] font-mono select-none overflow-hidden"
+      className="flex flex-col h-full bg-bg text-fg font-mono select-none overflow-hidden"
       aria-label={surfaceTitle}
     >
-      <div className="flex items-center justify-between px-3 min-h-[40px] bg-[#141416] border-b border-white/[0.07] text-[#a3a3a3] shrink-0 gap-2">
+      <div className="flex items-center justify-between px-3 min-h-[40px] bg-bg border-b border-white/[0.07] text-muted shrink-0 gap-2">
         <div className="flex items-center gap-2 min-w-0">
           <span
             className={`inline-flex items-center gap-1.5 text-[11px] font-sans font-medium px-2 py-0.5 rounded-md ${
@@ -855,16 +857,14 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
           </span>
 
           <span
-            className="text-[11px] text-[#737373] font-mono shrink-0"
+            className="text-[11px] text-dim font-mono shrink-0"
             title="Terminal size (columns × rows)"
           >
             {gridDims.cols}×{gridDims.rows}
           </span>
 
           {tty && (
-            <span className="text-[#737373] font-mono text-[12px] truncate hidden sm:inline">
-              {tty}
-            </span>
+            <span className="text-dim font-mono text-[12px] truncate hidden sm:inline">{tty}</span>
           )}
         </div>
 
@@ -873,7 +873,7 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
             <button
               type="button"
               onClick={handleResetDesktopZoom}
-              className="h-8 px-2.5 rounded-lg bg-[#242428] border border-white/[0.12] text-[12px] font-semibold text-[#8ab4f8] hover:text-white"
+              className="h-8 px-2.5 rounded-lg bg-raised border border-white/[0.12] text-[12px] font-semibold text-accent-soft hover:text-white"
               title="Reset zoom"
             >
               1×
@@ -890,8 +890,8 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
             }
             className={`flex items-center justify-center w-9 h-8 rounded-lg border transition-colors ${
               viewportMode === "desktop"
-                ? "bg-[#3276f2] border-[#3276f2] text-white"
-                : "bg-[#242428] border-white/[0.08] text-[#fafafa] hover:bg-[#2e2e34]"
+                ? "bg-accent border-accent text-white"
+                : "bg-raised border-white/[0.08] text-fg hover:bg-line"
             }`}
             title={
               viewportMode === "mobile"
@@ -915,7 +915,7 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
             onClick={() => {
               void handleManualRefresh();
             }}
-            className="w-8 h-8 rounded-lg bg-[#242428] hover:bg-[#2e2e34] text-[#e5e5e5] flex items-center justify-center transition-colors"
+            className="w-8 h-8 rounded-lg bg-raised hover:bg-line text-fg-soft flex items-center justify-center transition-colors"
             title="Refresh terminal"
             aria-label="Refresh terminal"
           >
@@ -930,7 +930,7 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="flex-1 relative min-h-0 bg-[#0a0a0a] overflow-hidden touch-none"
+        className="flex-1 relative min-h-0 bg-bg overflow-hidden touch-none"
       >
         <div
           ref={surfaceHostRef}
@@ -962,7 +962,7 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
               event.stopPropagation();
               handleScrollToBottom();
             }}
-            className="absolute bottom-3 right-3 h-9 px-3.5 flex items-center gap-1.5 rounded-full bg-[#262626]/95 hover:bg-[#303036] text-[#fafafa] text-[13px] font-medium shadow-lg backdrop-blur-sm border border-white/[0.14] transition-all z-10 font-sans"
+            className="absolute bottom-3 right-3 h-9 px-3.5 flex items-center gap-1.5 rounded-full bg-raised/95 hover:bg-line text-fg text-[13px] font-medium shadow-lg backdrop-blur-sm border border-white/[0.14] transition-all z-10 font-sans"
           >
             <ChevronDown className="w-4 h-4" />
             <span>Bottom</span>
@@ -971,7 +971,7 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
       </div>
 
       <div
-        className="bg-[#141416] border-t border-white/[0.08] px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shrink-0 flex items-center gap-2 overflow-x-auto no-scrollbar"
+        className="bg-bg border-t border-white/[0.08] px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shrink-0 flex items-center gap-2 overflow-x-auto no-scrollbar"
         onMouseDown={(event) => event.preventDefault()}
       >
         <button
@@ -979,10 +979,10 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
           onClick={() => {
             void handlePasteClipboard();
           }}
-          className="h-9 px-3 rounded-[10px] bg-[#262626] border border-white/[0.08] text-[#fafafa] hover:bg-[#303036] active:opacity-70 text-[13px] font-sans font-medium shrink-0 flex items-center gap-1.5 transition-opacity"
+          className="h-9 px-3 rounded-[10px] bg-raised border border-white/[0.08] text-fg hover:bg-line active:opacity-70 text-[13px] font-sans font-medium shrink-0 flex items-center gap-1.5 transition-opacity"
           title="Paste from clipboard"
         >
-          <ClipboardPaste className="w-4 h-4 text-[#a3a3a3]" />
+          <ClipboardPaste className="w-4 h-4 text-muted" />
           <span>Paste</span>
         </button>
 
@@ -991,10 +991,10 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
           onClick={handleCtrlTap}
           className={`h-9 min-w-[46px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
             ctrlLatch === "locked"
-              ? "bg-[#fafafa] border-[#fafafa] text-[#0a0a0a]"
+              ? "bg-fg border-fg text-bg"
               : ctrlLatch === "once"
-                ? "bg-[#262626] border-[#fafafa] text-[#fafafa]"
-                : "bg-[#262626] border-transparent text-[#fafafa] hover:bg-[#303036]"
+                ? "bg-raised border-fg text-fg"
+                : "bg-raised border-transparent text-fg hover:bg-line"
           }`}
           title="Sticky Ctrl (Tap: Once, Double Tap: Lock)"
         >
@@ -1006,10 +1006,10 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
           onClick={handleAltTap}
           className={`h-9 min-w-[42px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
             altLatch === "locked"
-              ? "bg-[#fafafa] border-[#fafafa] text-[#0a0a0a]"
+              ? "bg-fg border-fg text-bg"
               : altLatch === "once"
-                ? "bg-[#262626] border-[#fafafa] text-[#fafafa]"
-                : "bg-[#262626] border-transparent text-[#fafafa] hover:bg-[#303036]"
+                ? "bg-raised border-fg text-fg"
+                : "bg-raised border-transparent text-fg hover:bg-line"
           }`}
           title="Sticky Alt/Meta (Tap: Once, Double Tap: Lock)"
         >
@@ -1031,12 +1031,12 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
               }}
               className={`h-9 px-3 rounded-[10px] border text-[13px] font-medium transition-opacity shrink-0 flex items-center justify-center gap-1.5 active:opacity-70 ${
                 isActive
-                  ? "bg-[#3276f2] border-[#3276f2] text-white"
+                  ? "bg-accent border-accent text-white"
                   : isSignal
                     ? "bg-[#28181b] border-rose-500/25 text-rose-300 hover:bg-[#341d22]"
                     : isSymbol
-                      ? "bg-[#262626] border-white/[0.06] text-[#fafafa] min-w-[38px]"
-                      : "bg-[#262626] border-white/[0.06] text-[#fafafa] min-w-[38px]"
+                      ? "bg-raised border-white/[0.06] text-fg min-w-[38px]"
+                      : "bg-raised border-white/[0.06] text-fg min-w-[38px]"
               }`}
             >
               {Icon && <Icon className="w-4 h-4" />}
@@ -1048,7 +1048,7 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
         <button
           type="button"
           onClick={handleDismissKeyboard}
-          className="h-9 w-9 rounded-[10px] bg-[#262626] border border-white/[0.06] text-[#a3a3a3] hover:text-[#fafafa] active:opacity-70 shrink-0 flex items-center justify-center transition-opacity"
+          className="h-9 w-9 rounded-[10px] bg-raised border border-white/[0.06] text-muted hover:text-fg active:opacity-70 shrink-0 flex items-center justify-center transition-opacity"
           title="Hide keyboard"
           aria-label="Hide keyboard"
         >

@@ -27,7 +27,7 @@ export interface AgentOptionsInfo {
 }
 
 /** Agents that have an option catalog in the gateway (the gateway decides; this only hides the button). */
-const OPTION_AGENTS = new Set(["claude", "openclaude", "codex"]);
+const OPTION_AGENTS = new Set(["claude", "openclaude", "codex", "antigravity"]);
 
 export function hasAgentOptions(agentKind: string | null | undefined): boolean {
   return OPTION_AGENTS.has((agentKind ?? "").toLowerCase());

@@ -5,10 +5,8 @@
  * - Level 2: SurfaceListView
  * - Level 3: SurfaceDetailView (Adaptive Orca Chat vs Raw Terminal)
  * Multi-Device & Companion Features:
- * - Top DeviceTabStrip: Fast 1-tap switching between paired Mac/Linux computers
- * - BottomTabBar: Workspaces, Devices, and Settings navigation (Orca Mobile design)
+ * - HostSwitchSheet: switch between paired computers from the connection pill
  * - DeviceListView: Comprehensive device and client token manager
- * - SettingsView: Notification preferences, connectivity, app diagnostics
  * Push & PWA Features:
  * - Service Worker & Web Push Registration (RFC 8292 / VAPID)
  * - iOS Safari PWA Onboarding Banner
@@ -23,13 +21,13 @@
 import { useState, useEffect, useCallback, useRef } from "react";
 import {
   Bell,
+  ChevronDown,
   BellRing,
   KeyRound,
   MoreHorizontal,
   Plus,
   RefreshCw,
   Server,
-  Settings,
   Share2,
   X,
 } from "lucide-react";
@@ -62,21 +60,28 @@ import { WorkspaceListView } from "./views/WorkspaceListView";
 import { SurfaceListView } from "./views/SurfaceListView";
 import { SurfaceDetailView } from "./views/SurfaceDetailView";
 import { DeviceListView } from "./views/DeviceListView";
-import { SettingsView } from "./views/SettingsView";
 import { PairHostModal } from "./components/hosts/PairHostModal";
-import { DeviceTabStrip } from "./components/hosts/DeviceTabStrip";
-import { BottomTabBar, type MainNavTab } from "./components/navigation/BottomTabBar";
+import { HostSwitchSheet } from "./components/hosts/HostSwitchSheet";
 import type { CreateSurfaceParams } from "./components/surface/NewSurfaceModal";
 import { PairingConfirmModal } from "./components/hosts/PairingConfirmModal";
 import { useHosts } from "./hosts/useHosts";
 import type { SavedHost } from "./hosts/hostStore";
 import { isDemoMode } from "./demo/demoData";
 
+/** Notification bodies carry raw agent markdown; show them as plain text. */
+const plainText = (md: string) =>
+  md
+    .replace(/^\s*-\s+/gm, "")
+    .replace(/[*_`#>]+/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
 export function App() {
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
   const [workspaces, setWorkspaces] = useState<WorkspaceNode[]>([]);
   const [loading, setLoading] = useState(false);
-  const [mainTab, setMainTab] = useState<MainNavTab>("workspaces");
+  const [mainTab, setMainTab] = useState<"workspaces" | "devices">("workspaces");
+  const [showHostSheet, setShowHostSheet] = useState(false);
   const [activeView, setActiveView] = useState<"workspaces" | "surfaces" | "detail">("workspaces");
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceNode | null>(null);
   const [selectedSurface, setSelectedSurface] = useState<SurfaceNode | null>(null);
@@ -315,7 +320,7 @@ export function App() {
       void fetchWorkspaces();
       const interval = setInterval(() => {
         void fetchWorkspaces();
-      }, 2500);
+      }, 5000);
       return () => clearInterval(interval);
     }
   }, [connState, fetchWorkspaces]);
@@ -520,6 +525,7 @@ export function App() {
     async (surfaceId: string) => {
       await wsClient.call(RPC_METHODS.SURFACE_CLOSE, {
         surface_id: surfaceId,
+        workspace_id: selectedWorkspaceRef.current?.id,
         force: true,
       });
       await fetchWorkspaces();
@@ -528,11 +534,11 @@ export function App() {
   );
 
   return (
-    <div className="flex flex-col h-full w-full max-w-full overflow-hidden bg-[#0a0a0c] font-sans antialiased select-none">
+    <div className="flex flex-col h-full w-full max-w-full overflow-hidden bg-bg font-sans antialiased select-none">
       {showIosPwaBanner && (
-        <div className="flex items-center justify-between gap-2 px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 bg-[#171717] border-b border-white/[0.08] text-[13px] text-[#e5e5e5] shrink-0">
+        <div className="flex items-center justify-between gap-2 px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 bg-bg border-b border-white/[0.08] text-[13px] text-fg-soft shrink-0">
           <div className="flex items-center gap-2 min-w-0">
-            <Share2 className="w-4 h-4 text-[#8ab4f8] shrink-0" />
+            <Share2 className="w-4 h-4 text-accent-soft shrink-0" />
             <span className="leading-snug">
               Tap Share then &apos;Add to Home Screen&apos; to enable PWA lock-screen push.
             </span>
@@ -540,7 +546,7 @@ export function App() {
           <button
             type="button"
             onClick={() => setShowIosPwaBanner(false)}
-            className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-[#a3a3a3] hover:text-white flex items-center justify-center shrink-0"
+            className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-muted hover:text-white flex items-center justify-center shrink-0"
             aria-label="Dismiss banner"
           >
             <X className="w-4 h-4" />
@@ -556,33 +562,30 @@ export function App() {
               showIosPwaBanner
                 ? "min-h-[50px]"
                 : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))]"
-            } relative bg-[#141416] border-b border-white/[0.08]`}
+            } relative bg-bg border-b border-line`}
           >
             <div className="flex items-center gap-2.5">
-              <img src="./favicon.svg" alt="Cmob" className="w-6 h-6 shrink-0" />
-              <span className="text-[17px] font-bold tracking-tight text-[#fafafa]">Cmob</span>
-              <span
-                className={`inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-full text-[12px] font-medium ${
-                  connState === "connected"
-                    ? "bg-emerald-500/15 text-emerald-400"
-                    : connState === "connecting" || connState === "authenticating"
-                      ? "bg-amber-500/15 text-amber-300"
-                      : "bg-rose-500/15 text-rose-400"
-                }`}
+              <span className="text-[17px] font-bold tracking-tight text-fg">Cmob</span>
+              <button
+                type="button"
+                onClick={() => setShowHostSheet(true)}
+                aria-label={`Switch computer (${connState})`}
+                className="inline-flex items-center gap-1.5 min-w-0 max-w-[180px] pl-2.5 pr-2 py-1 rounded-full bg-raised hover:bg-line text-[12.5px] font-medium text-fg-soft transition-colors"
               >
                 <span
-                  className={`w-1.5 h-1.5 rounded-full ${
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
                     connState === "connected"
                       ? "bg-emerald-400"
                       : connState === "connecting" || connState === "authenticating"
-                        ? "bg-amber-400"
+                        ? "bg-amber-400 animate-pulse"
                         : "bg-rose-400"
                   }`}
                 />
-                <span className="capitalize">{connState}</span>
-              </span>
+                <span className="truncate">{activeHost?.name ?? "No computer"}</span>
+                <ChevronDown className="w-3 h-3 shrink-0 text-muted" />
+              </button>
               {isDemoMode() && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-sky-500/20 text-sky-300 border border-sky-500/30">
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-accent/20 text-accent-soft border border-accent/30">
                   Demo
                 </span>
               )}
@@ -592,11 +595,11 @@ export function App() {
               <button
                 type="button"
                 onClick={handleToggleNotifications}
-                className={`w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] flex items-center justify-center transition-colors ${
+                className={`w-9 h-9 rounded-xl bg-raised hover:bg-line flex items-center justify-center transition-colors ${
                   notifPermission === "granted"
                     ? "text-emerald-400"
                     : notifPermission === "denied"
-                      ? "text-[#525252] cursor-not-allowed"
+                      ? "text-dim cursor-not-allowed"
                       : "text-amber-300"
                 }`}
                 title={`Notifications: ${notifPermission}`}
@@ -612,7 +615,7 @@ export function App() {
               <button
                 type="button"
                 onClick={() => setShowAppMenu((v) => !v)}
-                className="w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] text-[#e5e5e5] flex items-center justify-center transition-colors"
+                className="w-9 h-9 rounded-xl bg-raised hover:bg-line text-fg-soft flex items-center justify-center transition-colors"
                 title="Menu"
                 aria-label="Menu"
                 aria-expanded={showAppMenu}
@@ -623,11 +626,10 @@ export function App() {
               {showAppMenu && (
                 <>
                   <div className="fixed inset-0 z-40" onClick={() => setShowAppMenu(false)} />
-                  <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-[#1c1c20] border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
+                  <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
                     {[
                       { label: "Pair new device", icon: Plus, run: () => setShowPairModal(true) },
                       { label: "Hosts & devices", icon: Server, run: () => setMainTab("devices") },
-                      { label: "Settings", icon: Settings, run: () => setMainTab("settings") },
                       { label: "Auth token", icon: KeyRound, run: () => setShowTokenModal(true) },
                       { label: "Reload app", icon: RefreshCw, run: handleForceReload },
                     ].map(({ label, icon: Icon, run }) => (
@@ -638,9 +640,9 @@ export function App() {
                           setShowAppMenu(false);
                           run();
                         }}
-                        className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                        className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
                       >
-                        <Icon className="w-4 h-4 text-[#a3a3a3]" />
+                        <Icon className="w-4 h-4 text-muted" />
                         <span>{label}</span>
                       </button>
                     ))}
@@ -649,15 +651,6 @@ export function App() {
               )}
             </div>
           </div>
-
-          {/* Top Device Tab Strip */}
-          <DeviceTabStrip
-            hosts={hosts}
-            activeHostId={activeHostId}
-            connState={connState}
-            onSelectHost={handleSwitchHost}
-            onAddHost={() => setShowPairModal(true)}
-          />
 
           {connState === "error" && wsClient.getLastErrorMessage() && (
             <div className="mx-4 my-2 px-3.5 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-300 text-[12.5px] flex items-center justify-between gap-2 animate-fade-in">
@@ -731,42 +724,35 @@ export function App() {
             }}
             onRemoveHost={handleRemoveHost}
             onRenameHost={renameHost}
-          />
-        )}
-
-        {mainTab === "settings" && (
-          <SettingsView
-            activeHost={activeHost}
-            connState={connState}
-            onOpenTokenModal={() => setShowTokenModal(true)}
-            onNavigateToDevices={() => setMainTab("devices")}
-            localPrefs={localPrefs}
-            onUpdateLocalPrefs={setLocalPrefs}
+            onBack={() => setMainTab("workspaces")}
           />
         )}
       </main>
 
-      {/* Bottom Navigation Bar */}
-      {activeView !== "detail" && (
-        <BottomTabBar
-          activeTab={mainTab}
-          onSelectTab={setMainTab}
-          workspaceBadge={activeToasts.length}
+      {showHostSheet && (
+        <HostSwitchSheet
+          hosts={hosts}
+          activeHostId={activeHostId}
+          connState={connState}
+          onSelect={handleSwitchHost}
+          onAdd={() => setShowPairModal(true)}
+          onManage={() => setMainTab("devices")}
+          onClose={() => setShowHostSheet(false)}
         />
       )}
 
       {/* Floating In-App Toast Banners */}
       {activeToasts.length > 0 && (
-        <div className="fixed top-[calc(6.5rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
+        <div className="fixed top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
           {activeToasts.map((toast) => (
             <div
               key={toast.notification_id}
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-2xl border px-3.5 py-2.5 shadow-2xl backdrop-blur-md ${
+              className={`pointer-events-auto flex items-start gap-2.5 rounded-2xl bg-raised border border-line border-l-[3px] pl-3 pr-2 py-2.5 shadow-lg ${
                 toast.category === "agent-error"
-                  ? "bg-[#221216]/95 border-rose-500/40 text-[#fafafa]"
-                  : toast.urgent
-                    ? "bg-[#1c1a12]/95 border-amber-400/40 text-[#fafafa]"
-                    : "bg-[#17171b]/95 border-white/[0.14] text-[#fafafa]"
+                  ? "border-l-rose-400"
+                  : toast.urgent || toast.category === "needs-permission"
+                    ? "border-l-amber-400"
+                    : "border-l-accent"
               }`}
             >
               <button
@@ -780,8 +766,8 @@ export function App() {
                 className="flex-1 min-w-0 text-left"
               >
                 <div className="text-[13px] font-semibold leading-snug truncate">{toast.title}</div>
-                <div className="text-[12.5px] text-[#d4d4d4] leading-snug line-clamp-2 mt-0.5">
-                  {toast.body}
+                <div className="text-[12.5px] text-fg-soft leading-snug line-clamp-2 mt-0.5">
+                  {plainText(toast.body)}
                 </div>
               </button>
               <button
@@ -791,7 +777,7 @@ export function App() {
                     prev.filter((t) => t.notification_id !== toast.notification_id),
                   )
                 }
-                className="w-7 h-7 rounded-lg hover:bg-white/[0.1] text-[#a3a3a3] hover:text-white flex items-center justify-center shrink-0"
+                className="w-7 h-7 rounded-lg hover:bg-white/[0.1] text-muted hover:text-white flex items-center justify-center shrink-0"
                 aria-label="Dismiss notification"
               >
                 <X className="w-4 h-4" />
@@ -821,12 +807,12 @@ export function App() {
 
       {showTokenModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-          <div className="w-full max-w-sm p-5 rounded-2xl bg-[#171717] border border-white/[0.1] text-[#fafafa] shadow-2xl space-y-4">
+          <div className="w-full max-w-sm p-5 rounded-2xl bg-bg border border-white/[0.1] text-fg shadow-2xl space-y-4">
             <h2 className="text-[16px] font-semibold flex items-center gap-2.5">
-              <KeyRound className="w-5 h-5 text-[#8ab4f8]" />
+              <KeyRound className="w-5 h-5 text-accent-soft" />
               <span>Gateway Auth Token</span>
             </h2>
-            <p className="text-[13px] text-[#a3a3a3] leading-relaxed">
+            <p className="text-[13px] text-muted leading-relaxed">
               Enter the bearer token printed in your cmux-gateway terminal or scanned from the QR
               code.
             </p>
@@ -835,20 +821,20 @@ export function App() {
               value={tokenInput}
               onChange={(e) => setTokenInput(e.target.value)}
               placeholder="cmux_sec_..."
-              className="w-full h-11 bg-[#0a0a0a] border border-white/[0.14] focus:border-[#3276f2] rounded-xl px-3.5 text-[15px] font-mono text-[#fafafa] placeholder-[#737373] outline-none"
+              className="w-full h-11 bg-bg border border-white/[0.14] focus:border-accent rounded-xl px-3.5 text-[15px] font-mono text-fg placeholder-dim outline-none"
             />
             <div className="flex items-center gap-2.5 pt-1">
               <button
                 type="button"
                 onClick={() => setShowTokenModal(false)}
-                className="flex-1 h-11 rounded-xl bg-[#262626] hover:bg-[#303036] text-[14px] font-semibold text-[#e5e5e5] transition-colors"
+                className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-semibold text-fg-soft transition-colors"
               >
                 Cancel
               </button>
               <button
                 type="button"
                 onClick={handleSaveToken}
-                className="flex-1 h-11 rounded-xl bg-[#3276f2] hover:bg-[#2563eb] text-[14px] font-semibold text-white transition-colors"
+                className="flex-1 h-11 rounded-xl bg-accent hover:bg-accent-strong text-[14px] font-semibold text-white transition-colors"
               >
                 Save & Connect
               </button>

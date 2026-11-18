@@ -75,6 +75,43 @@ fn codex_efforts_up_to(ceiling: &str) -> Vec<Choice> {
     CODEX_EFFORTS[..=idx].to_vec()
 }
 
+pub fn is_antigravity(kind: &str) -> bool {
+    crate::cmux::agents::spec_for(kind).map(|s| s.kind) == Some("antigravity")
+}
+
+/// Parses `agy models` output: `<id>\t<label>` per model. Lines without a tab (the "Fetching..." progress
+/// line) are skipped. Evidence: `agy models` run on this machine, 2026-11-18.
+pub fn parse_agy_models(out: &str) -> Vec<serde_json::Value> {
+    out.lines()
+        .filter_map(|l| l.split_once('\t'))
+        .filter(|(id, _)| valid_token(id.trim()))
+        .map(|(id, label)| {
+            // Effort is part of the model id (`...-high`), so no separate effort choices.
+            serde_json::json!({ "id": id.trim(), "label": label.trim(), "efforts": [], "fast": false })
+        })
+        .collect()
+}
+
+/// Model list of Antigravity. It depends on the signed-in account (`agy changelog`), so it is asked live
+/// rather than kept in a static table.
+pub async fn antigravity_options() -> Result<serde_json::Value, String> {
+    let out = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tokio::process::Command::new("agy").arg("models").output(),
+    )
+    .await
+    .map_err(|_| "agy models timed out".to_string())?
+    .map_err(|e| format!("could not run agy: {e}"))?;
+    if !out.status.success() {
+        return Err("agy models failed".into());
+    }
+    let models = parse_agy_models(&String::from_utf8_lossy(&out.stdout));
+    if models.is_empty() {
+        return Err("agy returned no models".into());
+    }
+    Ok(serde_json::json!({ "agent_kind": "antigravity", "models": models, "mid_session": "picker" }))
+}
+
 /// Canonical agent kind (`claude` / `codex`) for any alias, or None when the agent has no option catalog.
 fn canonical(kind: &str) -> Option<&'static str> {
     match crate::cmux::agents::spec_for(kind)?.kind {
@@ -165,6 +202,16 @@ fn effort_allowed(opts: &AgentOptions, model: Option<&str>, effort: &str) -> boo
 
 /// CLI arguments to append to the agent's launch command.
 pub fn launch_flags(kind: &str, model: Option<&str>, effort: Option<&str>) -> Result<Vec<String>, String> {
+    if is_antigravity(kind) {
+        if effort.is_some_and(|e| !e.is_empty()) {
+            return Err("Antigravity models carry their effort level in the model name".into());
+        }
+        return match model.filter(|m| !m.is_empty()) {
+            Some(m) if valid_token(m) => Ok(vec!["--model".into(), m.into()]),
+            Some(_) => Err("invalid model id".into()),
+            None => Ok(vec![]),
+        };
+    }
     let opts = options_for(kind).ok_or("this agent has no model/effort options")?;
     let mut flags = Vec::new();
     if let Some(m) = model.filter(|m| !m.is_empty()) {
@@ -199,6 +246,13 @@ pub enum MidSession {
 }
 
 pub fn mid_session(kind: &str, option: &str, value: Option<&str>) -> Result<MidSession, String> {
+    if is_antigravity(kind) {
+        // `/model` opens agy's own selector (agy changelog: "Improved `/model`..."); answer it in the terminal.
+        return match option {
+            "model" | "effort" => Ok(MidSession::TypedPicker("/model".into())),
+            _ => Err("unknown option".into()),
+        };
+    }
     let opts = options_for(kind).ok_or("this agent has no model/effort options")?;
     if opts.agent_kind == "codex" {
         // Orca: `{ kind: 'agent-picker', command: '/model', delivery: 'type' }` for both model and effort.
@@ -240,6 +294,18 @@ mod tests {
         assert_eq!(codex.mid_session, "picker");
         assert!(options_for("kiro").is_none());
         assert!(options_for("openclaude").is_some(), "alias resolves to claude");
+    }
+
+    #[test]
+    fn antigravity_models_parse_and_launch_with_model_flag() {
+        let out = "Fetching available models...\ngemini-3.8-flash-high\tGemini 3.8 Flash (High)\nclaude-sonnet-4-6\tClaude Sonnet 4.6 (Thinking)\n";
+        let m = parse_agy_models(out);
+        assert_eq!(m.len(), 2);
+        assert_eq!(m[0]["id"], "gemini-3.8-flash-high");
+        assert_eq!(m[1]["label"], "Claude Sonnet 4.6 (Thinking)");
+        assert_eq!(launch_flags("agy", Some("claude-sonnet-4-6"), None).unwrap(), ["--model", "claude-sonnet-4-6"]);
+        assert!(launch_flags("antigravity", None, Some("high")).is_err());
+        assert!(launch_flags("agy", Some("--sandbox"), None).is_err());
     }
 
     #[test]

@@ -38,20 +38,20 @@ export function RenameHostModal({
       aria-labelledby="rename-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
     >
-      <div className="w-full max-w-sm rounded-2xl bg-[#17171a] border border-white/[0.12] text-[#fafafa] shadow-2xl p-5 space-y-4">
+      <div className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.12] text-fg shadow-2xl p-5 space-y-4">
         <div className="flex items-center justify-between pb-1 border-b border-white/[0.08]">
           <div className="flex items-center gap-2.5">
-            <div className="w-8 h-8 rounded-xl bg-white/[0.08] flex items-center justify-center text-[#e5e5e5]">
+            <div className="w-8 h-8 rounded-xl bg-white/[0.08] flex items-center justify-center text-fg-soft">
               <Pencil className="w-4 h-4" />
             </div>
             <div>
               <h2
                 id="rename-modal-title"
-                className="text-[15px] font-semibold tracking-tight text-[#fafafa]"
+                className="text-[15px] font-semibold tracking-tight text-fg"
               >
                 Rename Device
               </h2>
-              <p className="text-[11.5px] text-[#8e8e93] font-mono truncate max-w-[200px]">
+              <p className="text-[11.5px] text-muted font-mono truncate max-w-[200px]">
                 {host.endpoint}
               </p>
             </div>
@@ -59,7 +59,7 @@ export function RenameHostModal({
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-[#8e8e93] hover:text-white flex items-center justify-center transition-colors"
+            className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-muted hover:text-white flex items-center justify-center transition-colors"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
@@ -68,7 +68,7 @@ export function RenameHostModal({
 
         <form onSubmit={handleSubmit} className="space-y-4">
           <div className="space-y-1.5">
-            <label className="text-[12px] font-medium text-[#a3a3a3]">Device Name</label>
+            <label className="text-[12px] font-medium text-muted">Device Name</label>
             <input
               type="text"
               autoFocus
@@ -80,7 +80,7 @@ export function RenameHostModal({
               onChange={(e) => setName(e.target.value)}
               placeholder="e.g. Work MacBook, Mac Studio"
               maxLength={40}
-              className="w-full h-11 bg-[#0c0c0e] border border-white/[0.12] focus:border-[#3276f2] rounded-xl px-3.5 text-[14px] text-[#fafafa] placeholder-[#737373] outline-none"
+              className="w-full h-11 bg-bg border border-white/[0.12] focus:border-accent rounded-xl px-3.5 text-[14px] text-fg placeholder-dim outline-none"
             />
           </div>
 
@@ -88,14 +88,14 @@ export function RenameHostModal({
             <button
               type="button"
               onClick={onClose}
-              className="flex-1 h-11 rounded-xl bg-[#242429] hover:bg-[#2e2e34] text-[13.5px] font-medium text-[#d4d4d8] transition-colors"
+              className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[13.5px] font-medium text-fg-soft transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={!sanitizeHostName(name) || sanitizeHostName(name) === host.name}
-              className="flex-1 h-11 rounded-xl bg-[#3276f2] hover:bg-[#2563eb] disabled:opacity-40 disabled:pointer-events-none text-[13.5px] font-semibold text-white transition-colors"
+              className="flex-1 h-11 rounded-xl bg-accent hover:bg-accent-strong disabled:opacity-40 disabled:pointer-events-none text-[13.5px] font-semibold text-white transition-colors"
             >
               Save
             </button>

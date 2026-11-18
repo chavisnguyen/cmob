@@ -12,7 +12,7 @@ const REMARK_PLUGINS = [remarkGfm];
 /** Agent output rendered as GitHub-flavoured markdown. Raw HTML is never interpreted (react-markdown default). */
 export function NativeChatProse({ content }: NativeChatProseProps) {
   return (
-    <div className="space-y-2.5 text-[14.5px] text-gray-200 leading-[1.6] break-words [overflow-wrap:anywhere] min-w-0 max-w-full">
+    <div className="space-y-2.5 text-[14.5px] text-fg-soft leading-[1.6] break-words [overflow-wrap:anywhere] min-w-0 max-w-full">
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
         {content}
       </ReactMarkdown>
@@ -34,8 +34,8 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   };
 
   return (
-    <div className="my-2 rounded-lg overflow-hidden border border-[#2e303a] bg-[#121319] text-xs font-mono min-w-0 max-w-full">
-      <div className="flex items-center justify-between px-3 py-1.5 bg-[#191a24] border-b border-[#2e303a] text-gray-400">
+    <div className="my-2 rounded-lg overflow-hidden border border-line bg-bg text-xs font-mono min-w-0 max-w-full">
+      <div className="flex items-center justify-between px-3 py-1.5 bg-surface border-b border-line text-muted">
         <span className="text-[11px] font-semibold lowercase">{lang || "text"}</span>
         <button
           type="button"
@@ -51,7 +51,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
           <span className="text-[10px]">{copied ? "Copied" : "Copy"}</span>
         </button>
       </div>
-      <pre className="p-3 overflow-x-auto text-gray-300 leading-normal scrollbar-thin max-w-full">
+      <pre className="p-3 overflow-x-auto text-fg-soft leading-normal scrollbar-thin max-w-full">
         <code>{code}</code>
       </pre>
     </div>
@@ -90,7 +90,7 @@ const COMPONENTS: Components = {
     // Inline code only: block code is consumed by `pre` above and never reaches here.
     return (
       <code
-        className={`px-1.5 py-0.5 rounded bg-[#272935] text-indigo-300 font-mono text-[12px] break-all [overflow-wrap:anywhere] ${className ?? ""}`}
+        className={`px-1.5 py-0.5 rounded bg-raised text-accent-soft font-mono text-[12px] break-all [overflow-wrap:anywhere] ${className ?? ""}`}
       >
         {children}
       </code>
@@ -98,24 +98,22 @@ const COMPONENTS: Components = {
   },
   p: ({ children }) => <p className="break-words [overflow-wrap:anywhere]">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-white">{children}</strong>,
-  del: ({ children }) => <del className="text-gray-400">{children}</del>,
+  del: ({ children }) => <del className="text-muted">{children}</del>,
   h1: heading(2, "text-[17px] mt-3"),
   h2: heading(3, "text-[16px] mt-2.5"),
   h3: heading(4, "text-[15px] mt-2"),
   h4: heading(5, "text-[15px] mt-2"),
   h5: heading(6, "text-[15px] mt-2"),
   h6: heading(6, "text-[15px] mt-2"),
-  ul: ({ children }) => (
-    <ul className="list-disc pl-5 space-y-1 marker:text-gray-400">{children}</ul>
-  ),
+  ul: ({ children }) => <ul className="list-disc pl-5 space-y-1 marker:text-muted">{children}</ul>,
   ol: ({ children }) => (
-    <ol className="list-decimal pl-6 space-y-1 marker:text-gray-400 marker:tabular-nums">
+    <ol className="list-decimal pl-6 space-y-1 marker:text-muted marker:tabular-nums">
       {children}
     </ol>
   ),
   li: ({ children }) => <li className="pl-0.5 [&>ul]:mt-1 [&>ol]:mt-1">{children}</li>,
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-indigo-400/50 pl-3 text-gray-300">
+    <blockquote className="border-l-2 border-accent-soft/50 pl-3 text-fg-soft">
       {children}
     </blockquote>
   ),
@@ -127,7 +125,7 @@ const COMPONENTS: Components = {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-[#8ab4f8] underline underline-offset-2 break-all"
+        className="text-accent-soft underline underline-offset-2 break-all"
       >
         {children}
       </a>
@@ -143,7 +141,7 @@ const COMPONENTS: Components = {
         href={src}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-[#8ab4f8] underline underline-offset-2 break-all"
+        className="text-accent-soft underline underline-offset-2 break-all"
       >
         {alt || "image"}
       </a>

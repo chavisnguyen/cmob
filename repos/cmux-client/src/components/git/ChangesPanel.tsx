@@ -25,9 +25,9 @@ interface DiffResult {
 const LINE_CLASS: Record<DiffLineKind, string> = {
   add: "bg-emerald-500/10 text-emerald-300",
   del: "bg-rose-500/10 text-rose-300",
-  hunk: "text-[#8ab4f8]",
-  meta: "text-[#737373]",
-  context: "text-[#d4d4d4]",
+  hunk: "text-accent-soft",
+  meta: "text-dim",
+  context: "text-fg-soft",
 };
 
 function isStaged(f: GitFile): boolean {
@@ -105,12 +105,12 @@ export function ChangesPanel({
   const stat = diff ? diffStat(diff.diff) : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-[#0a0a0a] text-[#fafafa]">
+    <div className="fixed inset-0 z-50 flex flex-col bg-bg text-fg">
       <header className="flex items-center gap-2 px-3 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 border-b border-white/[0.08] shrink-0">
         <button
           type="button"
           onClick={() => (open ? setOpen(null) : onClose())}
-          className="w-9 h-9 rounded-xl bg-[#242428] flex items-center justify-center"
+          className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center"
           aria-label="Back"
         >
           <ChevronLeft className="w-5 h-5" />
@@ -119,7 +119,7 @@ export function ChangesPanel({
           <div className="text-[15px] font-semibold truncate">
             {open ? open.file.path : "Changes"}
           </div>
-          <div className="text-[12px] text-[#737373] truncate flex items-center gap-1">
+          <div className="text-[12px] text-dim truncate flex items-center gap-1">
             {open ? (
               <span>
                 {open.staged ? "Staged" : "Unstaged"}
@@ -142,7 +142,7 @@ export function ChangesPanel({
           <button
             type="button"
             onClick={() => void load()}
-            className="w-9 h-9 rounded-xl bg-[#242428] flex items-center justify-center"
+            className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center"
             aria-label="Refresh"
           >
             {loading ? (
@@ -160,7 +160,7 @@ export function ChangesPanel({
         )}
 
         {!open && status && status.files.length === 0 && !error && (
-          <p className="m-6 text-center text-[14px] text-[#898989]">Working tree clean.</p>
+          <p className="m-6 text-center text-[14px] text-muted">Working tree clean.</p>
         )}
 
         {!open &&
@@ -168,7 +168,7 @@ export function ChangesPanel({
             <div key={f.path} className="border-b border-white/[0.06] px-4 py-2.5">
               <div className="text-[14px] font-mono break-all">{f.path}</div>
               {f.orig_path && (
-                <div className="text-[11.5px] text-[#737373] break-all">from {f.orig_path}</div>
+                <div className="text-[11.5px] text-dim break-all">from {f.orig_path}</div>
               )}
               <div className="mt-1.5 flex flex-wrap gap-2">
                 {isStaged(f) && (
@@ -185,7 +185,7 @@ export function ChangesPanel({
                   <button
                     type="button"
                     onClick={() => setOpen({ file: f, staged: false })}
-                    className="h-7 px-2.5 rounded-lg bg-[#262626] text-[#e5e5e5] text-[12px] font-semibold"
+                    className="h-7 px-2.5 rounded-lg bg-raised text-fg-soft text-[12px] font-semibold"
                   >
                     {f.index === "?" ? "Untracked" : `Unstaged · ${statusLabel(f.worktree)}`}
                   </button>
@@ -196,7 +196,7 @@ export function ChangesPanel({
 
         {open && diffLoading && (
           <div className="p-6 flex justify-center">
-            <Loader2 className="w-5 h-5 animate-spin text-[#8ab4f8]" />
+            <Loader2 className="w-5 h-5 animate-spin text-accent-soft" />
           </div>
         )}
         {open && diff && (

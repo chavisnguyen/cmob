@@ -2189,6 +2189,12 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
                     JsonRpcError::invalid_params("Missing agent_kind parameter"),
                 );
             };
+            if crate::cmux::agent_options::is_antigravity(kind) {
+                return match crate::cmux::agent_options::antigravity_options().await {
+                    Ok(v) => JsonRpcResponse::result(req.id.clone(), v).unwrap(),
+                    Err(msg) => JsonRpcResponse::error(Some(req.id.clone()), JsonRpcError::internal_error(msg)),
+                };
+            }
             match crate::cmux::agent_options::options_for(kind) {
                 Some(opts) => JsonRpcResponse::result(req.id.clone(), serde_json::to_value(opts).unwrap()).unwrap(),
                 None => JsonRpcResponse::error(
@@ -2494,9 +2500,9 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
                     Err(msg) => return JsonRpcResponse::error(Some(req.id.clone()), JsonRpcError::invalid_params(msg)),
                 };
                 if !flags.is_empty() {
-                    let expected = crate::cmux::agents::spec_for(kind).map(|s| s.kind).unwrap_or("");
+                    let aliases = crate::cmux::agents::spec_for(kind).map(|s| s.aliases).unwrap_or(&[]);
                     let base = command.as_deref().unwrap_or("");
-                    if base.split_whitespace().next() != Some(expected) {
+                    if !base.split_whitespace().next().is_some_and(|w| aliases.contains(&w)) {
                         return JsonRpcResponse::error(
                             Some(req.id.clone()),
                             JsonRpcError::invalid_params("launch options need a plain agent command"),
@@ -2562,7 +2568,13 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
             };
             let force = req.params.get("force").and_then(|v| v.as_bool()).unwrap_or(true);
 
-            match state.cmux_bridge.close_surface(surface, force).await {
+            let workspace = req
+                .params
+                .get("workspace_id")
+                .and_then(|v| v.as_str())
+                .filter(|v| !v.is_empty());
+
+            match state.cmux_bridge.close_surface(surface, workspace, force).await {
                 Ok(out) => JsonRpcResponse::result(
                     req.id.clone(),
                     serde_json::json!({ "status": "closed", "surface_id": surface, "output": out }),

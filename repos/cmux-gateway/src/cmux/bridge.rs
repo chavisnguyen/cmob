@@ -418,9 +418,15 @@ impl DualTransportCmuxBridge {
     pub async fn close_surface(
         &self,
         surface_id: &str,
+        workspace_id: Option<&str>,
         force: bool,
     ) -> Result<String, CmuxBridgeError> {
+        // cmux refuses an explicit --surface without --workspace or --window.
         let mut args: Vec<&str> = vec!["close-surface", "--surface", surface_id];
+        if let Some(ws) = workspace_id {
+            args.push("--workspace");
+            args.push(ws);
+        }
         if force {
             args.push("--force");
         }

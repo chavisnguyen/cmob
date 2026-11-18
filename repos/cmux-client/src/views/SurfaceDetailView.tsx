@@ -183,11 +183,12 @@ export function SurfaceDetailView({
         setActivityText(null);
       }
     }
-    setInitialLoading(false);
+    // Only a snapshot that carries turns is an answer; otherwise keep the spinner up.
+    if (resp.turns) setInitialLoading(false);
   }, []);
 
   const loadingRef = useRef(false);
-  // Primitive identity of the agent: App refreshes the workspace tree every 2.5 s and hands down a new
+  // Primitive identity of the agent: App refreshes the workspace tree every 5 s and hands down a new
   // `surface.agent` object each time, which would otherwise rebuild this callback and restart the poll timer.
   const agentSid = surface.agent?.session_id;
   const agentKd = surface.agent?.agent_kind;
@@ -206,7 +207,6 @@ export function SurfaceDetailView({
       console.warn("Failed to load session turns:", err);
     } finally {
       loadingRef.current = false;
-      setInitialLoading(false);
     }
   }, [surface.id, surface.ref, agentSid, agentKd, applySnapshot, turnLimit]);
 
@@ -263,6 +263,8 @@ export function SurfaceDetailView({
   useEffect(() => {
     setTurnLimit(TURN_PAGE_SIZE);
     setHasMoreHistory(false);
+    setTurns([]);
+    setInitialLoading(true);
   }, [surfaceKey]);
 
   const handleLoadOlder = useCallback(async () => {
@@ -537,13 +539,13 @@ export function SurfaceDetailView({
   };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-4xl mx-auto overflow-hidden bg-[#0a0a0a] text-[#fafafa]">
-      <header className="relative flex items-center justify-between gap-2 px-2 pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))] bg-[#141416] border-b border-white/[0.08] shrink-0 z-30 w-full">
+    <div className="flex flex-col h-full w-full max-w-4xl mx-auto overflow-hidden bg-bg text-fg">
+      <header className="relative flex items-center justify-between gap-2 px-2 pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))] bg-surface border-b border-line shrink-0 z-30 w-full">
         <div className="flex items-center gap-1 min-w-0 flex-1">
           <button
             type="button"
             onClick={onBack}
-            className="w-10 h-10 rounded-xl hover:bg-[#242428] active:opacity-75 text-[#fafafa] flex items-center justify-center transition-colors shrink-0"
+            className="w-10 h-10 rounded-xl hover:bg-raised active:opacity-75 text-fg flex items-center justify-center transition-colors shrink-0"
             title={`Back to ${workspace.title}`}
             aria-label={`Back to ${workspace.title}`}
           >
@@ -557,12 +559,12 @@ export function SurfaceDetailView({
             className="min-w-0 flex-1 pr-1 text-left rounded-lg active:opacity-75 disabled:active:opacity-100"
             aria-label={`Switch tab (current: ${surface.title})`}
           >
-            <h1 className="text-[15px] font-semibold text-[#fafafa] truncate leading-tight flex items-center gap-1">
+            <h1 className="text-[15px] font-semibold text-fg truncate leading-tight flex items-center gap-1">
               <span className="truncate">{displaySurfaceTitle(surface.title)}</span>
               {allSurfaces && allSurfaces.length > 1 && (
                 <>
-                  <ChevronDown className="w-4 h-4 text-[#a3a3a3] shrink-0" aria-hidden="true" />
-                  <span className="text-[11px] font-medium text-[#a3a3a3] shrink-0">
+                  <ChevronDown className="w-4 h-4 text-muted shrink-0" aria-hidden="true" />
+                  <span className="text-[11px] font-medium text-muted shrink-0">
                     {allSurfaces.length}
                   </span>
                 </>
@@ -576,21 +578,21 @@ export function SurfaceDetailView({
                   }`}
                 />
               )}
-              <p className="text-[12px] text-[#898989] truncate leading-none">{workspace.title}</p>
+              <p className="text-[12px] text-muted truncate leading-none">{workspace.title}</p>
             </div>
           </button>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0 pr-1">
           {chatAvailable && (
-            <div className="flex items-center p-1 bg-[#1e1e22] border border-white/[0.08] rounded-xl shrink-0">
+            <div className="flex items-center p-1 bg-surface border border-white/[0.08] rounded-xl shrink-0">
               <button
                 type="button"
                 onClick={() => setViewMode("chat")}
                 className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
                   activeMode === "chat"
-                    ? "bg-[#3276f2] text-white shadow-sm"
-                    : "text-[#a3a3a3] hover:text-[#fafafa]"
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-muted hover:text-fg"
                 }`}
               >
                 <MessageSquare className="w-3.5 h-3.5" />
@@ -601,8 +603,8 @@ export function SurfaceDetailView({
                 onClick={() => setViewMode("terminal")}
                 className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
                   activeMode === "terminal"
-                    ? "bg-[#3276f2] text-white shadow-sm"
-                    : "text-[#a3a3a3] hover:text-[#fafafa]"
+                    ? "bg-accent text-white shadow-sm"
+                    : "text-muted hover:text-fg"
                 }`}
               >
                 <Terminal className="w-3.5 h-3.5" />
@@ -614,7 +616,7 @@ export function SurfaceDetailView({
           <button
             type="button"
             onClick={() => setShowMoreMenu((prev) => !prev)}
-            className="w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] active:opacity-75 text-[#fafafa] flex items-center justify-center transition-colors"
+            className="w-9 h-9 rounded-xl bg-raised hover:bg-line active:opacity-75 text-fg flex items-center justify-center transition-colors"
             title="Tab options"
             aria-label="Tab options"
           >
@@ -625,7 +627,7 @@ export function SurfaceDetailView({
         {showMoreMenu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
-            <div className="absolute right-3 top-[calc(100%+6px)] z-50 w-52 rounded-2xl bg-[#1c1c20] border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
+            <div className="absolute right-3 top-[calc(100%+6px)] z-50 w-52 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
               {onCreateSurface && (
                 <button
                   type="button"
@@ -633,9 +635,9 @@ export function SurfaceDetailView({
                     setShowMoreMenu(false);
                     setShowNewModal(true);
                   }}
-                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
                 >
-                  <Plus className="w-4 h-4 text-[#a3a3a3]" />
+                  <Plus className="w-4 h-4 text-muted" />
                   <span>New Tab</span>
                 </button>
               )}
@@ -647,9 +649,9 @@ export function SurfaceDetailView({
                     setShowMoreMenu(false);
                     setSurfaceToRename(surface);
                   }}
-                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
                 >
-                  <Pencil className="w-4 h-4 text-[#a3a3a3]" />
+                  <Pencil className="w-4 h-4 text-muted" />
                   <span>Rename Tab</span>
                 </button>
               )}
@@ -661,9 +663,9 @@ export function SurfaceDetailView({
                     setShowMoreMenu(false);
                     void handleForkConversation();
                   }}
-                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
                 >
-                  <GitFork className="w-4 h-4 text-[#a3a3a3]" />
+                  <GitFork className="w-4 h-4 text-muted" />
                   <span>Fork conversation</span>
                 </button>
               )}
@@ -674,9 +676,9 @@ export function SurfaceDetailView({
                   setShowMoreMenu(false);
                   handleForceReload();
                 }}
-                className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
               >
-                <RefreshCw className="w-4 h-4 text-[#a3a3a3]" />
+                <RefreshCw className="w-4 h-4 text-muted" />
                 <span>Reload App</span>
               </button>
 
@@ -734,6 +736,16 @@ export function SurfaceDetailView({
             onApprove={handleApprove}
             onInterrupt={handleInterrupt}
           />
+        ) : surface.surface_type && surface.surface_type !== "terminal" ? (
+          // File previews, browsers... have no terminal to replay (cmux answers not_found).
+          <div className="h-full flex flex-col items-center justify-center gap-1 px-8 text-center">
+            <p className="text-[14px] font-medium text-fg-soft">
+              This tab can&apos;t be shown on mobile
+            </p>
+            <p className="text-[12.5px] text-muted">
+              It is a {surface.surface_type} tab. Open it in cmux on your computer.
+            </p>
+          </div>
         ) : (
           <RawTerminalView
             surfaceId={surface.id || surface.ref}
@@ -774,7 +786,7 @@ export function SurfaceDetailView({
       {forkStatus && (
         <div
           role="status"
-          className="fixed left-1/2 -translate-x-1/2 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] z-50 max-w-[90vw] px-4 py-2 rounded-xl bg-[#1c1c20] border border-white/[0.12] text-[13px] text-[#fafafa] shadow-2xl"
+          className="fixed left-1/2 -translate-x-1/2 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] z-50 max-w-[90vw] px-4 py-2 rounded-xl bg-surface border border-white/[0.12] text-[13px] text-fg shadow-2xl"
         >
           {forkStatus}
         </div>

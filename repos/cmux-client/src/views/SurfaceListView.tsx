@@ -65,13 +65,13 @@ export function SurfaceListView({
   };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-3xl mx-auto bg-[#0a0a0a] text-[#fafafa]">
-      <header className="flex items-center justify-between gap-2 px-3 min-h-[56px] bg-[#141416] border-b border-white/[0.08] w-full shrink-0">
+    <div className="flex flex-col h-full w-full max-w-3xl mx-auto bg-bg text-fg">
+      <header className="flex items-center justify-between gap-2 px-3 min-h-[56px] bg-surface border-b border-line w-full shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
             onClick={onBack}
-            className="w-10 h-10 rounded-xl hover:bg-[#242428] active:opacity-75 text-[#fafafa] flex items-center justify-center transition-colors shrink-0"
+            className="w-10 h-10 rounded-xl hover:bg-raised active:opacity-75 text-fg flex items-center justify-center transition-colors shrink-0"
             title="Back to Workspaces"
             aria-label="Back to Workspaces"
           >
@@ -79,10 +79,10 @@ export function SurfaceListView({
           </button>
 
           <div className="min-w-0 flex-1">
-            <h1 className="text-[16px] font-semibold text-[#fafafa] truncate leading-tight">
+            <h1 className="text-[16px] font-semibold text-fg truncate leading-tight">
               {workspace.title}
             </h1>
-            <p className="text-[12px] text-[#898989] font-mono truncate mt-0.5">
+            <p className="text-[12px] text-muted font-mono truncate mt-0.5">
               {shortPath(workspace.current_directory, 3)}
             </p>
           </div>
@@ -93,7 +93,7 @@ export function SurfaceListView({
             <button
               type="button"
               onClick={onRefresh}
-              className="w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] active:opacity-75 text-[#e5e5e5] flex items-center justify-center transition-colors"
+              className="w-9 h-9 rounded-xl bg-raised hover:bg-line active:opacity-75 text-fg-soft flex items-center justify-center transition-colors"
               title="Refresh tabs"
               aria-label="Refresh tabs"
             >
@@ -103,7 +103,7 @@ export function SurfaceListView({
           <button
             type="button"
             onClick={() => setShowChanges(true)}
-            className="w-9 h-9 rounded-xl bg-[#242428] hover:bg-[#2e2e34] text-[#e5e5e5] flex items-center justify-center transition-colors"
+            className="w-9 h-9 rounded-xl bg-raised hover:bg-line text-fg-soft flex items-center justify-center transition-colors"
             title="Git changes"
             aria-label="Git changes"
           >
@@ -113,7 +113,7 @@ export function SurfaceListView({
             <button
               type="button"
               onClick={() => setShowNewModal(true)}
-              className="h-9 px-3.5 rounded-xl bg-[#3276f2] hover:bg-[#2563eb] active:opacity-80 text-white text-[13px] font-semibold inline-flex items-center gap-1.5 transition-colors shadow-sm"
+              className="h-9 px-3.5 rounded-xl bg-accent hover:bg-accent-strong active:opacity-80 text-white text-[13px] font-semibold inline-flex items-center gap-1.5 transition-colors shadow-sm"
               title="New Tab"
             >
               <Plus className="w-4 h-4" />
@@ -125,13 +125,13 @@ export function SurfaceListView({
 
       <div className="flex-1 overflow-y-auto divide-y divide-white/[0.06] pb-[calc(5rem+env(safe-area-inset-bottom,0px))]">
         {workspace.surfaces.length === 0 ? (
-          <div className="p-10 text-center text-[#898989] text-[14px] flex flex-col items-center justify-center gap-4">
+          <div className="p-10 text-center text-muted text-[14px] flex flex-col items-center justify-center gap-4">
             <p>No terminal tabs open in this workspace.</p>
             {onCreateSurface && (
               <button
                 type="button"
                 onClick={() => setShowNewModal(true)}
-                className="h-10 px-4 rounded-xl bg-[#3276f2] hover:bg-[#2563eb] text-white text-[14px] font-semibold inline-flex items-center gap-2 transition-colors"
+                className="h-10 px-4 rounded-xl bg-accent hover:bg-accent-strong text-white text-[14px] font-semibold inline-flex items-center gap-2 transition-colors"
               >
                 <Plus className="w-4 h-4" />
                 <span>Open First Tab</span>
@@ -147,28 +147,28 @@ export function SurfaceListView({
               <Pressable
                 key={surf.id || surf.ref}
                 onPress={() => onSelectSurface(surf)}
-                className="flex items-center justify-between px-4 py-3.5 min-h-[66px] hover:bg-[#141416] active:bg-[#1c1c20] cursor-pointer transition-colors group"
+                className="flex items-center justify-between px-4 py-3.5 min-h-[66px] hover:bg-bg active:bg-surface cursor-pointer transition-colors group"
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
-                  <div className="w-10 h-10 rounded-[11px] bg-[#1c1c20] border border-white/[0.07] flex items-center justify-center text-[#e5e5e5] shrink-0">
+                  <div className="w-10 h-10 rounded-[11px] bg-surface border border-white/[0.07] flex items-center justify-center text-fg-soft shrink-0">
                     {surf.surface_type === "markdown" ? (
                       <FileText className="w-5 h-5 text-[#86efac]" />
                     ) : surf.surface_type === "browser" ? (
-                      <Globe className="w-5 h-5 text-[#8ab4f8]" />
+                      <Globe className="w-5 h-5 text-accent-soft" />
                     ) : hasAgent ? (
                       <AgentIcon kind={surf.agent?.agent_kind} size={22} />
                     ) : (
-                      <Terminal className="w-5 h-5 text-[#e5e5e5]" />
+                      <Terminal className="w-5 h-5 text-fg-soft" />
                     )}
                   </div>
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-2">
-                      <h2 className="text-[15px] font-semibold text-[#fafafa] truncate">
+                      <h2 className="text-[15px] font-semibold text-fg truncate">
                         {displaySurfaceTitle(surf.title)}
                       </h2>
                       {surf.selected && (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-[#3276f2]/15 text-[#8ab4f8] shrink-0">
+                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-accent/15 text-accent-soft shrink-0">
                           Active
                         </span>
                       )}
@@ -176,7 +176,7 @@ export function SurfaceListView({
 
                     <div className="mt-1 flex flex-wrap items-center gap-2.5 text-[12px]">
                       {surf.tty && (
-                        <span className="text-[#898989] font-mono inline-flex items-center gap-0.5">
+                        <span className="text-muted font-mono inline-flex items-center gap-0.5">
                           <Hash className="w-3 h-3" />
                           {surf.tty}
                         </span>
@@ -186,12 +186,12 @@ export function SurfaceListView({
                         <span
                           className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-medium ${
                             agentStatus === "running"
-                              ? "bg-[#3276f2]/15 text-[#8ab4f8]"
+                              ? "bg-accent/15 text-accent-soft"
                               : agentStatus === "waiting"
                                 ? "bg-amber-500/15 text-amber-300"
                                 : agentStatus === "error"
                                   ? "bg-rose-500/15 text-rose-300"
-                                  : "bg-white/[0.06] text-[#a3a3a3]"
+                                  : "bg-white/[0.06] text-muted"
                           }`}
                         >
                           <span>{agentDisplayName(surf.agent?.agent_kind)}</span>
@@ -212,7 +212,7 @@ export function SurfaceListView({
                           cur === (surf.id || surf.ref) ? null : surf.id || surf.ref,
                         );
                       }}
-                      className="w-10 h-10 rounded-xl text-[#a3a3a3] hover:text-[#fafafa] hover:bg-[#242428] flex items-center justify-center transition-colors"
+                      className="w-10 h-10 rounded-xl text-muted hover:text-fg hover:bg-raised flex items-center justify-center transition-colors"
                       title="Tab actions"
                       aria-label="Tab actions"
                       aria-expanded={menuFor === (surf.id || surf.ref)}
@@ -220,7 +220,7 @@ export function SurfaceListView({
                       <MoreVertical className="w-4 h-4" />
                     </button>
                   )}
-                  <ChevronRight className="w-5 h-5 text-[#525252]" />
+                  <ChevronRight className="w-5 h-5 text-dim" />
                   {menuFor === (surf.id || surf.ref) && (
                     <>
                       <div
@@ -230,7 +230,7 @@ export function SurfaceListView({
                           setMenuFor(null);
                         }}
                       />
-                      <div className="absolute right-6 top-11 z-50 w-44 rounded-2xl bg-[#1c1c20] border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
+                      <div className="absolute right-6 top-11 z-50 w-44 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
                         {onRenameSurface && (
                           <button
                             type="button"
@@ -239,9 +239,9 @@ export function SurfaceListView({
                               setMenuFor(null);
                               setSurfaceToRename(surf);
                             }}
-                            className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-[#fafafa] hover:bg-white/[0.06]"
+                            className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06]"
                           >
-                            <Pencil className="w-4 h-4 text-[#a3a3a3]" />
+                            <Pencil className="w-4 h-4 text-muted" />
                             <span>Rename</span>
                           </button>
                         )}

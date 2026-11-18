@@ -150,22 +150,22 @@ export function NewSurfaceModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-sm rounded-2xl bg-[#171717] border border-white/[0.1] text-white shadow-2xl overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] bg-[#141416]">
+      <div className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.1] text-white shadow-2xl overflow-hidden flex flex-col">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] bg-bg">
           <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-[#3276f2]/15 text-[#8ab4f8] flex items-center justify-center">
+            <div className="w-6 h-6 rounded-md bg-accent/15 text-accent-soft flex items-center justify-center">
               <Plus className="w-3.5 h-3.5" />
             </div>
             <div>
-              <h2 className="text-[16px] font-semibold text-[#fafafa]">New Tab</h2>
-              <p className="text-[12px] text-[#a3a3a3] truncate max-w-[180px]">{workspaceTitle}</p>
+              <h2 className="text-[16px] font-semibold text-fg">New Tab</h2>
+              <p className="text-[12px] text-muted truncate max-w-[180px]">{workspaceTitle}</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={loading}
-            className="p-1 rounded-md text-gray-400 hover:text-white hover:bg-[#252735] transition-colors"
+            className="p-1 rounded-md text-muted hover:text-white hover:bg-raised transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
@@ -179,7 +179,7 @@ export function NewSurfaceModal({
           )}
 
           <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-[#a3a3a3] uppercase tracking-wider">
+            <label className="text-[12px] font-semibold text-muted uppercase tracking-wider">
               Initial Program / Agent
             </label>
             <div className="space-y-1.5">
@@ -192,18 +192,18 @@ export function NewSurfaceModal({
                     onPress={() => setSelectedPreset(preset.id)}
                     className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-colors ${
                       isSelected
-                        ? "bg-[#3276f2]/15 border-[#3276f2] text-white"
-                        : "bg-[#1c1c20] border-white/[0.08] text-gray-300 hover:bg-[#1e2029]"
+                        ? "bg-accent/15 border-accent text-white"
+                        : "bg-surface border-white/[0.08] text-fg-soft hover:bg-surface"
                     }`}
                   >
                     <div className="flex items-center gap-2.5 min-w-0">
                       <div
                         className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${
                           preset.agentKind
-                            ? "bg-[#0f0f12] text-white border border-white/[0.08]"
+                            ? "bg-bg text-white border border-white/[0.08]"
                             : isSelected
-                              ? "bg-[#3276f2] text-white"
-                              : "bg-[#252735] text-gray-400"
+                              ? "bg-accent text-white"
+                              : "bg-raised text-muted"
                         }`}
                       >
                         {preset.agentKind ? (
@@ -216,17 +216,17 @@ export function NewSurfaceModal({
                         <div className="text-[14px] font-medium truncate flex items-center gap-1.5">
                           <span>{preset.name}</span>
                           {preset.badge && (
-                            <span className="px-1 py-0.2 rounded text-[9px] bg-purple-500/20 text-purple-300 font-semibold">
+                            <span className="px-1 py-0.2 rounded text-[9px] bg-accent/20 text-accent-soft font-semibold">
                               {preset.badge}
                             </span>
                           )}
                         </div>
-                        <p className="text-[12px] text-[#a3a3a3] truncate">{preset.desc}</p>
+                        <p className="text-[12px] text-muted truncate">{preset.desc}</p>
                       </div>
                     </div>
                     <div
                       className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                        isSelected ? "border-[#3276f2] bg-[#3276f2]" : "border-gray-600"
+                        isSelected ? "border-accent bg-accent" : "border-gray-600"
                       }`}
                     >
                       {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
@@ -236,8 +236,8 @@ export function NewSurfaceModal({
               })}
 
               {optionKind && optionsInfo && (
-                <div className="rounded-lg border border-white/[0.08] bg-[#1c1c20] p-2.5 space-y-2">
-                  <label className="text-[12px] font-semibold text-[#a3a3a3] uppercase tracking-wider">
+                <div className="rounded-lg border border-white/[0.08] bg-surface p-2.5 space-y-2">
+                  <label className="text-[12px] font-semibold text-muted uppercase tracking-wider">
                     Model (optional)
                   </label>
                   <select
@@ -249,7 +249,7 @@ export function NewSurfaceModal({
                         next ? effortAfterModelChange(optionsInfo, next, cur) : cur,
                       );
                     }}
-                    className="w-full h-10 rounded-lg bg-[#0a0a0a] border border-white/[0.14] px-2.5 text-[14px] text-[#fafafa]"
+                    className="w-full h-10 rounded-lg bg-bg border border-white/[0.14] px-2.5 text-[14px] text-fg"
                   >
                     <option value="">Default</option>
                     {optionsInfo.models.map((m) => (
@@ -260,13 +260,13 @@ export function NewSurfaceModal({
                   </select>
                   {(model ? effortsFor(optionsInfo, model) : []).length > 0 && (
                     <>
-                      <label className="text-[12px] font-semibold text-[#a3a3a3] uppercase tracking-wider">
+                      <label className="text-[12px] font-semibold text-muted uppercase tracking-wider">
                         Effort (optional)
                       </label>
                       <select
                         value={effort ?? ""}
                         onChange={(e) => setEffort(e.target.value || null)}
-                        className="w-full h-10 rounded-lg bg-[#0a0a0a] border border-white/[0.14] px-2.5 text-[14px] text-[#fafafa]"
+                        className="w-full h-10 rounded-lg bg-bg border border-white/[0.14] px-2.5 text-[14px] text-fg"
                       >
                         <option value="">Default</option>
                         {effortsFor(optionsInfo, model).map((e) => (
@@ -284,17 +284,15 @@ export function NewSurfaceModal({
                 onPress={() => setSelectedPreset("custom")}
                 className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${
                   selectedPreset === "custom"
-                    ? "bg-[#3276f2]/15 border-[#3276f2] text-white"
-                    : "bg-[#1c1c20] border-white/[0.08] text-gray-300 hover:bg-[#1e2029]"
+                    ? "bg-accent/15 border-accent text-white"
+                    : "bg-surface border-white/[0.08] text-fg-soft hover:bg-surface"
                 }`}
               >
                 <div className="flex items-center justify-between mb-1.5">
                   <span className="text-[14px] font-medium">Custom Command</span>
                   <div
                     className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                      selectedPreset === "custom"
-                        ? "border-[#3276f2] bg-[#3276f2]"
-                        : "border-gray-600"
+                      selectedPreset === "custom" ? "border-accent bg-accent" : "border-gray-600"
                     }`}
                   >
                     {selectedPreset === "custom" && (
@@ -309,7 +307,7 @@ export function NewSurfaceModal({
                     onChange={(event) => setCustomCommand(event.target.value)}
                     placeholder="e.g. htop, python3 main.py, bash"
                     autoFocus
-                    className="w-full mt-1 bg-[#171717] border border-white/[0.1] focus:border-indigo-500 rounded px-2.5 py-1.5 text-xs font-mono text-white placeholder-gray-600 outline-none"
+                    className="w-full mt-1 bg-bg border border-white/[0.1] focus:border-accent rounded px-2.5 py-1.5 text-xs font-mono text-white placeholder-gray-600 outline-none"
                   />
                 )}
               </Pressable>
@@ -321,14 +319,14 @@ export function NewSurfaceModal({
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="flex-1 h-11 rounded-xl bg-[#262626] hover:bg-[#303036] text-[14px] font-medium text-gray-300 transition-colors"
+              className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-medium text-fg-soft transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 h-11 rounded-xl bg-[#3276f2] hover:bg-[#2563eb] disabled:opacity-50 text-[14px] font-medium text-white flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+              className="flex-1 h-11 rounded-xl bg-accent hover:bg-accent-strong disabled:opacity-50 text-[14px] font-medium text-white flex items-center justify-center gap-1.5 shadow-sm transition-colors"
             >
               {loading ? (
                 <>

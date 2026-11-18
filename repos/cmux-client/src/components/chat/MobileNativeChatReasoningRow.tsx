@@ -38,34 +38,34 @@ export function MobileNativeChatReasoningRow({
       <button
         type="button"
         onClick={() => setIsExpanded((prev) => !prev)}
-        className="w-full flex items-center justify-between py-1 px-1 rounded-md hover:bg-white/[0.04] text-gray-400 hover:text-gray-300 transition-colors"
+        className="w-full flex items-center justify-between py-1 px-1 rounded-md hover:bg-white/[0.04] text-muted hover:text-fg-soft transition-colors"
       >
         <div className="flex items-center gap-1.5 min-w-0">
           <Brain
-            className={`w-3.5 h-3.5 shrink-0 ${live ? "text-purple-400 animate-pulse" : "text-gray-400"}`}
+            className={`w-3.5 h-3.5 shrink-0 ${live ? "text-accent-soft animate-pulse" : "text-muted"}`}
           />
-          <span className="font-medium text-gray-300 truncate">{headline}</span>
-          <span className="text-[10px] text-gray-500 font-mono">
+          <span className="font-medium text-fg-soft truncate">{headline}</span>
+          <span className="text-[10px] text-dim font-mono">
             ({text.length.toLocaleString()} chars)
           </span>
           {live && (
             <span className="flex h-1.5 w-1.5 relative shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-purple-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-purple-500" />
+              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-soft opacity-75" />
+              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
             </span>
           )}
         </div>
         <div className="shrink-0 ml-2">
           {isExpanded ? (
-            <ChevronUp className="w-3.5 h-3.5 text-gray-400" />
+            <ChevronUp className="w-3.5 h-3.5 text-muted" />
           ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-gray-400" />
+            <ChevronDown className="w-3.5 h-3.5 text-muted" />
           )}
         </div>
       </button>
 
       {isExpanded && (
-        <div className="ml-5 pl-2.5 my-1 border-l border-white/10 text-[11px] font-mono text-gray-400 whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto scrollbar-thin">
+        <div className="ml-5 pl-2.5 my-1 border-l border-white/10 text-[11px] font-mono text-muted whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto scrollbar-thin">
           {text}
         </div>
       )}

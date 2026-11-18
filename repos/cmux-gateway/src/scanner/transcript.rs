@@ -840,11 +840,22 @@ impl TranscriptReader {
         let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
         match msg_type {
             "USER_INPUT" => {
+                let agent_replied = current_turn.is_some();
                 if let Some(t) = current_turn.take() {
                     turns.push(t);
                 }
                 if let Some(content) = val.get("content").and_then(|c| c.as_str()) {
                     let cleaned = Self::clean_user_prompt(content);
+                    // Antigravity logs the same prompt twice (e.g. one step_index re-written a minute
+                    // later); the same text again with no agent reply in between is that echo.
+                    if !agent_replied
+                        && matches!(
+                            turns.last().and_then(|t| t.events.first()),
+                            Some(AgentEvent::User { text }) if *text == cleaned
+                        )
+                    {
+                        return;
+                    }
                     let mut turn = AgentTurn::new(
                         format!("turn-{}", turns.len() + 1),
                         surface_id,
@@ -1180,6 +1191,20 @@ mod tests {
         assert_eq!(agents[1].label, "Kuhn");
         assert_eq!(agents[1].state, SubagentState::Working);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_antigravity_repeated_user_input_without_reply_is_one_turn() {
+        let p = write_jsonl("agy-dup", &[
+            r#"{"type":"USER_INPUT","content":"<USER_REQUEST>go</USER_REQUEST>"}"#,
+            r#"{"type":"USER_INPUT","content":"<USER_REQUEST>go</USER_REQUEST><ADDITIONAL_METADATA>t</ADDITIONAL_METADATA>"}"#,
+            r#"{"type":"PLANNER_RESPONSE","content":"ok"}"#,
+            r#"{"type":"USER_INPUT","content":"<USER_REQUEST>go</USER_REQUEST>"}"#,
+        ]);
+        let turns = TranscriptReader::read_recent_turns(&p, "s", 10).unwrap();
+        let users = turns.iter().filter(|t| t.role == AgentRole::User).count();
+        // The echo right after the first prompt is dropped; asking "go" again after a reply is kept.
+        assert_eq!(users, 2);
     }
 
     #[test]
