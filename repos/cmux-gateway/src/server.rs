@@ -516,7 +516,8 @@ pub fn create_router(state: AppState) -> Router {
             header::UPGRADE,
             header::CONNECTION,
         ])
-        .allow_credentials(true);
+        .allow_credentials(true)
+        .allow_private_network(true);
 
     Router::new()
         .route("/health", get(health_handler))

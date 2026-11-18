@@ -26,8 +26,7 @@ function makeDecoder(): Decode {
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   return async (video) => {
     if (!ctx || !video.videoWidth) return null;
-    // Downscale: QR codes decode fine at ~640px and it keeps the phone cool.
-    const scale = Math.min(1, 640 / video.videoWidth);
+    const scale = Math.min(1, 1080 / video.videoWidth);
     canvas.width = Math.round(video.videoWidth * scale);
     canvas.height = Math.round(video.videoHeight * scale);
     ctx.drawImage(video, 0, 0, canvas.width, canvas.height);

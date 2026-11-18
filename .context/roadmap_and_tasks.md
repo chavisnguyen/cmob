@@ -234,3 +234,8 @@ This document defines the actionable milestones, implementation phases, and test
     - All 20 Client test suites (106 tests) pass with 0 errors.
     - `vp check` clean (0 warnings, 0 lint errors, 0 type errors, 100% formatted).
     - Client PWA production bundle built successfully (`tsc -b && vp build`).
+  - **Tailscale Funnel-only, Terminal QR & Pairing Retry Fixes:**
+    - Switched `repos/cmux-gateway/src/cli.rs` completely from `tailscale serve` to `tailscale funnel --bg --yes` (auto-upgrading legacy `ServeOnly` configs, checking `BackendState == "Running"`, bounding `tailscale funnel` command waits to surface approval links, and warning on CLI/running gateway version mismatch).
+    - Fixed `render_qr` in `repos/cmux-gateway/src/cli.rs` to use `EcLevel::L`, fixed 256-color black/white (`16`/`231`), and background-only spaces `' '` when `top == bottom` to prevent terminal minimum-contrast rewriting; raised `QrScanModal.tsx` `jsQR` downscale cap from `640` to `1080`.
+    - Added `.allow_private_network(true)` to `CorsLayer` in `repos/cmux-gateway/src/server.rs`.
+    - Preserved `pendingTicket` and `#code=` on transient network/5xx errors in `repos/cmux-client/src/transport/wsClient.ts` so the Retry button works.

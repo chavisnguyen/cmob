@@ -191,76 +191,149 @@ fn tailscale_bin() -> Option<String> {
 }
 
 /// MagicDNS name of this machine, e.g. `mac.tail1234.ts.net`.
-fn tailscale_dns() -> Option<String> {
-    let bin = tailscale_bin()?;
-    let out = Command::new(bin).args(["status", "--json"]).stderr(Stdio::null()).output().ok()?;
-    let v: serde_json::Value = serde_json::from_slice(&out.stdout).ok()?;
+fn parse_tailscale_dns(json: &str) -> Option<String> {
+    let v: serde_json::Value = serde_json::from_str(json).ok()?;
+    if v.get("BackendState").and_then(|s| s.as_str()) != Some("Running") {
+        return None;
+    }
     let name = v.get("Self")?.get("DNSName")?.as_str()?.trim_end_matches('.').to_string();
     (!name.is_empty()).then_some(name)
 }
 
+fn tailscale_dns() -> Option<String> {
+    let bin = tailscale_bin()?;
+    let out = Command::new(bin).args(["status", "--json"]).stderr(Stdio::null()).output().ok()?;
+    parse_tailscale_dns(&String::from_utf8_lossy(&out.stdout))
+}
+
 #[derive(Debug, PartialEq)]
-enum ServeState {
-    /// Tailscale Serve has no configuration, so setting ours replaces nothing.
+enum FunnelState {
+    /// Tailscale Serve/Funnel has no configuration, so enabling Funnel replaces nothing.
     Empty,
-    /// It already proxies to the gateway.
+    /// It already funnels public HTTPS traffic to the gateway.
     Ours,
-    /// It serves something else; setting ours would overwrite it.
+    /// Tailscale Serve (tailnet-only) points to our port and can be upgraded to Funnel.
+    ServeOnly,
+    /// It serves/funnels something else; setting ours would overwrite it.
     Other,
 }
 
-/// Classifies `tailscale serve status --json` for our port.
-fn serve_state(json: &str, port: u16) -> Res<ServeState> {
+/// Classifies `tailscale funnel status --json` for our port.
+fn funnel_state(json: &str, port: u16) -> Res<FunnelState> {
     let v: serde_json::Value =
-        serde_json::from_str(json).map_err(|_| "could not read the Tailscale Serve configuration".to_string())?;
+        serde_json::from_str(json).map_err(|_| "could not read the Tailscale Funnel configuration".to_string())?;
     if v.is_null() || v.as_object().map(|o| o.is_empty()).unwrap_or(false) {
-        return Ok(ServeState::Empty);
+        return Ok(FunnelState::Empty);
     }
-    if json.contains(&format!("127.0.0.1:{port}")) || json.contains(&format!("localhost:{port}")) {
-        return Ok(ServeState::Ours);
+    let p1 = format!("127.0.0.1:{port}");
+    let p2 = format!("localhost:{port}");
+    if let Some(web) = v.get("Web").and_then(|w| w.as_object()).filter(|w| !w.is_empty()) {
+        for (host_port, handler) in web {
+            let s = handler.to_string();
+            if s.contains(&p1) || s.contains(&p2) {
+                let allowed = v
+                    .get("AllowFunnel")
+                    .and_then(|af| af.as_object())
+                    .and_then(|m| m.get(host_port))
+                    .and_then(|b| b.as_bool())
+                    .unwrap_or(false);
+                return Ok(if allowed { FunnelState::Ours } else { FunnelState::ServeOnly });
+            }
+        }
+        return Ok(FunnelState::Other);
     }
-    Ok(ServeState::Other)
+    let has_other_tcp = v.get("TCP").and_then(|t| t.as_object()).map(|o| !o.is_empty()).unwrap_or(false);
+    if has_other_tcp {
+        return Ok(FunnelState::Other);
+    }
+    Ok(FunnelState::Empty)
 }
 
-fn tailscale_serve_state(bin: &str, port: u16) -> Res<ServeState> {
+fn tailscale_funnel_state(bin: &str, port: u16) -> Res<FunnelState> {
     let out = Command::new(bin)
-        .args(["serve", "status", "--json"])
+        .args(["funnel", "status", "--json"])
         .stderr(Stdio::null())
         .output()
         .map_err(|e| e.to_string())?;
-    serve_state(&String::from_utf8_lossy(&out.stdout), port)
+    funnel_state(&String::from_utf8_lossy(&out.stdout), port)
 }
 
-fn tailscale_serving(bin: &str, port: u16) -> bool {
-    tailscale_serve_state(bin, port).map(|s| s == ServeState::Ours).unwrap_or(false)
+fn tailscale_funneling(bin: &str, port: u16) -> bool {
+    tailscale_funnel_state(bin, port).map(|s| s == FunnelState::Ours).unwrap_or(false)
 }
 
-/// Publishes the gateway over Tailscale HTTPS and returns the `https://` base URL. It never replaces a
-/// Serve configuration that belongs to something else.
-fn ensure_tailscale_serve() -> Res<String> {
-    let bin = tailscale_bin().ok_or("Tailscale was not found. Install it from https://tailscale.com/download")?;
-    let dns = tailscale_dns()
-        .ok_or("Tailscale is installed but not signed in. Open the Tailscale app and sign in")?;
-    match tailscale_serve_state(&bin, port())? {
-        ServeState::Ours => {}
-        ServeState::Empty => {
-            let ok = Command::new(&bin)
-                .args(["serve", "--bg", &port().to_string()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false);
-            if !ok {
-                return Err("could not enable Tailscale Serve (try `tailscale serve --bg 8088` yourself)".into());
+fn run_funnel_cmd(bin: &str, port: u16, use_yes: bool) -> Res<()> {
+    let port_str = port.to_string();
+    let mut args = vec!["funnel", "--bg"];
+    if use_yes {
+        args.push("--yes");
+    }
+    args.push(&port_str);
+    let mut child = Command::new(bin)
+        .args(&args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .map_err(|e| format!("could not run tailscale funnel: {e}"))?;
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let out = child.wait_with_output().map_err(|e| e.to_string())?;
+                if status.success() {
+                    return Ok(());
+                }
+                let detail = format!(
+                    "{}{}",
+                    String::from_utf8_lossy(&out.stdout),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let detail = detail.trim();
+                if use_yes && (detail.contains("--yes") || detail.contains("-yes")) {
+                    return run_funnel_cmd(bin, port, false);
+                }
+                if detail.is_empty() {
+                    return Err(format!("could not enable Tailscale Funnel (try `tailscale funnel --bg {port}` yourself)"));
+                }
+                return Err(format!("could not enable Tailscale Funnel: {detail}"));
+            }
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(100));
+            }
+            _ => {
+                let _ = child.kill();
+                let out = child.wait_with_output().ok();
+                let detail = out
+                    .map(|o| format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr)))
+                    .unwrap_or_default();
+                let detail = detail.trim();
+                if detail.is_empty() {
+                    return Err(format!("Tailscale Funnel timed out waiting for approval. Run `tailscale funnel --bg {port}` directly."));
+                }
+                return Err(format!("Tailscale Funnel needs confirmation:\n{detail}"));
             }
         }
-        ServeState::Other => {
-            return Err(
-                "Tailscale Serve is already serving something else on this Mac, and cmob will not overwrite it. \
-                 See it with `tailscale serve status`; remove it, or point it at 127.0.0.1:8088 yourself"
-                    .into(),
-            );
+    }
+}
+
+/// Publishes the gateway over Tailscale Funnel and returns the `https://` base URL. It never replaces
+/// a Serve/Funnel configuration that belongs to something else.
+fn ensure_tailscale_funnel() -> Res<String> {
+    let bin = tailscale_bin().ok_or("Tailscale was not found. Install it from https://tailscale.com/download")?;
+    let dns = tailscale_dns()
+        .ok_or("Tailscale is installed but not running or signed in. Open the Tailscale app and sign in")?;
+    let p = port();
+    match tailscale_funnel_state(&bin, p)? {
+        FunnelState::Ours => {}
+        FunnelState::Empty | FunnelState::ServeOnly => {
+            run_funnel_cmd(&bin, p, true)?;
+        }
+        FunnelState::Other => {
+            return Err(format!(
+                "Tailscale is already serving something else on this Mac, and cmob will not overwrite it. \
+                 See it with `tailscale funnel status`; remove it, or point it at 127.0.0.1:{p} yourself"
+            ));
         }
     }
     Ok(format!("https://{dns}"))
@@ -353,11 +426,22 @@ fn warn(msg: impl AsRef<str>) {
     println!("! {}", msg.as_ref());
 }
 
+fn warn_if_version_mismatch(h: &serde_json::Value) {
+    let running = h.get("version").and_then(|v| v.as_str()).unwrap_or("");
+    let current = env!("CARGO_PKG_VERSION");
+    if !running.is_empty() && running != current {
+        warn(format!(
+            "Running gateway is v{running}, but cmob CLI is v{current}. Run `cmob restart` to upgrade."
+        ));
+    }
+}
+
 /// Starts the gateway in the background (from inside cmux). Safe to call when it is already running.
 pub fn start(quiet: bool) -> Res<()> {
-    if health().is_some() {
+    if let Some(h) = health() {
         if !quiet {
             ok(format!("Gateway already running on 127.0.0.1:{}", port()));
+            warn_if_version_mismatch(&h);
         }
         return Ok(());
     }
@@ -523,9 +607,11 @@ pub fn pairing_url(base: &str, ticket: &str) -> String {
     format!("{PWA_URL}#code={code}")
 }
 
-/// Half-block QR with explicit black/white colours, so it scans on light and dark terminal themes.
+/// Half-block QR with fixed 256-color black/white, using spaces when both halves match so terminal
+/// minimum-contrast adjustments cannot turn solid modules into stripes.
 fn render_qr(data: &str) -> Res<String> {
-    let code = qrcode::QrCode::new(data.as_bytes()).map_err(|e| format!("cannot build QR: {e}"))?;
+    let code = qrcode::QrCode::with_error_correction_level(data.as_bytes(), qrcode::EcLevel::L)
+        .map_err(|e| format!("cannot build QR: {e}"))?;
     let width = code.width();
     let colors = code.to_colors();
     let quiet = 2usize;
@@ -543,9 +629,13 @@ fn render_qr(data: &str) -> Res<String> {
         for x in 0..total {
             let top = dark(x, y);
             let bottom = y + 1 < total && dark(x, y + 1);
-            let fg = if top { 30 } else { 97 };
-            let bg = if bottom { 40 } else { 107 };
-            out.push_str(&format!("\x1b[{fg};{bg}m▀\x1b[0m"));
+            let fg = if top { 16 } else { 231 };
+            let bg = if bottom { 16 } else { 231 };
+            if top == bottom {
+                out.push_str(&format!("\x1b[48;5;{bg}m \x1b[0m"));
+            } else {
+                out.push_str(&format!("\x1b[38;5;{fg};48;5;{bg}m▀\x1b[0m"));
+            }
         }
         out.push('\n');
         y += 2;
@@ -554,9 +644,10 @@ fn render_qr(data: &str) -> Res<String> {
 }
 
 pub fn qr(tailscale: bool) -> Res<()> {
-    if health().is_none() {
+    let Some(h) = health() else {
         return Err("the gateway is not running. Start it with `cmob start` (inside cmux)".into());
-    }
+    };
+    warn_if_version_mismatch(&h);
     let token = read_or_create_token()?;
     let pairing = get_json("/api/pairing", &token)?;
     let ticket = pairing
@@ -564,13 +655,9 @@ pub fn qr(tailscale: bool) -> Res<()> {
         .and_then(|v| v.as_str())
         .ok_or("the gateway did not return a pairing ticket")?;
     let base = if tailscale {
-        ensure_tailscale_serve()?
-    } else if let Some(dns) = tailscale_dns() {
-        if ensure_tailscale_serve().is_ok() {
-            format!("https://{dns}")
-        } else {
-            format!("http://127.0.0.1:{}", port())
-        }
+        ensure_tailscale_funnel()?
+    } else if tailscale_dns().is_some() {
+        ensure_tailscale_funnel().unwrap_or_else(|_| format!("http://127.0.0.1:{}", port()))
     } else {
         format!("http://127.0.0.1:{}", port())
     };
@@ -639,7 +726,12 @@ pub fn status() -> Res<()> {
         return Err(String::new());
     };
     let version = h.get("version").and_then(|v| v.as_str()).unwrap_or("?");
-    println!("Gateway     ✓ running on 127.0.0.1:{} (v{version})", port());
+    let cli_version = env!("CARGO_PKG_VERSION");
+    if version != cli_version {
+        println!("Gateway     ✓ running on 127.0.0.1:{} (v{version}; CLI is v{cli_version}, run `cmob restart`)", port());
+    } else {
+        println!("Gateway     ✓ running on 127.0.0.1:{} (v{version})", port());
+    }
     if h.get("cmux_alive").and_then(|v| v.as_bool()).unwrap_or(false) {
         println!("cmux        ✓ connected");
     } else {
@@ -650,9 +742,9 @@ pub fn status() -> Res<()> {
         if hook_installed() { "✓ installed" } else { "– not installed (run cmob setup)" }
     );
     match (tailscale_bin(), tailscale_dns()) {
-        (Some(bin), Some(dns)) if tailscale_serving(&bin, port()) => println!("Tailscale   ✓ https://{dns}"),
-        (Some(_), Some(dns)) => println!("Tailscale   – signed in as {dns}, not serving yet (run cmob qr --tailscale)"),
-        (Some(_), None) => println!("Tailscale   – installed but not signed in"),
+        (Some(bin), Some(dns)) if tailscale_funneling(&bin, port()) => println!("Tailscale   ✓ https://{dns} (Funnel)"),
+        (Some(_), Some(dns)) => println!("Tailscale   – signed in as {dns}, Funnel not active yet (run cmob qr --tailscale)"),
+        (Some(_), None) => println!("Tailscale   – installed but not running/signed in"),
         _ => println!("Tailscale   – not found (phones need it for HTTPS)"),
     }
 
@@ -813,15 +905,25 @@ mod tests {
     }
 
     #[test]
-    fn serve_state_never_mistakes_someone_elses_config_for_ours() {
-        assert_eq!(serve_state("{}", 8088).unwrap(), ServeState::Empty);
-        assert_eq!(serve_state("null", 8088).unwrap(), ServeState::Empty);
-        let ours = r#"{"Web":{"m.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8088"}}}}}"#;
-        assert_eq!(serve_state(ours, 8088).unwrap(), ServeState::Ours);
-        let other = r#"{"Web":{"m.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}}}"#;
-        assert_eq!(serve_state(other, 8088).unwrap(), ServeState::Other);
-        assert_eq!(serve_state(other, 3000).unwrap(), ServeState::Ours);
-        assert!(serve_state("not json", 8088).is_err(), "unreadable config must not count as empty");
+    fn funnel_state_classifies_empty_funnel_serve_only_and_other() {
+        assert_eq!(funnel_state("{}", 8088).unwrap(), FunnelState::Empty);
+        assert_eq!(funnel_state("null", 8088).unwrap(), FunnelState::Empty);
+        let ours = r#"{"Web":{"m.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8088"}}}},"AllowFunnel":{"m.ts.net:443":true}}"#;
+        assert_eq!(funnel_state(ours, 8088).unwrap(), FunnelState::Ours);
+        let serve_only = r#"{"Web":{"m.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:8088"}}}}}"#;
+        assert_eq!(funnel_state(serve_only, 8088).unwrap(), FunnelState::ServeOnly);
+        let other = r#"{"Web":{"m.ts.net:443":{"Handlers":{"/":{"Proxy":"http://127.0.0.1:3000"}}}},"AllowFunnel":{"m.ts.net:443":true}}"#;
+        assert_eq!(funnel_state(other, 8088).unwrap(), FunnelState::Other);
+        assert_eq!(funnel_state(other, 3000).unwrap(), FunnelState::Ours);
+        assert!(funnel_state("not json", 8088).is_err(), "unreadable config must not count as empty");
+    }
+
+    #[test]
+    fn parse_tailscale_dns_requires_running_backend() {
+        let running = r#"{"BackendState":"Running","Self":{"DNSName":"mac.tail1234.ts.net."}}"#;
+        assert_eq!(parse_tailscale_dns(running).as_deref(), Some("mac.tail1234.ts.net"));
+        let stopped = r#"{"BackendState":"Stopped","Self":{"DNSName":"mac.tail1234.ts.net."}}"#;
+        assert_eq!(parse_tailscale_dns(stopped), None);
     }
 
     #[test]
@@ -838,5 +940,8 @@ mod tests {
         let art = render_qr(&url).unwrap();
         assert!(art.lines().count() > 10);
         assert!(art.contains('▀'));
+        assert!(art.contains(' '));
+        assert!(!art.contains("\x1b[38;5;16;48;5;16m"));
+        assert!(!art.contains("\x1b[38;5;231;48;5;231m"));
     }
 }
