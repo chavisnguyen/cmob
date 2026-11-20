@@ -24,7 +24,7 @@ Unified mobile companion (iOS, Android, and Web PWA) for [cmux](https://cmux.com
 - 🌐 **Single Central PWA ([chavisnguyen.github.io/cmob](https://chavisnguyen.github.io/cmob/))**: Install once on your phone's Home Screen and control all your computers in one place. No domain fragmentation or lost settings.
 - 💻 **Multi-Device Tab Strip (Orca-Style)**: Switch seamlessly between your MacBook, Mac Studio, or Cloud Devbox with a single tap. Live indicator dots reflect each machine's connection state.
 - 💬 **Agent-Aware Chat UI**: Formatted markdown, syntax-highlighted code blocks, interactive startup choice dialogs, tool execution pills, collapsible reasoning blocks, and subagent collaboration cards.
-- ⚡ **Instant Remote Control**: Send instructions, approve permission prompts, interrupt stuck agent turns, dictate voice prompts, attach photos from your phone camera, or run slash commands.
+- ⚡ **Instant Remote Control**: Send instructions, approve permission prompts, interrupt stuck agent turns, attach photos from your phone camera, or run slash commands.
 - 🔔 **Real-Time Push Notifications**: Web Push (RFC 8291 / RFC 8292 VAPID) alerts wake your phone when background coding agents need approval, finish a turn, or report errors.
 - 🖥️ **Full Hardware-Accelerated Terminal**: Integrated xterm.js terminal with a phone-optimized key bar (`Ctrl`, `Alt`, `Esc`, `Tab`, arrow keys, function keys).
 - 🔒 **Zero-Trust & Private**: Securely routed through your private [Tailscale](https://tailscale.com/) network (`*.ts.net`) or loopback. Zero open ports to the public internet. Single-use pairing tickets with cryptographically secure per-device tokens.

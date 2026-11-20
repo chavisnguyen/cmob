@@ -19,8 +19,6 @@ import {
   Loader2,
   ImagePlus,
   SlidersHorizontal,
-  Mic,
-  MicOff,
   X,
 } from "lucide-react";
 import type {
@@ -50,7 +48,6 @@ import {
   type QueuedMessage,
 } from "./chatQueue";
 import { suggestSlashCommands } from "./slashCommands";
-import { appendDictation, canDictate, useDictation } from "./dictation";
 import { MAX_IMAGES_PER_MESSAGE, PartialSendError, prepareImageForUpload } from "./imageAttach";
 import { contextTokens, formatTokens, latestUsage } from "./usageSummary";
 import { hasAgentOptions } from "./agentOptions";
@@ -537,9 +534,6 @@ export function OrcaChatView({
   const [showOptions, setShowOptions] = useState(false);
   const canSetOptions = !!surfaceId && hasAgentOptions(agentKind);
 
-  const dictation = useDictation(
-    useCallback((fragment: string) => setInputText((cur) => appendDictation(cur, fragment)), []),
-  );
 
   const slashSuggestions = useMemo(
     () => suggestSlashCommands(agentKind, inputText),
@@ -564,7 +558,7 @@ export function OrcaChatView({
         <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className="relative h-full overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-2.5 space-y-2 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full"
+          className="relative h-full overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-2.5 space-y-2 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full select-text"
         >
           <div
             ref={contentRef}
@@ -808,15 +802,6 @@ export function OrcaChatView({
           </div>
         )}
 
-        {dictation.error && (
-          <div
-            role="alert"
-            className="mb-1.5 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 text-[12.5px] text-amber-200"
-          >
-            {dictation.error}
-          </div>
-        )}
-
         {sendError && (
           <div
             role="alert"
@@ -937,25 +922,6 @@ export function OrcaChatView({
                 <ImagePlus className="w-[18px] h-[18px]" />
               </button>
             </>
-          )}
-
-          {canDictate() && (
-            <button
-              type="button"
-              onClick={() => (dictation.listening ? dictation.stop() : dictation.start())}
-              className={`w-9 h-9 rounded-full shrink-0 flex items-center justify-center transition-colors ${
-                dictation.listening ? "bg-rose-500/20 text-rose-400" : "text-muted hover:text-white"
-              }`}
-              title={dictation.listening ? "Stop dictation" : "Dictate"}
-              aria-label={dictation.listening ? "Stop dictation" : "Dictate"}
-              aria-pressed={dictation.listening}
-            >
-              {dictation.listening ? (
-                <MicOff className="w-[18px] h-[18px]" />
-              ) : (
-                <Mic className="w-[18px] h-[18px]" />
-              )}
-            </button>
           )}
 
           {/* Orca Critical Action Swap Button: Stop while agent is running; Send otherwise */}

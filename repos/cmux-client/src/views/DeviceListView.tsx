@@ -254,25 +254,29 @@ export function DeviceListView({
                     <Pencil className="w-4 h-4" />
                   </button>
 
-                  {!isActive && (
-                    <button
-                      type="button"
-                      onClick={() => handleDeleteHost(host)}
-                      className={`min-h-[44px] min-w-[44px] px-2 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${
-                        confirmDeleteId === host.id
-                          ? "bg-rose-500 text-white font-medium text-[11.5px] px-2.5"
-                          : "hover:bg-rose-500/15 text-muted hover:text-rose-400"
-                      }`}
-                      aria-label={`Remove ${host.name}`}
-                      title={confirmDeleteId === host.id ? "Click again to confirm" : "Remove host"}
-                    >
-                      {confirmDeleteId === host.id ? (
-                        <span>Confirm</span>
-                      ) : (
-                        <Trash2 className="w-4 h-4" />
-                      )}
-                    </button>
-                  )}
+                  <button
+                    type="button"
+                    onClick={() => handleDeleteHost(host)}
+                    className={`min-h-[44px] min-w-[44px] px-2 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${
+                      confirmDeleteId === host.id
+                        ? "bg-rose-500 text-white font-medium text-[11.5px] px-2.5"
+                        : "hover:bg-rose-500/15 text-muted hover:text-rose-400"
+                    }`}
+                    aria-label={`Remove ${host.name}`}
+                    title={
+                      confirmDeleteId === host.id
+                        ? "Click again to confirm"
+                        : isActive
+                          ? "Disconnect and remove"
+                          : "Remove host"
+                    }
+                  >
+                    {confirmDeleteId === host.id ? (
+                      <span>Confirm</span>
+                    ) : (
+                      <Trash2 className="w-4 h-4" />
+                    )}
+                  </button>
                 </div>
               </div>
             );

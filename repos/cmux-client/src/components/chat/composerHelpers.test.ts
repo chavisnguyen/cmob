@@ -111,16 +111,6 @@ describe("message queue", () => {
   });
 });
 
-import { appendDictation } from "./dictation";
-
-describe("dictation", () => {
-  it("joins fragments with a single space", () => {
-    expect(appendDictation("", " hello ")).toBe("hello");
-    expect(appendDictation("fix the bug  ", "in main")).toBe("fix the bug in main");
-    expect(appendDictation("draft", "   ")).toBe("draft");
-  });
-});
-
 import { toggleMuted } from "../hosts/NotificationPrefs";
 
 describe("notification prefs", () => {

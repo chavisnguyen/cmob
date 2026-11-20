@@ -248,3 +248,21 @@ Chat shows one collapsible card per turn (existing `MobileNativeChatSubagentGrou
 - Antigravity: `invoke_subagent` card; the following `GENERIC` result `Created the following subagent: {"conversationId": ...}` binds the child id (and is no longer rendered as chat text); a later parent `SYSTEM_MESSAGE ... sender=<child id>` marks it completed. Verified live: ids bound, `completed`.
 - Kiro: existing `sub_agent_start/complete` records.
 - Not done: Claude subagents (no sample on this machine), per-child transcript drill-down, subagent badge in the surface list.
+
+## Orca mobile terminal pipeline (verified 2026-11-19, read from `ref/orca/mobile/src/terminal/`)
+- **Stream, not frames.** Host sends one `scrollback` event (`serialized` buffer, host cols/rows) then incremental `Output` events; client writes them into xterm in a WebView (`session/use-mobile-session-terminal-subscription.ts:190-270`). cmux-mobile instead re-applies a full `render_grid` per update (`repos/cmux-client/src/components/terminal/RawTerminalView.tsx:306-340`).
+- **Write coalescer**: 48 ms flush window for busy output, 16 ms for 180 ms after user interaction, hard cap 512K UTF-16 units (`terminal-write-coalescer.ts:1-10`).
+- **Credit-based flow control**: client acks parsed units in 128K batches or after 250 ms; stream resumes via `streamToken` (`terminal-output-ack.ts:7-13`, `session/terminal-stream-resume.ts:106`).
+- **Input**: hidden "live input" mirrors IME preedit (Korean jamo held until stable, 300 ms timeout) so ASCII echoes immediately (`terminal-live-preedit-mirror.ts:1-45`); Enter only via `onSubmitEditing` to avoid double-send (`terminal-live-input.ts:~30`).
+- **Key rail / accessory keys**: user-orderable and hideable, optional direction pad and "smart rail" for agent keys (`terminal-accessory-layout.ts:7-36`); sticky modifiers, key repeat, shortcut builder (`terminal-accessory-keys.ts`).
+- **Text zoom** presets 0.5/0.75/1/1.25/1.5/2 via pinch (`terminal-text-scales.ts`).
+- **Fit**: cols/rows = floor(px / measured cell) with 1e-6 tolerance (`terminal-grid-fit.ts:15-22`); host serializes at phone dims.
+- **iOS recovery**: on app foreground, unsubscribe + resubscribe the active terminal because WKWebView can blank (`terminal-foreground-recovery.ts:20-35`).
+- **WebView readiness**: messages queued until `web-ready`, plus a second queue until xterm `init()` (`mobile/terminal-output-streaming-findings.md`).
+- Orca xterm versions: `@xterm/xterm 6.1.0-beta.336`, webgl `0.20.0-beta.329` (`ref/orca/mobile/package.json:32-34`).
+- `[HYPOTHESIS - UNVERIFIED]` cmux can supply a raw PTY byte stream (vs only `render_grid`). Verify: read `ref/cmux` for `mobile.terminal.subscribe` payload variants, or `cmux rpc mobile.terminal.subscribe` and inspect event keys.
+
+## Dictation / audio in Orca and T3 Code (verified 2026-11-19)
+- **Orca mobile**: real input level, not an animation. Meter measures the 16-bit PCM the phone already streams (`ref/orca/mobile/src/hooks/mobile-dictation-meter.ts:41`; analyzer `ref/orca/src/shared/dictation-audio-meter.ts`, noise floor + smoothing + clipping at 0.98). UI: pill with timer, Stop/Cancel, haptics (`ref/orca/mobile/src/dictation/MobileDictationPill.tsx`), 9-dot meter red on clip (`MobileDictationMeter.tsx`). Transcription on host (`speech.models.*` RPCs, `mobile-dictation-operations.ts`).
+- **T3 Code (clone `ref/t3code`, HEAD c6ad9be, 2026-11-19)**: web does NOT use Web Speech (`grep SpeechRecognition` in `apps/web/src`, `apps/mobile/src` → no hits). It captures mic PCM with `getUserMedia` + AudioWorklet (`apps/web/src/speech/browserPcmCapture.ts`, `pcmWorklet.ts`), computes RMS level every sampleRate/20 samples with attack 0.075 s / release 0.2 s smoothing (`pcmWorklet.ts:64-73`), exposes `onLevel`, and transcribes via cloud or the environment server (`browserVoiceInput.ts` imports `transcribeCloudPcm`, `transcribeEnvironmentPcm`). Mobile has native module `apps/mobile/modules/t3-voice-transcription`.
+- Implication for cmux-mobile: a real waveform in a web client needs `getUserMedia`+AudioWorklet and a transcription backend (cloud or gateway); Web Speech API exposes no level. `[HYPOTHESIS - UNVERIFIED]` iOS Safari allows Web Speech and getUserMedia concurrently.

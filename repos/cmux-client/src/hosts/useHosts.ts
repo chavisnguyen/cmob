@@ -68,7 +68,18 @@ export function useHosts(): UseHostsResult {
 
   const removeHost = useCallback((id: string) => {
     if (typeof localStorage === "undefined") return;
-    storeRemoveHost(localStorage, id);
+    const wasActive = (getActiveHostId(localStorage) || wsClient.getEndpoint()) === id;
+    const remaining = storeRemoveHost(localStorage, id);
+    if (!wasActive) return;
+    // Removing the computer in use must also drop its live connection, not just the saved entry.
+    const next = remaining[0];
+    if (next) {
+      setActiveId(next.id);
+      wsClient.switchHost(next);
+    } else {
+      setActiveId("");
+      wsClient.forgetHost();
+    }
   }, []);
 
   const renameHost = useCallback((id: string, name: string) => {

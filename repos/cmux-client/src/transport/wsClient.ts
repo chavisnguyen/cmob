@@ -510,6 +510,19 @@ export class GatewayWsClient {
     this.setToken(host.token);
   }
 
+  /** Drops the current host: closes the socket and forgets its endpoint and token. */
+  public forgetHost(): void {
+    this.hostGeneration += 1;
+    this.disconnect();
+    this.endpoint = null;
+    persistEndpoint(null);
+    this.pendingTicket = null;
+    this.hostNameHint = null;
+    this.token = "";
+    this.fallbackTokens = [];
+    clearStoredToken();
+  }
+
   /** Remembers the host that just authenticated so it shows up in the host list. */
   private recordCurrentHost(): void {
     if (typeof window === "undefined" || !this.token) return;
