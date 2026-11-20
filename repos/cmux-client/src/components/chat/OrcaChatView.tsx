@@ -534,7 +534,6 @@ export function OrcaChatView({
   const [showOptions, setShowOptions] = useState(false);
   const canSetOptions = !!surfaceId && hasAgentOptions(agentKind);
 
-
   const slashSuggestions = useMemo(
     () => suggestSlashCommands(agentKind, inputText),
     [agentKind, inputText],
