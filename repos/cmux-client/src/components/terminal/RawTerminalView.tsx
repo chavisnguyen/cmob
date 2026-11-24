@@ -14,6 +14,7 @@ import {
   Monitor,
   Smartphone,
   ClipboardPaste,
+  Keyboard,
   KeyboardOff,
 } from "lucide-react";
 import {
@@ -41,6 +42,7 @@ interface RawTerminalViewProps {
   surfaceId: string;
   surfaceTitle: string;
   tty?: string;
+  isDesktop?: boolean;
 }
 
 interface TerminalKeyItem {
@@ -114,9 +116,13 @@ function readXtermCellMetrics(term: XtermTerminal | null): {
   return { cellWidth: width, cellHeight: height };
 }
 
-function loadSavedViewportMode(): TerminalViewportMode {
+function viewportStorageKey(isDesktop: boolean): string {
+  return isDesktop ? "cmux_terminal_viewport_mode_desktop" : "cmux_terminal_viewport_mode";
+}
+
+function loadSavedViewportMode(isDesktop: boolean): TerminalViewportMode {
   try {
-    const saved = localStorage.getItem("cmux_terminal_viewport_mode");
+    const saved = localStorage.getItem(viewportStorageKey(isDesktop));
     if (saved === "desktop" || saved === "mobile") {
       return saved;
     }
@@ -126,8 +132,16 @@ function loadSavedViewportMode(): TerminalViewportMode {
   return "mobile";
 }
 
-export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalViewProps) {
-  const [viewportMode, setViewportMode] = useState<TerminalViewportMode>(loadSavedViewportMode);
+export function RawTerminalView({
+  surfaceId,
+  surfaceTitle,
+  tty,
+  isDesktop = false,
+}: RawTerminalViewProps) {
+  const [viewportMode, setViewportMode] = useState<TerminalViewportMode>(() =>
+    loadSavedViewportMode(isDesktop),
+  );
+  const [showKeyBar, setShowKeyBar] = useState<boolean>(() => !isDesktop);
   const [gridDims, setGridDims] = useState<{ cols: number; rows: number }>({ cols: 80, rows: 24 });
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
   const [subscribed, setSubscribed] = useState(false);
@@ -187,13 +201,20 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
   });
 
   useEffect(() => {
+    setShowKeyBar(!isDesktop);
+    const saved = loadSavedViewportMode(isDesktop);
+    viewportModeRef.current = saved;
+    setViewportMode(saved);
+  }, [isDesktop]);
+
+  useEffect(() => {
     viewportModeRef.current = viewportMode;
     try {
-      localStorage.setItem("cmux_terminal_viewport_mode", viewportMode);
+      localStorage.setItem(viewportStorageKey(isDesktop), viewportMode);
     } catch {
       return;
     }
-  }, [viewportMode]);
+  }, [viewportMode, isDesktop]);
 
   useEffect(() => {
     ctrlLatchRef.current = ctrlLatch;
@@ -882,11 +903,26 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
 
           <button
             type="button"
+            onClick={() => setShowKeyBar((v) => !v)}
+            className={`w-8 h-8 rounded-lg border transition-colors flex items-center justify-center ${
+              showKeyBar
+                ? "bg-raised border-white/[0.14] text-fg"
+                : "bg-bg border-white/[0.08] text-muted hover:text-fg hover:bg-raised"
+            }`}
+            title={showKeyBar ? "Hide key bar" : "Show key bar"}
+            aria-label={showKeyBar ? "Hide key bar" : "Show key bar"}
+            aria-pressed={showKeyBar}
+          >
+            <Keyboard className="w-4 h-4" />
+          </button>
+
+          <button
+            type="button"
             onClick={() => {
               void handleToggleViewportMode();
             }}
             aria-label={
-              viewportMode === "mobile" ? "Switch to desktop view" : "Switch to mobile view"
+              viewportMode === "mobile" ? "Switch to mirror Mac size" : "Switch to fit pane size"
             }
             className={`flex items-center justify-center w-9 h-8 rounded-lg border transition-colors ${
               viewportMode === "desktop"
@@ -895,8 +931,8 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
             }`}
             title={
               viewportMode === "mobile"
-                ? "Switch to Desktop View (full Mac cols×rows)"
-                : "Switch to Mobile View (fit rows×cols to phone)"
+                ? "Mirror Mac window size (full Mac cols×rows)"
+                : "Fit terminal to this pane (crisp 1:1 cols×rows)"
             }
           >
             {viewportMode === "desktop" ? (
@@ -930,7 +966,9 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
-        className="flex-1 relative min-h-0 bg-bg overflow-hidden touch-none"
+        className={`flex-1 relative min-h-0 bg-bg overflow-hidden ${
+          isDesktop ? "select-text" : "touch-none"
+        }`}
       >
         <div
           ref={surfaceHostRef}
@@ -970,91 +1008,93 @@ export function RawTerminalView({ surfaceId, surfaceTitle, tty }: RawTerminalVie
         )}
       </div>
 
-      <div
-        className="bg-bg border-t border-white/[0.08] px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shrink-0 flex items-center gap-2 overflow-x-auto no-scrollbar"
-        onMouseDown={(event) => event.preventDefault()}
-      >
-        <button
-          type="button"
-          onClick={() => {
-            void handlePasteClipboard();
-          }}
-          className="h-9 px-3 rounded-[10px] bg-raised border border-white/[0.08] text-fg hover:bg-line active:opacity-70 text-[13px] font-sans font-medium shrink-0 flex items-center gap-1.5 transition-opacity"
-          title="Paste from clipboard"
+      {showKeyBar && (
+        <div
+          className="bg-bg border-t border-white/[0.08] px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shrink-0 flex items-center gap-2 overflow-x-auto no-scrollbar"
+          onMouseDown={(event) => event.preventDefault()}
         >
-          <ClipboardPaste className="w-4 h-4 text-muted" />
-          <span>Paste</span>
-        </button>
+          <button
+            type="button"
+            onClick={() => {
+              void handlePasteClipboard();
+            }}
+            className="h-9 px-3 rounded-[10px] bg-raised border border-white/[0.08] text-fg hover:bg-line active:opacity-70 text-[13px] font-sans font-medium shrink-0 flex items-center gap-1.5 transition-opacity"
+            title="Paste from clipboard"
+          >
+            <ClipboardPaste className="w-4 h-4 text-muted" />
+            <span>Paste</span>
+          </button>
 
-        <button
-          type="button"
-          onClick={handleCtrlTap}
-          className={`h-9 min-w-[46px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
-            ctrlLatch === "locked"
-              ? "bg-fg border-fg text-bg"
-              : ctrlLatch === "once"
-                ? "bg-raised border-fg text-fg"
-                : "bg-raised border-transparent text-fg hover:bg-line"
-          }`}
-          title="Sticky Ctrl (Tap: Once, Double Tap: Lock)"
-        >
-          {ctrlLatch === "locked" ? "CTRL" : "Ctrl"}
-        </button>
+          <button
+            type="button"
+            onClick={handleCtrlTap}
+            className={`h-9 min-w-[46px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
+              ctrlLatch === "locked"
+                ? "bg-fg border-fg text-bg"
+                : ctrlLatch === "once"
+                  ? "bg-raised border-fg text-fg"
+                  : "bg-raised border-transparent text-fg hover:bg-line"
+            }`}
+            title="Sticky Ctrl (Tap: Once, Double Tap: Lock)"
+          >
+            {ctrlLatch === "locked" ? "CTRL" : "Ctrl"}
+          </button>
 
-        <button
-          type="button"
-          onClick={handleAltTap}
-          className={`h-9 min-w-[42px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
-            altLatch === "locked"
-              ? "bg-fg border-fg text-bg"
-              : altLatch === "once"
-                ? "bg-raised border-fg text-fg"
-                : "bg-raised border-transparent text-fg hover:bg-line"
-          }`}
-          title="Sticky Alt/Meta (Tap: Once, Double Tap: Lock)"
-        >
-          {altLatch === "locked" ? "ALT" : "Alt"}
-        </button>
+          <button
+            type="button"
+            onClick={handleAltTap}
+            className={`h-9 min-w-[42px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
+              altLatch === "locked"
+                ? "bg-fg border-fg text-bg"
+                : altLatch === "once"
+                  ? "bg-raised border-fg text-fg"
+                  : "bg-raised border-transparent text-fg hover:bg-line"
+            }`}
+            title="Sticky Alt/Meta (Tap: Once, Double Tap: Lock)"
+          >
+            {altLatch === "locked" ? "ALT" : "Alt"}
+          </button>
 
-        {EXTENDED_KEYS.map((item) => {
-          const Icon = item.icon;
-          const isSignal = item.category === "signal";
-          const isSymbol = item.category === "symbol";
-          const isActive = activeKey === item.id;
+          {EXTENDED_KEYS.map((item) => {
+            const Icon = item.icon;
+            const isSignal = item.category === "signal";
+            const isSymbol = item.category === "symbol";
+            const isActive = activeKey === item.id;
 
-          return (
-            <button
-              key={item.id}
-              type="button"
-              onClick={() => {
-                void handleKeyPress(item);
-              }}
-              className={`h-9 px-3 rounded-[10px] border text-[13px] font-medium transition-opacity shrink-0 flex items-center justify-center gap-1.5 active:opacity-70 ${
-                isActive
-                  ? "bg-accent border-accent text-white"
-                  : isSignal
-                    ? "bg-[#28181b] border-rose-500/25 text-rose-300 hover:bg-[#341d22]"
-                    : isSymbol
-                      ? "bg-raised border-white/[0.06] text-fg min-w-[38px]"
-                      : "bg-raised border-white/[0.06] text-fg min-w-[38px]"
-              }`}
-            >
-              {Icon && <Icon className="w-4 h-4" />}
-              {(!Icon || item.id === "enter") && <span>{item.label}</span>}
-            </button>
-          );
-        })}
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => {
+                  void handleKeyPress(item);
+                }}
+                className={`h-9 px-3 rounded-[10px] border text-[13px] font-medium transition-opacity shrink-0 flex items-center justify-center gap-1.5 active:opacity-70 ${
+                  isActive
+                    ? "bg-accent border-accent text-white"
+                    : isSignal
+                      ? "bg-[#28181b] border-rose-500/25 text-rose-300 hover:bg-[#341d22]"
+                      : isSymbol
+                        ? "bg-raised border-white/[0.06] text-fg min-w-[38px]"
+                        : "bg-raised border-white/[0.06] text-fg min-w-[38px]"
+                }`}
+              >
+                {Icon && <Icon className="w-4 h-4" />}
+                {(!Icon || item.id === "enter") && <span>{item.label}</span>}
+              </button>
+            );
+          })}
 
-        <button
-          type="button"
-          onClick={handleDismissKeyboard}
-          className="h-9 w-9 rounded-[10px] bg-raised border border-white/[0.06] text-muted hover:text-fg active:opacity-70 shrink-0 flex items-center justify-center transition-opacity"
-          title="Hide keyboard"
-          aria-label="Hide keyboard"
-        >
-          <KeyboardOff className="w-4 h-4" />
-        </button>
-      </div>
+          <button
+            type="button"
+            onClick={handleDismissKeyboard}
+            className="h-9 w-9 rounded-[10px] bg-raised border border-white/[0.06] text-muted hover:text-fg active:opacity-70 shrink-0 flex items-center justify-center transition-opacity"
+            title="Hide keyboard"
+            aria-label="Hide keyboard"
+          >
+            <KeyboardOff className="w-4 h-4" />
+          </button>
+        </div>
+      )}
     </div>
   );
 }

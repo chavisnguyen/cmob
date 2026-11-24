@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ChevronLeft, GitBranch, Loader2, RefreshCw } from "lucide-react";
+import { ChevronLeft, GitBranch, Loader2, RefreshCw, X } from "lucide-react";
 import { RPC_METHODS } from "../../protocol/rpc";
 import { wsClient } from "../../transport/wsClient";
 import { classifyDiffLine, diffStat, statusLabel, type DiffLineKind } from "./diffLines";
@@ -73,8 +73,17 @@ export function ChangesPanel({
   }, [workspaceId]);
 
   useEffect(() => {
+    setOpen(null);
     void load();
   }, [load]);
+
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
 
   useEffect(() => {
     if (!open) {
@@ -105,44 +114,55 @@ export function ChangesPanel({
   const stat = diff ? diffStat(diff.diff) : null;
 
   return (
-    <div className="fixed inset-0 z-50 flex flex-col bg-bg text-fg">
-      <header className="flex items-center gap-2 px-3 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 border-b border-white/[0.08] shrink-0">
-        <button
-          type="button"
-          onClick={() => (open ? setOpen(null) : onClose())}
-          className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center"
-          aria-label="Back"
-        >
-          <ChevronLeft className="w-5 h-5" />
-        </button>
-        <div className="min-w-0 flex-1">
-          <div className="text-[15px] font-semibold truncate">
-            {open ? open.file.path : "Changes"}
-          </div>
-          <div className="text-[12px] text-dim truncate flex items-center gap-1">
-            {open ? (
-              <span>
-                {open.staged ? "Staged" : "Unstaged"}
-                {stat ? ` · +${stat.added} −${stat.removed}` : ""}
-              </span>
-            ) : (
-              <>
-                <GitBranch className="w-3 h-3" />
+    <div
+      className="fixed inset-0 z-50 flex flex-col lg:items-center lg:justify-center lg:p-6 bg-bg lg:bg-black/75 lg:backdrop-blur-sm text-fg select-text"
+      onClick={onClose}
+    >
+      <div
+        role="dialog"
+        aria-label="Git changes"
+        onClick={(e) => e.stopPropagation()}
+        className="flex flex-col flex-1 min-h-0 w-full lg:flex-initial lg:w-full lg:max-w-5xl lg:h-[82vh] lg:rounded-2xl lg:bg-bg lg:border lg:border-white/[0.12] lg:shadow-2xl overflow-hidden"
+      >
+        <header className="flex items-center gap-2 px-3 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] lg:pt-2.5 pb-2.5 border-b border-white/[0.08] shrink-0">
+          <button
+            type="button"
+            onClick={() => (open ? setOpen(null) : onClose())}
+            className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center lg:hidden"
+            aria-label="Back"
+          >
+            <ChevronLeft className="w-5 h-5" />
+          </button>
+          <div className="min-w-0 flex-1">
+            <div className="text-[15px] font-semibold truncate">
+              <span className="lg:hidden">{open ? open.file.path : "Changes"}</span>
+              <span className="hidden lg:inline">Changes{open ? ` · ${open.file.path}` : ""}</span>
+            </div>
+            <div className="text-[12px] text-dim truncate flex items-center gap-1">
+              {open ? (
                 <span>
-                  {status?.branch ?? workspaceTitle}
-                  {status && (status.ahead > 0 || status.behind > 0)
-                    ? ` · ↑${status.ahead} ↓${status.behind}`
-                    : ""}
+                  {open.staged ? "Staged" : "Unstaged"}
+                  {stat ? ` · +${stat.added} −${stat.removed}` : ""}
                 </span>
-              </>
-            )}
+              ) : (
+                <>
+                  <GitBranch className="w-3 h-3" />
+                  <span>
+                    {status?.branch ?? workspaceTitle}
+                    {status && (status.ahead > 0 || status.behind > 0)
+                      ? ` · ↑${status.ahead} ↓${status.behind}`
+                      : ""}
+                  </span>
+                </>
+              )}
+            </div>
           </div>
-        </div>
-        {!open && (
           <button
             type="button"
             onClick={() => void load()}
-            className="w-9 h-9 rounded-xl bg-raised flex items-center justify-center"
+            className={`w-9 h-9 rounded-xl bg-raised hover:bg-line flex items-center justify-center ${
+              open ? "hidden lg:flex" : "flex"
+            }`}
             aria-label="Refresh"
           >
             {loading ? (
@@ -151,68 +171,106 @@ export function ChangesPanel({
               <RefreshCw className="w-4 h-4" />
             )}
           </button>
-        )}
-      </header>
+          <button
+            type="button"
+            onClick={onClose}
+            className="hidden lg:flex w-9 h-9 rounded-xl bg-raised hover:bg-line items-center justify-center text-muted hover:text-fg"
+            aria-label="Close"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </header>
 
-      <div className="flex-1 overflow-auto">
-        {(open ? diffError : error) && (
-          <p className="m-4 text-[13px] text-amber-300">{open ? diffError : error}</p>
-        )}
+        <div className="flex-1 min-h-0 flex flex-col lg:flex-row overflow-hidden">
+          <div
+            className={`${
+              open ? "hidden lg:block" : "block"
+            } flex-1 lg:flex-none lg:w-80 lg:shrink-0 lg:border-r lg:border-white/[0.08] overflow-y-auto`}
+          >
+            {error && <p className="m-4 text-[13px] text-amber-300">{error}</p>}
 
-        {!open && status && status.files.length === 0 && !error && (
-          <p className="m-6 text-center text-[14px] text-muted">Working tree clean.</p>
-        )}
+            {status && status.files.length === 0 && !error && (
+              <p className="m-6 text-center text-[14px] text-muted">Working tree clean.</p>
+            )}
 
-        {!open &&
-          status?.files.map((f) => (
-            <div key={f.path} className="border-b border-white/[0.06] px-4 py-2.5">
-              <div className="text-[14px] font-mono break-all">{f.path}</div>
-              {f.orig_path && (
-                <div className="text-[11.5px] text-dim break-all">from {f.orig_path}</div>
-              )}
-              <div className="mt-1.5 flex flex-wrap gap-2">
-                {isStaged(f) && (
-                  <button
-                    type="button"
-                    onClick={() => setOpen({ file: f, staged: true })}
-                    className="h-7 px-2.5 rounded-lg bg-emerald-500/15 text-emerald-300 text-[12px] font-semibold"
-                  >
-                    Staged · {statusLabel(f.index)}
-                  </button>
-                )}
-                {(f.worktree !== " " && f.worktree !== "?") ||
-                (f.index === "?" && f.worktree === "?") ? (
-                  <button
-                    type="button"
-                    onClick={() => setOpen({ file: f, staged: false })}
-                    className="h-7 px-2.5 rounded-lg bg-raised text-fg-soft text-[12px] font-semibold"
-                  >
-                    {f.index === "?" ? "Untracked" : `Unstaged · ${statusLabel(f.worktree)}`}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ))}
-
-        {open && diffLoading && (
-          <div className="p-6 flex justify-center">
-            <Loader2 className="w-5 h-5 animate-spin text-accent-soft" />
+            {status?.files.map((f) => {
+              const isSelected = open?.file.path === f.path;
+              return (
+                <div
+                  key={f.path}
+                  className={`border-b border-white/[0.06] px-4 py-2.5 transition-colors ${
+                    isSelected ? "bg-white/[0.04]" : ""
+                  }`}
+                >
+                  <div className="text-[14px] font-mono break-all">{f.path}</div>
+                  {f.orig_path && (
+                    <div className="text-[11.5px] text-dim break-all">from {f.orig_path}</div>
+                  )}
+                  <div className="mt-1.5 flex flex-wrap gap-2">
+                    {isStaged(f) && (
+                      <button
+                        type="button"
+                        onClick={() => setOpen({ file: f, staged: true })}
+                        className={`h-7 px-2.5 rounded-lg text-[12px] font-semibold ${
+                          open?.file.path === f.path && open.staged
+                            ? "bg-emerald-500/30 text-emerald-200 ring-1 ring-emerald-400/50"
+                            : "bg-emerald-500/15 text-emerald-300 hover:bg-emerald-500/25"
+                        }`}
+                      >
+                        Staged · {statusLabel(f.index)}
+                      </button>
+                    )}
+                    {(f.worktree !== " " && f.worktree !== "?") ||
+                    (f.index === "?" && f.worktree === "?") ? (
+                      <button
+                        type="button"
+                        onClick={() => setOpen({ file: f, staged: false })}
+                        className={`h-7 px-2.5 rounded-lg text-[12px] font-semibold ${
+                          open?.file.path === f.path && !open.staged
+                            ? "bg-accent/25 text-accent-soft ring-1 ring-accent/50"
+                            : "bg-raised text-fg-soft hover:bg-line"
+                        }`}
+                      >
+                        {f.index === "?" ? "Untracked" : `Unstaged · ${statusLabel(f.worktree)}`}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              );
+            })}
           </div>
-        )}
-        {open && diff && (
-          <pre className="text-[12px] leading-[1.45] font-mono min-w-max pb-6">
-            {diff.diff.split("\n").map((line, i) => (
-              <div key={i} className={`px-3 whitespace-pre ${LINE_CLASS[classifyDiffLine(line)]}`}>
-                {line || " "}
-              </div>
-            ))}
-            {diff.truncated && (
-              <div className="px-3 py-2 text-amber-300">
-                Diff truncated (too large for the phone).
+
+          <div className={`${open ? "block" : "hidden lg:block"} flex-1 overflow-auto`}>
+            {!open && (
+              <div className="h-full flex items-center justify-center p-6 text-[13.5px] text-dim">
+                Select a file change on the left to inspect its diff.
               </div>
             )}
-          </pre>
-        )}
+            {open && diffError && <p className="m-4 text-[13px] text-amber-300">{diffError}</p>}
+            {open && diffLoading && (
+              <div className="p-6 flex justify-center">
+                <Loader2 className="w-5 h-5 animate-spin text-accent-soft" />
+              </div>
+            )}
+            {open && diff && (
+              <pre className="text-[12px] leading-[1.45] font-mono min-w-max pb-6 pt-2">
+                {diff.diff.split("\n").map((line, i) => (
+                  <div
+                    key={i}
+                    className={`px-3 whitespace-pre ${LINE_CLASS[classifyDiffLine(line)]}`}
+                  >
+                    {line || " "}
+                  </div>
+                ))}
+                {diff.truncated && (
+                  <div className="px-3 py-2 text-amber-300">
+                    Diff truncated (too large for the client).
+                  </div>
+                )}
+              </pre>
+            )}
+          </div>
+        </div>
       </div>
     </div>
   );

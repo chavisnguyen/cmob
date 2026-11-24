@@ -99,6 +99,25 @@ code {
   display: none;
 }
 
+.scrollbar-thin {
+  scrollbar-width: thin;
+  scrollbar-color: color-mix(in srgb, var(--color-dim) 45%, transparent) transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.scrollbar-thin::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scrollbar-thin::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--color-dim) 36%, transparent);
+  border-radius: 9999px;
+}
+
 /* One palette for every screen: use these names (bg-surface, text-muted, ...) instead of raw hex. */
 @theme {
   --color-bg: #141413;

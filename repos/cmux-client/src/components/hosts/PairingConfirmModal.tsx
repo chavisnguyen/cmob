@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { ShieldAlert } from "lucide-react";
 import type { PairingOffer } from "../../protocol/pairing";
 
@@ -25,6 +26,14 @@ export function PairingConfirmModal({
   onAccept: () => void;
   onReject: () => void;
 }) {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onReject();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onReject]);
+
   const { host, encrypted, local } = describe(offer.endpoint);
   return (
     <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">

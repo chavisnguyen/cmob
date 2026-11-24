@@ -52,6 +52,7 @@ import { MAX_IMAGES_PER_MESSAGE, PartialSendError, prepareImageForUpload } from 
 import { contextTokens, formatTokens, latestUsage } from "./usageSummary";
 import { hasAgentOptions } from "./agentOptions";
 import { AgentOptionsSheet } from "./AgentOptionsSheet";
+import { shouldSubmitComposerKey } from "./composerKey";
 
 interface OrcaChatViewProps {
   turns: AgentTurn[];
@@ -79,6 +80,8 @@ interface OrcaChatViewProps {
   isLoadingOlder?: boolean;
   /** Fetch an older page from the gateway (turns are prepended via `turns`). */
   onLoadOlder?: () => Promise<void>;
+  /** Enables desktop composer ergonomics (Enter to send, Shift+Enter newline, drag-drop). */
+  isDesktop?: boolean;
 }
 
 /**
@@ -123,6 +126,7 @@ export function OrcaChatView({
   startupDialog = null,
   onAnswerDialog,
   onOpenTerminal,
+  isDesktop = false,
 }: OrcaChatViewProps) {
   const [inputText, setInputText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
@@ -301,6 +305,13 @@ export function OrcaChatView({
 
   // Dynamic Keyboard Visibility Tracking on iOS
   const [isKeyboardVisible, setIsKeyboardVisible] = useState(false);
+  const isDesktopRef = useRef(isDesktop);
+  useEffect(() => {
+    isDesktopRef.current = isDesktop;
+    if (isDesktop) {
+      setIsKeyboardVisible(false);
+    }
+  }, [isDesktop]);
 
   useEffect(() => {
     if (typeof window === "undefined" || !window.visualViewport) return;
@@ -308,6 +319,11 @@ export function OrcaChatView({
     const onViewportChange = () => {
       const vv = window.visualViewport;
       if (!vv) return;
+      // On desktop, clicking the textarea must not yank scroll back to the bottom.
+      if (isDesktopRef.current) {
+        setIsKeyboardVisible(false);
+        return;
+      }
       // When virtual keyboard opens on mobile, visualViewport.height shrinks significantly
       // Some iOS modes (Home Screen app) also shrink innerHeight, so the height delta can read ~0;
       // a focused text field is the fallback signal that the on-screen keyboard is up.
@@ -538,9 +554,103 @@ export function OrcaChatView({
     () => suggestSlashCommands(agentKind, inputText),
     [agentKind, inputText],
   );
+  const [slashDismissed, setSlashDismissed] = useState(false);
+  const [activeSlashIdx, setActiveSlashIdx] = useState(0);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const dragDepthRef = useRef(0);
+
+  useEffect(() => {
+    setSlashDismissed(false);
+    setActiveSlashIdx(0);
+  }, [inputText, agentKind]);
+
+  const visibleSlashSuggestions = slashDismissed ? [] : slashSuggestions;
+
+  const applySlashCommand = (name: string) => {
+    setInputText(`/${name} `);
+    setSlashDismissed(true);
+    composerRef.current?.focus();
+  };
+
+  const handleComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const isIme = e.nativeEvent.isComposing || e.keyCode === 229;
+    if (isIme) return;
+
+    if (visibleSlashSuggestions.length > 0) {
+      if (e.key === "ArrowDown") {
+        e.preventDefault();
+        setActiveSlashIdx((i) => (i + 1) % visibleSlashSuggestions.length);
+        return;
+      }
+      if (e.key === "ArrowUp") {
+        e.preventDefault();
+        setActiveSlashIdx(
+          (i) => (i - 1 + visibleSlashSuggestions.length) % visibleSlashSuggestions.length,
+        );
+        return;
+      }
+      if (e.key === "Escape") {
+        e.preventDefault();
+        setSlashDismissed(true);
+        return;
+      }
+      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
+        const picked = visibleSlashSuggestions[activeSlashIdx] ?? visibleSlashSuggestions[0];
+        if (picked) {
+          e.preventDefault();
+          applySlashCommand(picked.name);
+          return;
+        }
+      }
+    }
+
+    if (
+      shouldSubmitComposerKey({
+        key: e.key,
+        shiftKey: e.shiftKey,
+        isComposing: e.nativeEvent.isComposing,
+        keyCode: e.keyCode,
+        isDesktop,
+        hasSlashMenu: visibleSlashSuggestions.length > 0,
+      })
+    ) {
+      e.preventDefault();
+      void handleSendPrompt();
+    }
+  };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-full bg-bg text-fg relative overflow-hidden">
+    <div
+      onDragEnter={(e) => {
+        if (!onUploadImage || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        dragDepthRef.current += 1;
+        setIsDraggingImage(true);
+      }}
+      onDragOver={(e) => {
+        if (!onUploadImage || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+      }}
+      onDragLeave={(e) => {
+        if (!onUploadImage || !e.dataTransfer.types.includes("Files")) return;
+        e.preventDefault();
+        dragDepthRef.current = Math.max(0, dragDepthRef.current - 1);
+        if (dragDepthRef.current === 0) setIsDraggingImage(false);
+      }}
+      onDrop={(e) => {
+        if (!onUploadImage) return;
+        e.preventDefault();
+        dragDepthRef.current = 0;
+        setIsDraggingImage(false);
+        const dropped = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
+        if (dropped.length > 0) {
+          void handlePickImages(dropped);
+        }
+      }}
+      className={`flex flex-col h-full w-full max-w-full bg-bg text-fg relative overflow-hidden ${
+        isDraggingImage ? "ring-2 ring-inset ring-accent/60" : ""
+      }`}
+    >
       {/* Timeline with the agent's logo as a faint watermark behind the messages */}
       <div className="relative flex-1 min-h-0 min-w-0">
         <div
@@ -561,7 +671,7 @@ export function OrcaChatView({
         >
           <div
             ref={contentRef}
-            className="space-y-2 min-h-full flex flex-col justify-end min-w-0 max-w-full"
+            className="space-y-2 min-h-full flex flex-col justify-end min-w-0 max-w-4xl mx-auto w-full"
           >
             {/* Load Earlier Messages Banner */}
             {hasEarlier && (
@@ -654,307 +764,315 @@ export function OrcaChatView({
       <div
         className={`shrink-0 z-30 px-3 ${
           isKeyboardVisible ? "pt-1.5 pb-1.5" : "pt-2 safe-bottom"
-        } bg-bg border-t border-white/[0.08] space-y-1.5 min-w-0 max-w-full`}
+        } bg-bg border-t border-white/[0.08] min-w-0 max-w-full`}
       >
-        {/* Orca-style Contextual Approval Card */}
-        {effectiveAwaiting &&
-          (!effectiveAwaiting.options || effectiveAwaiting.options.length === 0) && (
-            <div className="rounded-xl bg-emerald-950/30 border border-emerald-500/25 px-3 py-2.5 space-y-2">
-              <div className="flex items-start gap-2 min-w-0">
-                <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-                <div className="min-w-0 flex-1 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-snug text-emerald-100">
-                  {effectiveAwaiting.prompt || "Agent requested approval"}
+        <div className="max-w-4xl mx-auto w-full space-y-1.5">
+          {/* Orca-style Contextual Approval Card */}
+          {effectiveAwaiting &&
+            (!effectiveAwaiting.options || effectiveAwaiting.options.length === 0) && (
+              <div className="rounded-xl bg-emerald-950/30 border border-emerald-500/25 px-3 py-2.5 space-y-2">
+                <div className="flex items-start gap-2 min-w-0">
+                  <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
+                  <div className="min-w-0 flex-1 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-snug text-emerald-100">
+                    {effectiveAwaiting.prompt || "Agent requested approval"}
+                  </div>
+                </div>
+                <div className="flex items-center justify-end gap-2">
+                  <button
+                    type="button"
+                    onClick={handleInterrupt}
+                    disabled={isStopping}
+                    className="h-9 px-3.5 bg-raised hover:bg-rose-950/50 hover:text-rose-300 text-fg-soft font-medium text-[13px] rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                    title="Deny"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                    <span>Deny</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={onApprove}
+                    className="h-9 px-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-[13px] rounded-xl transition-colors shadow-sm flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" />
+                    <span>Approve</span>
+                  </button>
                 </div>
               </div>
-              <div className="flex items-center justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={handleInterrupt}
-                  disabled={isStopping}
-                  className="h-9 px-3.5 bg-raised hover:bg-rose-950/50 hover:text-rose-300 text-fg-soft font-medium text-[13px] rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50"
-                  title="Deny"
-                >
-                  <X className="w-3.5 h-3.5" />
-                  <span>Deny</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={onApprove}
-                  className="h-9 px-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 text-white font-semibold text-[13px] rounded-xl transition-colors shadow-sm flex items-center gap-1.5"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  <span>Approve</span>
-                </button>
-              </div>
-            </div>
-          )}
+            )}
 
-        {startupDialog && (
-          <div
-            role="group"
-            aria-label="Agent startup dialog"
-            className="mb-1.5 rounded-2xl border border-amber-500/30 bg-amber-500/[0.07] overflow-hidden"
-          >
-            <div className="px-3.5 pt-3 pb-1.5">
-              <div className="text-[13px] font-semibold text-amber-200">
-                {agentDisplayName(agentKind)} is asking: {startupDialog.title}
+          {startupDialog && (
+            <div
+              role="group"
+              aria-label="Agent startup dialog"
+              className="mb-1.5 rounded-2xl border border-amber-500/30 bg-amber-500/[0.07] overflow-hidden"
+            >
+              <div className="px-3.5 pt-3 pb-1.5">
+                <div className="text-[13px] font-semibold text-amber-200">
+                  {agentDisplayName(agentKind)} is asking: {startupDialog.title}
+                </div>
+                <pre className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12.5px] leading-snug text-fg-soft">
+                  {startupDialog.description}
+                </pre>
               </div>
-              <pre className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12.5px] leading-snug text-fg-soft">
-                {startupDialog.description}
-              </pre>
-            </div>
-            <div className="px-3.5 pb-3 pt-1 flex flex-col gap-1.5">
-              {startupDialog.aimed && startupDialog.choices.length > 0 ? (
-                startupDialog.choices.map((choice, index) => (
-                  <button
-                    key={`${index}-${choice.label}`}
-                    type="button"
-                    disabled={answeringChoice !== null || !onAnswerDialog}
-                    onClick={() => void handleAnswer(index)}
-                    className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line active:opacity-80 text-left text-[13.5px] text-fg disabled:opacity-50 flex items-center justify-between gap-2"
-                  >
-                    <span className="truncate">{choice.label}</span>
-                    {answeringChoice === index && (
-                      <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
-                    )}
-                  </button>
-                ))
-              ) : (
-                <button
-                  type="button"
-                  onClick={onOpenTerminal}
-                  className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line text-[13.5px] text-fg"
-                >
-                  Answer in the Terminal tab
-                </button>
-              )}
-            </div>
-          </div>
-        )}
-
-        {queue.length > 0 && (
-          <div className="mb-1.5 space-y-1" aria-label="Queued messages">
-            {queue.map((m, i) => (
-              <div
-                key={m.id}
-                className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.1] bg-surface text-[12.5px] text-fg-soft"
-              >
-                <span className="shrink-0 text-accent-soft font-semibold">
-                  {queueStatusLabel({ index: i, queuePaused, lifecycleState, needsAnswer })}
-                </span>
-                <span className="min-w-0 flex-1 truncate">
-                  {m.images.length > 0 ? `🖼 ${m.images.length} · ` : ""}
-                  {m.text}
-                </span>
-                {queuePaused && i === 0 && (
+              <div className="px-3.5 pb-3 pt-1 flex flex-col gap-1.5">
+                {startupDialog.aimed && startupDialog.choices.length > 0 ? (
+                  startupDialog.choices.map((choice, index) => (
+                    <button
+                      key={`${index}-${choice.label}`}
+                      type="button"
+                      disabled={answeringChoice !== null || !onAnswerDialog}
+                      onClick={() => void handleAnswer(index)}
+                      className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line active:opacity-80 text-left text-[13.5px] text-fg disabled:opacity-50 flex items-center justify-between gap-2"
+                    >
+                      <span className="truncate">{choice.label}</span>
+                      {answeringChoice === index && (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin shrink-0" />
+                      )}
+                    </button>
+                  ))
+                ) : (
                   <button
                     type="button"
-                    onClick={() => setQueuePaused(false)}
-                    className="shrink-0 px-2 h-6 rounded-md bg-accent text-white text-[12px] font-semibold"
+                    onClick={onOpenTerminal}
+                    className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line text-[13.5px] text-fg"
                   >
-                    Resume
+                    Answer in the Terminal tab
                   </button>
                 )}
-                <button
-                  type="button"
-                  disabled={isSubmitting}
-                  onClick={() => void handleSendQueuedNow(m)}
-                  className="shrink-0 px-2 h-6 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-fg text-[12px] font-medium disabled:opacity-40"
-                >
-                  Send now
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setQueue((q) => removeQueued(q, m.id))}
-                  className="shrink-0 w-6 h-6 rounded-md hover:bg-white/[0.08] text-muted flex items-center justify-center"
-                  aria-label="Remove queued message"
-                >
-                  <X className="w-3.5 h-3.5" />
-                </button>
               </div>
-            ))}
-          </div>
-        )}
-
-        {slashSuggestions.length > 0 && (
-          <div
-            role="listbox"
-            aria-label="Slash commands"
-            className="mb-1.5 rounded-xl border border-white/[0.1] bg-surface overflow-hidden"
-          >
-            {slashSuggestions.map((c) => (
-              <button
-                key={c.name}
-                type="button"
-                role="option"
-                aria-selected={false}
-                onClick={() => {
-                  setInputText(`/${c.name} `);
-                  composerRef.current?.focus();
-                }}
-                className="w-full flex items-baseline gap-2 px-3 py-2 text-left hover:bg-white/[0.06]"
-              >
-                <span className="text-[13.5px] font-mono text-accent-soft">/{c.name}</span>
-                <span className="min-w-0 truncate text-[12px] text-muted">{c.description}</span>
-              </button>
-            ))}
-          </div>
-        )}
-
-        {sendError && (
-          <div
-            role="alert"
-            className="mb-1.5 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 text-[12.5px] leading-snug text-amber-200"
-          >
-            {sendError}
-          </div>
-        )}
-
-        {(images.length > 0 || uploading > 0) && (
-          <div className="mb-1.5 flex flex-wrap gap-2" aria-label="Attached images">
-            {images.map((img) => (
-              <div
-                key={img.id}
-                className="relative w-14 h-14 rounded-xl overflow-hidden border border-white/[0.14]"
-              >
-                <img src={img.previewUrl} alt="Attached" className="w-full h-full object-cover" />
-                <button
-                  type="button"
-                  onClick={() => removeImage(img.id)}
-                  className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"
-                  aria-label="Remove image"
-                >
-                  <X className="w-3 h-3" />
-                </button>
-              </div>
-            ))}
-            {uploading > 0 && (
-              <div className="w-14 h-14 rounded-xl border border-white/[0.14] flex items-center justify-center">
-                <Loader2 className="w-4 h-4 animate-spin text-accent-soft" />
-              </div>
-            )}
-          </div>
-        )}
-
-        {(usage || canSetOptions) && (
-          <div className="mb-1 px-1 flex items-center justify-between gap-2">
-            <div
-              className="min-w-0 text-[11.5px] text-dim truncate"
-              title={
-                usage
-                  ? `Input ${usage.input_tokens} · output ${usage.output_tokens} · cache read ${usage.cache_read_tokens ?? 0} · cache write ${usage.cache_creation_tokens ?? 0}`
-                  : undefined
-              }
-            >
-              {usage
-                ? `Context ${formatTokens(contextTokens(usage))} tokens${usage.model ? ` · ${usage.model}` : ""}`
-                : ""}
             </div>
-            {canSetOptions && (
+          )}
+
+          {queue.length > 0 && (
+            <div className="mb-1.5 space-y-1" aria-label="Queued messages">
+              {queue.map((m, i) => (
+                <div
+                  key={m.id}
+                  className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.1] bg-surface text-[12.5px] text-fg-soft"
+                >
+                  <span className="shrink-0 text-accent-soft font-semibold">
+                    {queueStatusLabel({ index: i, queuePaused, lifecycleState, needsAnswer })}
+                  </span>
+                  <span className="min-w-0 flex-1 truncate">
+                    {m.images.length > 0 ? `🖼 ${m.images.length} · ` : ""}
+                    {m.text}
+                  </span>
+                  {queuePaused && i === 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setQueuePaused(false)}
+                      className="shrink-0 px-2 h-6 rounded-md bg-accent text-white text-[12px] font-semibold"
+                    >
+                      Resume
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    disabled={isSubmitting}
+                    onClick={() => void handleSendQueuedNow(m)}
+                    className="shrink-0 px-2 h-6 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-fg text-[12px] font-medium disabled:opacity-40"
+                  >
+                    Send now
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setQueue((q) => removeQueued(q, m.id))}
+                    className="shrink-0 w-6 h-6 rounded-md hover:bg-white/[0.08] text-muted flex items-center justify-center"
+                    aria-label="Remove queued message"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {visibleSlashSuggestions.length > 0 && (
+            <div
+              role="listbox"
+              aria-label="Slash commands"
+              className="mb-1.5 rounded-xl border border-white/[0.1] bg-surface overflow-hidden"
+            >
+              {visibleSlashSuggestions.map((c, idx) => (
+                <button
+                  key={c.name}
+                  type="button"
+                  role="option"
+                  aria-selected={idx === activeSlashIdx}
+                  onClick={() => applySlashCommand(c.name)}
+                  className={`w-full flex items-baseline gap-2 px-3 py-2 text-left transition-colors ${
+                    idx === activeSlashIdx ? "bg-white/[0.08]" : "hover:bg-white/[0.06]"
+                  }`}
+                >
+                  <span className="text-[13.5px] font-mono text-accent-soft">/{c.name}</span>
+                  <span className="min-w-0 truncate text-[12px] text-muted">{c.description}</span>
+                </button>
+              ))}
+            </div>
+          )}
+
+          {sendError && (
+            <div
+              role="alert"
+              className="mb-1.5 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 text-[12.5px] leading-snug text-amber-200"
+            >
+              {sendError}
+            </div>
+          )}
+
+          {(images.length > 0 || uploading > 0) && (
+            <div className="mb-1.5 flex flex-wrap gap-2" aria-label="Attached images">
+              {images.map((img) => (
+                <div
+                  key={img.id}
+                  className="relative w-14 h-14 rounded-xl overflow-hidden border border-white/[0.14]"
+                >
+                  <img src={img.previewUrl} alt="Attached" className="w-full h-full object-cover" />
+                  <button
+                    type="button"
+                    onClick={() => removeImage(img.id)}
+                    className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"
+                    aria-label="Remove image"
+                  >
+                    <X className="w-3 h-3" />
+                  </button>
+                </div>
+              ))}
+              {uploading > 0 && (
+                <div className="w-14 h-14 rounded-xl border border-white/[0.14] flex items-center justify-center">
+                  <Loader2 className="w-4 h-4 animate-spin text-accent-soft" />
+                </div>
+              )}
+            </div>
+          )}
+
+          {(usage || canSetOptions) && (
+            <div className="mb-1 px-1 flex items-center justify-between gap-2">
+              <div
+                className="min-w-0 text-[11.5px] text-dim truncate"
+                title={
+                  usage
+                    ? `Input ${usage.input_tokens} · output ${usage.output_tokens} · cache read ${usage.cache_read_tokens ?? 0} · cache write ${usage.cache_creation_tokens ?? 0}`
+                    : undefined
+                }
+              >
+                {usage
+                  ? `Context ${formatTokens(contextTokens(usage))} tokens${usage.model ? ` · ${usage.model}` : ""}`
+                  : ""}
+              </div>
+              {canSetOptions && (
+                <button
+                  type="button"
+                  onClick={() => setShowOptions(true)}
+                  className="shrink-0 h-7 px-2.5 rounded-lg bg-raised hover:bg-line text-[12px] font-semibold text-fg-soft inline-flex items-center gap-1.5"
+                  aria-label="Model and effort"
+                >
+                  <SlidersHorizontal className="w-3.5 h-3.5" />
+                  Model
+                </button>
+              )}
+            </div>
+          )}
+
+          {showOptions && surfaceId && (
+            <AgentOptionsSheet
+              surfaceId={surfaceId}
+              agentKind={agentKind}
+              currentModel={usage?.model}
+              onClose={() => setShowOptions(false)}
+              onOpenTerminal={onOpenTerminal}
+            />
+          )}
+
+          {/* Floating Mobile Prompt Composer with Orca Rounded Capsule */}
+          <div className="flex items-end gap-1 bg-surface border border-line rounded-[24px] pl-4 pr-1.5 py-1.5">
+            {/* Desktop: Enter sends, Shift+Enter inserts newline; Mobile: Enter inserts newline. */}
+            <textarea
+              ref={composerRef}
+              rows={1}
+              value={inputText}
+              onChange={(e) => {
+                setInputText(e.target.value);
+                if (sendError) setSendError(null);
+              }}
+              onKeyDown={handleComposerKeyDown}
+              onFocus={handleInputFocus}
+              onPaste={(e) => {
+                // Pasting a copied photo (iOS "Copy" on an image) arrives as a clipboard file, not text.
+                const pasted = Array.from(e.clipboardData.files).filter((f) =>
+                  f.type.startsWith("image/"),
+                );
+                if (pasted.length === 0 || !onUploadImage) return;
+                e.preventDefault();
+                void handlePickImages(pasted);
+              }}
+              enterKeyHint={isDesktop ? "send" : "enter"}
+              placeholder={
+                isDesktop
+                  ? `Message ${agentDisplayName(agentKind)} (Enter to send, Shift+Enter for newline)...`
+                  : `Message ${agentDisplayName(agentKind)}...`
+              }
+              className="flex-1 bg-transparent border-0 text-[15px] leading-[22px] text-fg placeholder-dim outline-none transition-colors py-[7px] min-w-0 resize-none max-h-[132px]"
+            />
+
+            {onUploadImage && (
+              <>
+                <input
+                  ref={fileInputRef}
+                  type="file"
+                  accept="image/*"
+                  multiple
+                  hidden
+                  onChange={(e) => void handlePickImages(e.target.files)}
+                />
+                <button
+                  type="button"
+                  onClick={() => fileInputRef.current?.click()}
+                  disabled={images.length + uploading >= MAX_IMAGES_PER_MESSAGE}
+                  className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-muted hover:text-white disabled:opacity-30"
+                  title="Attach image"
+                  aria-label="Attach image"
+                >
+                  <ImagePlus className="w-[18px] h-[18px]" />
+                </button>
+              </>
+            )}
+
+            {/* Orca Critical Action Swap Button: Stop while agent is running; Send otherwise */}
+            {isWorking && !inputText.trim() && images.length === 0 && !isSubmitting ? (
               <button
                 type="button"
-                onClick={() => setShowOptions(true)}
-                className="shrink-0 h-7 px-2.5 rounded-lg bg-raised hover:bg-line text-[12px] font-semibold text-fg-soft inline-flex items-center gap-1.5"
-                aria-label="Model and effort"
+                onClick={handleInterrupt}
+                disabled={isStopping}
+                className="w-9 h-9 bg-raised hover:bg-rose-950/60 hover:text-rose-400 border border-line text-fg-soft rounded-full transition-colors shadow-sm shrink-0 flex items-center justify-center disabled:opacity-50"
+                title={isStopping ? "Stopping..." : "Stop the agent (Ctrl+C)"}
+                aria-label={isStopping ? "Stopping" : "Stop"}
               >
-                <SlidersHorizontal className="w-3.5 h-3.5" />
-                Model
+                {isStopping ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
+                ) : (
+                  <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
+                )}
+              </button>
+            ) : (
+              <button
+                type="button"
+                onClick={handleSendPrompt}
+                disabled={
+                  (!inputText.trim() && images.length === 0) || isSubmitting || uploading > 0
+                }
+                className="w-9 h-9 bg-accent hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-white rounded-full transition-colors shrink-0 flex items-center justify-center"
+                title="Send prompt"
+                aria-label="Send"
+              >
+                {isSubmitting ? (
+                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                ) : (
+                  <Send className="w-[18px] h-[18px]" />
+                )}
               </button>
             )}
           </div>
-        )}
-
-        {showOptions && surfaceId && (
-          <AgentOptionsSheet
-            surfaceId={surfaceId}
-            agentKind={agentKind}
-            currentModel={usage?.model}
-            onClose={() => setShowOptions(false)}
-            onOpenTerminal={onOpenTerminal}
-          />
-        )}
-
-        {/* Floating Mobile Prompt Composer with Orca Rounded Capsule */}
-        <div className="flex items-end gap-1 bg-surface border border-line rounded-[24px] pl-4 pr-1.5 py-1.5">
-          {/* Enter inserts a newline; only the blue arrow sends. */}
-          <textarea
-            ref={composerRef}
-            rows={1}
-            value={inputText}
-            onChange={(e) => {
-              setInputText(e.target.value);
-              if (sendError) setSendError(null);
-            }}
-            onFocus={handleInputFocus}
-            onPaste={(e) => {
-              // Pasting a copied photo (iOS "Copy" on an image) arrives as a clipboard file, not text.
-              const pasted = Array.from(e.clipboardData.files).filter((f) =>
-                f.type.startsWith("image/"),
-              );
-              if (pasted.length === 0 || !onUploadImage) return;
-              e.preventDefault();
-              void handlePickImages(pasted);
-            }}
-            enterKeyHint="enter"
-            placeholder={`Message ${agentDisplayName(agentKind)}...`}
-            className="flex-1 bg-transparent border-0 text-[15px] leading-[22px] text-fg placeholder-dim outline-none transition-colors py-[7px] min-w-0 resize-none max-h-[132px]"
-          />
-
-          {onUploadImage && (
-            <>
-              <input
-                ref={fileInputRef}
-                type="file"
-                accept="image/*"
-                multiple
-                hidden
-                onChange={(e) => void handlePickImages(e.target.files)}
-              />
-              <button
-                type="button"
-                onClick={() => fileInputRef.current?.click()}
-                disabled={images.length + uploading >= MAX_IMAGES_PER_MESSAGE}
-                className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-muted hover:text-white disabled:opacity-30"
-                title="Attach image"
-                aria-label="Attach image"
-              >
-                <ImagePlus className="w-[18px] h-[18px]" />
-              </button>
-            </>
-          )}
-
-          {/* Orca Critical Action Swap Button: Stop while agent is running; Send otherwise */}
-          {isWorking && !inputText.trim() && images.length === 0 && !isSubmitting ? (
-            <button
-              type="button"
-              onClick={handleInterrupt}
-              disabled={isStopping}
-              className="w-9 h-9 bg-raised hover:bg-rose-950/60 hover:text-rose-400 border border-line text-fg-soft rounded-full transition-colors shadow-sm shrink-0 flex items-center justify-center disabled:opacity-50"
-              title={isStopping ? "Stopping..." : "Stop the agent (Ctrl+C)"}
-              aria-label={isStopping ? "Stopping" : "Stop"}
-            >
-              {isStopping ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
-              ) : (
-                <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
-              )}
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleSendPrompt}
-              disabled={(!inputText.trim() && images.length === 0) || isSubmitting || uploading > 0}
-              className="w-9 h-9 bg-accent hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-white rounded-full transition-colors shrink-0 flex items-center justify-center"
-              title="Send prompt"
-              aria-label="Send"
-            >
-              {isSubmitting ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin" />
-              ) : (
-                <Send className="w-[18px] h-[18px]" />
-              )}
-            </button>
-          )}
         </div>
       </div>
     </div>

@@ -186,3 +186,69 @@ describe("usage summary", () => {
     expect(formatTokens(1250000)).toBe("1.25M");
   });
 });
+
+import { shouldSubmitComposerKey } from "./composerKey";
+
+describe("composer Enter key handling", () => {
+  it("submits on plain Enter on desktop when not composing or picking a slash command", () => {
+    expect(
+      shouldSubmitComposerKey({
+        key: "Enter",
+        shiftKey: false,
+        isComposing: false,
+        keyCode: 13,
+        isDesktop: true,
+        hasSlashMenu: false,
+      }),
+    ).toBe(true);
+  });
+
+  it("inserts newline for Shift+Enter, IME composition, Safari 229, slash menu, or mobile", () => {
+    expect(
+      shouldSubmitComposerKey({
+        key: "Enter",
+        shiftKey: true,
+        isComposing: false,
+        isDesktop: true,
+        hasSlashMenu: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerKey({
+        key: "Enter",
+        shiftKey: false,
+        isComposing: true,
+        isDesktop: true,
+        hasSlashMenu: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerKey({
+        key: "Enter",
+        shiftKey: false,
+        isComposing: false,
+        keyCode: 229,
+        isDesktop: true,
+        hasSlashMenu: false,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerKey({
+        key: "Enter",
+        shiftKey: false,
+        isComposing: false,
+        isDesktop: true,
+        hasSlashMenu: true,
+      }),
+    ).toBe(false);
+    expect(
+      shouldSubmitComposerKey({
+        key: "Enter",
+        shiftKey: false,
+        isComposing: false,
+        isDesktop: false,
+        hasSlashMenu: false,
+      }),
+    ).toBe(false);
+  });
+});

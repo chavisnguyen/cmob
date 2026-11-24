@@ -41,6 +41,7 @@ export function DeviceListView({
   onRemoveHost,
   onRenameHost,
   onBack,
+  hideBack = false,
 }: {
   hosts: SavedHost[];
   activeHostId: string;
@@ -49,6 +50,7 @@ export function DeviceListView({
   onRemoveHost: (id: string) => void;
   onRenameHost: (id: string, name: string) => void;
   onBack: () => void;
+  hideBack?: boolean;
 }): ReactElement {
   const [showPairModal, setShowPairModal] = useState(false);
   const [editingHost, setEditingHost] = useState<SavedHost | null>(null);
@@ -133,15 +135,17 @@ export function DeviceListView({
   };
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto bg-bg text-fg px-5 pt-5 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] space-y-8 max-w-2xl mx-auto w-full">
-      <button
-        type="button"
-        onClick={onBack}
-        className="-mb-4 -ml-1 self-start min-h-[40px] px-2 flex items-center gap-1 rounded-lg text-[13px] font-medium text-muted hover:text-fg"
-      >
-        <ChevronLeft className="w-4 h-4" />
-        <span>Workspaces</span>
-      </button>
+    <div className="flex flex-col h-full overflow-y-auto bg-bg text-fg px-5 pt-5 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] space-y-8 max-w-3xl mx-auto w-full">
+      {!hideBack && (
+        <button
+          type="button"
+          onClick={onBack}
+          className="-mb-4 -ml-1 self-start min-h-[40px] px-2 flex items-center gap-1 rounded-lg text-[13px] font-medium text-muted hover:text-fg"
+        >
+          <ChevronLeft className="w-4 h-4" />
+          <span>Workspaces</span>
+        </button>
+      )}
 
       {/* Header */}
       <div className="flex items-start justify-between gap-3 pt-1">

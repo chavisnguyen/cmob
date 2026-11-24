@@ -25,6 +25,15 @@ export function RenameSurfaceModal({
     }
   }, [isOpen, currentTitle]);
 
+  useEffect(() => {
+    if (!isOpen) return;
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !loading) onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [isOpen, loading, onClose]);
+
   if (!isOpen) return null;
 
   const trimmed = title.trim();
@@ -48,8 +57,19 @@ export function RenameSurfaceModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in">
-      <div className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.1] text-white shadow-2xl overflow-hidden flex flex-col">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in"
+      onClick={() => {
+        if (!loading) onClose();
+      }}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Rename Tab"
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.1] text-white shadow-2xl overflow-hidden flex flex-col"
+      >
         <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] bg-bg">
           <div className="flex items-center gap-2">
             <div className="w-6 h-6 rounded-md bg-accent/15 text-accent-soft flex items-center justify-center">

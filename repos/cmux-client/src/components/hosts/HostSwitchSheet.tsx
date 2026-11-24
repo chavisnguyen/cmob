@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Laptop, Monitor, Plus, Server, Settings2, X, type LucideIcon } from "lucide-react";
 import { Pressable } from "../common/Pressable";
 import { classifyHostType, type HostMachineType, type SavedHost } from "../../hosts/hostStore";
@@ -29,6 +30,14 @@ export function HostSwitchSheet({
   onManage,
   onClose,
 }: HostSwitchSheetProps) {
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   const tone =
     connState === "connected"
       ? "text-emerald-400"
@@ -37,14 +46,15 @@ export function HostSwitchSheet({
         : "text-rose-400";
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end bg-black/60 animate-fade-in"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/60 backdrop-blur-[1px] animate-fade-in"
       onClick={onClose}
     >
       <div
         role="dialog"
+        aria-modal="true"
         aria-label="Switch computer"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-3xl mx-auto max-h-[70vh] flex flex-col rounded-t-2xl bg-bg border-t border-white/[0.1] shadow-2xl pb-[env(safe-area-inset-bottom,0px)]"
+        className="w-full max-w-3xl md:max-w-md mx-auto max-h-[70vh] flex flex-col rounded-t-2xl md:rounded-2xl bg-bg border-t md:border border-white/[0.1] shadow-2xl pb-[env(safe-area-inset-bottom,0px)] md:pb-0"
       >
         <div className="flex items-center justify-between px-4 h-12 border-b border-white/[0.08] shrink-0">
           <h2 className="text-[15px] font-semibold">Computers · {hosts.length}</h2>

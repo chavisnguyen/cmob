@@ -46,6 +46,14 @@ export function AgentOptionsSheet({
     };
   }, [agentKind]);
 
+  useEffect(() => {
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, [onClose]);
+
   const apply = async (option: "model" | "effort" | "fast", value?: string) => {
     setBusy(`${option}:${value ?? ""}`);
     setError(null);
@@ -81,11 +89,14 @@ export function AgentOptionsSheet({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end justify-center bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/70 backdrop-blur-sm"
       onClick={onClose}
     >
       <div
-        className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-t-2xl bg-bg border-t border-white/[0.12] text-fg p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] space-y-4"
+        role="dialog"
+        aria-modal="true"
+        aria-label="Model and effort"
+        className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-t-2xl md:rounded-2xl bg-bg border-t md:border border-white/[0.12] text-fg p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] md:pb-5 space-y-4 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between">

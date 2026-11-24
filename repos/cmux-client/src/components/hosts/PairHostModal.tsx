@@ -67,7 +67,7 @@ export function PairHostModal({
   return (
     <>
       <div
-        className="fixed inset-0 z-50 flex items-end bg-black/60 animate-fade-in"
+        className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/60 backdrop-blur-[1px] animate-fade-in"
         onClick={onClose}
       >
         <div
@@ -75,7 +75,7 @@ export function PairHostModal({
           aria-modal="true"
           aria-labelledby="pair-modal-title"
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-3xl mx-auto rounded-t-2xl bg-bg border-t border-white/[0.1] shadow-2xl pb-[env(safe-area-inset-bottom,0px)]"
+          className="w-full max-w-3xl md:max-w-md mx-auto rounded-t-2xl md:rounded-2xl bg-bg border-t md:border border-white/[0.1] shadow-2xl pb-[env(safe-area-inset-bottom,0px)] md:pb-0"
         >
           <div className="flex items-center justify-between px-4 h-12 border-b border-white/[0.08]">
             <h2 id="pair-modal-title" className="text-[15px] font-semibold">

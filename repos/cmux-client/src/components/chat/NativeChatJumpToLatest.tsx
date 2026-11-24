@@ -23,7 +23,7 @@ export function NativeChatJumpToLatest({
       onMouseDown={(e) => e.preventDefault()}
       onClick={onJump}
       aria-label="Jump to latest message"
-      className={`absolute bottom-3 right-3 flex h-10 w-10 items-center justify-center rounded-full border border-line bg-raised text-fg-soft shadow-lg transition-all duration-200 ease-out hover:bg-raised hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent z-30 ${
+      className={`absolute bottom-3 right-3 lg:right-[max(1.25rem,calc((100%-56rem)/2+0.75rem))] flex h-10 w-10 items-center justify-center rounded-full border border-line bg-raised text-fg-soft shadow-lg transition-all duration-200 ease-out hover:bg-raised hover:text-white focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent z-30 ${
         visible
           ? "opacity-100 translate-y-0 pointer-events-auto"
           : "opacity-0 translate-y-2 pointer-events-none"

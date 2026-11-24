@@ -37,8 +37,12 @@ export function RenameHostModal({
       aria-modal="true"
       aria-labelledby="rename-modal-title"
       className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm animate-fade-in"
+      onClick={onClose}
     >
-      <div className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.12] text-fg shadow-2xl p-5 space-y-4">
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.12] text-fg shadow-2xl p-5 space-y-4"
+      >
         <div className="flex items-center justify-between pb-1 border-b border-white/[0.08]">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-xl bg-white/[0.08] flex items-center justify-center text-fg-soft">

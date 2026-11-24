@@ -202,13 +202,32 @@ export async function handleDemoRpc<T = unknown>(
       return {
         status: {
           branch: "master",
-          ahead: 0,
+          ahead: 1,
           behind: 0,
-          staged: [],
-          unstaged: [],
-          untracked: [],
+          files: [
+            { path: "src/App.tsx", index: "M", worktree: " " },
+            { path: "src/components/desktop/DesktopSidebar.tsx", index: "?", worktree: "?" },
+          ],
         },
       } as T;
+
+    case RPC_METHODS.GIT_DIFF: {
+      const path = typeof params?.path === "string" ? params.path : "src/App.tsx";
+      return {
+        diff: [
+          `diff --git a/${path} b/${path}`,
+          `--- a/${path}`,
+          `+++ b/${path}`,
+          "@@ -1,4 +1,6 @@",
+          " export function App() {",
+          "-  return <MobileLayout />;",
+          "+  const isDesktop = useIsDesktop();",
+          "+  return isDesktop ? <DesktopShell /> : <MobileLayout />;",
+          " }",
+        ].join("\n"),
+        truncated: false,
+      } as T;
+    }
 
     default:
       return {} as T;
