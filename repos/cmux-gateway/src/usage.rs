@@ -12,7 +12,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
@@ -279,6 +279,36 @@ fn parse_agy_version_ok(stdout: &str) -> bool {
     (nums[0], nums[1], nums[2]) >= (1, 1, 11)
 }
 
+static AGY_BIN_CACHE: LazyLock<Mutex<Option<(std::time::Instant, PathBuf)>>> =
+    LazyLock::new(|| Mutex::new(None));
+const AGY_BIN_TTL: Duration = Duration::from_secs(300);
+
+async fn resolve_verified_agy_bin(unsupported_latch: &AtomicBool) -> Option<PathBuf> {
+    if unsupported_latch.load(Ordering::Relaxed) {
+        return None;
+    }
+    if let Some((at, path)) = AGY_BIN_CACHE.lock().await.clone() {
+        if at.elapsed() < AGY_BIN_TTL && path.is_file() {
+            return Some(path);
+        }
+    }
+    let agy_bin = find_agy_bin()?;
+    let mut ver_cmd = Command::new(&agy_bin);
+    ver_cmd
+        .arg("--version")
+        .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
+        .kill_on_drop(true);
+    let Ok(Ok(ver_out)) = tokio::time::timeout(Duration::from_secs(5), ver_cmd.output()).await else {
+        return None;
+    };
+    if !ver_out.status.success() || !parse_agy_version_ok(&String::from_utf8_lossy(&ver_out.stdout)) {
+        unsupported_latch.store(true, Ordering::Relaxed);
+        return None;
+    }
+    *AGY_BIN_CACHE.lock().await = Some((std::time::Instant::now(), agy_bin.clone()));
+    Some(agy_bin)
+}
+
 async fn fetch_antigravity_usage(unsupported_latch: &AtomicBool) -> ProviderUsage {
     let now = now_ms();
     let base = ProviderUsage {
@@ -301,27 +331,21 @@ async fn fetch_antigravity_usage(unsupported_latch: &AtomicBool) -> ProviderUsag
         };
     }
 
-    let Some(agy_bin) = find_agy_bin() else {
+    let Some(agy_bin) = resolve_verified_agy_bin(unsupported_latch).await else {
+        if unsupported_latch.load(Ordering::Relaxed) {
+            return ProviderUsage {
+                status: "error".into(),
+                error: Some("Update agy (>= 1.1.11) to read quota safely.".into()),
+                ..base
+            };
+        }
         return base;
     };
-
-    let mut ver_cmd = Command::new(&agy_bin);
-    ver_cmd.arg("--version").env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
-    let Ok(Ok(ver_out)) = tokio::time::timeout(Duration::from_secs(5), ver_cmd.output()).await else {
-        return base;
-    };
-    if !ver_out.status.success() || !parse_agy_version_ok(&String::from_utf8_lossy(&ver_out.stdout)) {
-        unsupported_latch.store(true, Ordering::Relaxed);
-        return ProviderUsage {
-            status: "error".into(),
-            error: Some("Update agy (>= 1.1.11) to read quota safely.".into()),
-            ..base
-        };
-    }
 
     let mut cmd = Command::new(&agy_bin);
     cmd.args(["-p", "/usage", "--output-format", "json", "--print-timeout", "20s"])
-        .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true");
+        .env("AGY_CLI_DISABLE_AUTO_UPDATE", "true")
+        .kill_on_drop(true);
 
     let out = match tokio::time::timeout(Duration::from_secs(25), cmd.output()).await {
         Ok(Ok(o)) => o,
@@ -534,7 +558,8 @@ async fn read_claude_oauth_token() -> Option<String> {
     #[cfg(target_os = "macos")]
     {
         let mut cmd = Command::new("/usr/bin/security");
-        cmd.args(["find-generic-password", "-s", "Claude Code-credentials", "-w"]);
+        cmd.args(["find-generic-password", "-s", "Claude Code-credentials", "-w"])
+            .kill_on_drop(true);
         if let Ok(Ok(out)) = tokio::time::timeout(Duration::from_secs(3), cmd.output()).await
             && out.status.success()
         {
@@ -786,7 +811,8 @@ async fn curl_get_json(url: &str, headers: &[String]) -> Result<(u16, String), S
     cmd.args(["-sS", "--max-time", "10", "-w", "\n%{http_code}", "-K", "-"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
-        .stderr(std::process::Stdio::piped());
+        .stderr(std::process::Stdio::piped())
+        .kill_on_drop(true);
 
     let mut child = cmd.spawn().map_err(|e| format!("Failed to spawn curl: {e}"))?;
     if let Some(mut stdin) = child.stdin.take() {

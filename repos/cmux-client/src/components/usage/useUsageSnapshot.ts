@@ -24,11 +24,13 @@ export function useUsageSnapshot({
   connState,
   hostKey,
   pollMs = DEFAULT_POLL_MS,
+  trackAgeTick = false,
 }: {
   enabled: boolean;
   connState: ConnectionState;
   hostKey: string;
   pollMs?: number;
+  trackAgeTick?: boolean;
 }): UseUsageSnapshotResult {
   const [snapshot, setSnapshot] = useState<UsageSnapshot | null>(null);
   const [loading, setLoading] = useState(false);
@@ -46,35 +48,38 @@ export function useUsageSnapshot({
     setUnsupported(false);
   }, [hostKey]);
 
-  const fetchUsage = useCallback(async (forceRefresh: boolean) => {
-    if (wsClient.getState() !== "connected" || inFlightRef.current) return;
-    inFlightRef.current = true;
-    if (forceRefresh) setRefreshing(true);
-    else setLoading((prev) => prev || snapshotRef.current === null);
-    setError(null);
-    try {
-      const res = await wsClient.call<UsageSnapshot>(
-        RPC_METHODS.USAGE_GET,
-        { refresh: forceRefresh },
-        { timeoutMs: 30_000 },
-      );
-      snapshotRef.current = res;
-      setSnapshot(res);
-      setUnsupported(false);
-      setNow(Date.now());
-    } catch (err) {
-      const msg = err instanceof Error ? err.message : "Could not load usage.";
-      if (msg.toLowerCase().includes("method not found") || msg.includes("-32601")) {
-        setUnsupported(true);
-      } else {
-        setError(msg);
+  const fetchUsage = useCallback(
+    async (forceRefresh: boolean) => {
+      if (wsClient.getState() !== "connected" || inFlightRef.current) return;
+      inFlightRef.current = true;
+      if (forceRefresh) setRefreshing(true);
+      else if (snapshotRef.current === null) setLoading(true);
+      setError((prev) => (prev === null ? prev : null));
+      try {
+        const res = await wsClient.call<UsageSnapshot>(
+          RPC_METHODS.USAGE_GET,
+          { refresh: forceRefresh },
+          { timeoutMs: 30_000 },
+        );
+        snapshotRef.current = res;
+        setSnapshot(res);
+        setUnsupported(false);
+        if (trackAgeTick) setNow(Date.now());
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : "Could not load usage.";
+        if (msg.toLowerCase().includes("method not found") || msg.includes("-32601")) {
+          setUnsupported(true);
+        } else {
+          setError(msg);
+        }
+      } finally {
+        inFlightRef.current = false;
+        setLoading(false);
+        setRefreshing(false);
       }
-    } finally {
-      inFlightRef.current = false;
-      setLoading(false);
-      setRefreshing(false);
-    }
-  }, []);
+    },
+    [trackAgeTick],
+  );
 
   useEffect(() => {
     if (!enabled || connState !== "connected") return;
@@ -86,13 +91,17 @@ export function useUsageSnapshot({
       }
     }, pollMs);
 
-    const tickTimer = setInterval(() => {
-      setNow(Date.now());
-    }, TICK_MS);
+    const tickTimer = trackAgeTick
+      ? setInterval(() => {
+          if (typeof document === "undefined" || document.visibilityState === "visible") {
+            setNow(Date.now());
+          }
+        }, TICK_MS)
+      : null;
 
     const onVisibility = () => {
       if (document.visibilityState === "visible") {
-        setNow(Date.now());
+        if (trackAgeTick) setNow(Date.now());
         void fetchUsage(false);
       }
     };
@@ -102,12 +111,12 @@ export function useUsageSnapshot({
 
     return () => {
       clearInterval(pollTimer);
-      clearInterval(tickTimer);
+      if (tickTimer) clearInterval(tickTimer);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibility);
       }
     };
-  }, [enabled, connState, hostKey, pollMs, fetchUsage]);
+  }, [enabled, connState, hostKey, pollMs, trackAgeTick, fetchUsage]);
 
   const refresh = useCallback(async () => {
     await fetchUsage(true);

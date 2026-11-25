@@ -156,8 +156,10 @@ pub struct DispatchedNotification {
 pub struct PushService {
     /// `Some` => real Web Push delivery enabled (production). `None` => in-memory only (tests).
     vapid: Option<Arc<VapidKeys>>,
+    client: Option<Arc<IsahcWebPushClient>>,
     subs_path: Option<PathBuf>,
     subscriptions: Arc<Mutex<Vec<PushSubscription>>>,
+    persist_lock: Arc<Mutex<()>>,
     recent_dispatches: Arc<Mutex<Vec<DispatchedNotification>>>,
     cooldowns: Arc<Mutex<HashMap<String, Instant>>>,
 }
@@ -173,6 +175,7 @@ impl PushService {
             .unwrap_or_default();
         let mut svc = Self::new();
         svc.vapid = Some(Arc::new(vapid));
+        svc.client = IsahcWebPushClient::new().ok().map(Arc::new);
         svc.subs_path = Some(subs_path);
         *svc.subscriptions.lock().unwrap() = subs;
         svc
@@ -190,20 +193,21 @@ impl PushService {
 
     fn persist(&self) {
         if let Some(path) = &self.subs_path {
-            // Serialize and write under the same lock: two writers must not interleave, or an older
-            // snapshot could overwrite a newer one and resurrect a revoked device's subscription.
-            let guard = self.subscriptions.lock().unwrap();
-            let json = serde_json::to_string_pretty(&*guard).unwrap_or_default();
+            // Serialize disk writes separately so `subscriptions` lock is never held across file I/O.
+            let _persist_guard = self.persist_lock.lock().unwrap();
+            let snapshot = self.subscriptions.lock().unwrap().clone();
+            let json = serde_json::to_string_pretty(&snapshot).unwrap_or_default();
             write_private(path, &json);
-            drop(guard);
         }
     }
 
     pub fn new() -> Self {
         Self {
             vapid: None,
+            client: None,
             subs_path: None,
             subscriptions: Arc::new(Mutex::new(Vec::new())),
+            persist_lock: Arc::new(Mutex::new(())),
             recent_dispatches: Arc::new(Mutex::new(Vec::new())),
             cooldowns: Arc::new(Mutex::new(HashMap::new())),
         }
@@ -292,6 +296,9 @@ impl PushService {
         let key = format!("{surface_id}:{category}");
         let mut guard = self.cooldowns.lock().unwrap();
         let now = Instant::now();
+        if guard.len() > 256 {
+            guard.retain(|_, at| now.duration_since(*at) < Duration::from_secs(3600));
+        }
         if let Some(prev) = guard.get(&key) {
             if now.duration_since(*prev) < Duration::from_secs(cooldown_secs) {
                 return false;
@@ -371,10 +378,11 @@ impl PushService {
             for sub in subs {
                 let svc = self.clone();
                 let vapid = vapid.clone();
+                let client = self.client.clone();
                 let payload = payload.clone();
                 let tag = tag_str.clone();
                 tokio::spawn(async move {
-                    match deliver(&vapid, &sub, payload.as_bytes(), urgent, &tag).await {
+                    match deliver(client.as_deref(), &vapid, &sub, payload.as_bytes(), urgent, &tag).await {
                         Ok(()) => info!("Web Push delivered to {}", short(&sub.endpoint)),
                         Err(WebPushError::EndpointNotValid(_))
                         | Err(WebPushError::EndpointNotFound(_))
@@ -402,6 +410,7 @@ fn short(endpoint: &str) -> String {
 }
 
 async fn deliver(
+    client: Option<&IsahcWebPushClient>,
     vapid: &VapidKeys,
     sub: &PushSubscription,
     payload: &[u8],
@@ -422,7 +431,12 @@ async fn deliver(
     if !topic.is_empty() {
         msg.set_topic(topic);
     }
-    IsahcWebPushClient::new()?.send(msg.build()?).await
+    let built = msg.build()?;
+    if let Some(shared) = client {
+        shared.send(built).await
+    } else {
+        IsahcWebPushClient::new()?.send(built).await
+    }
 }
 
 #[cfg(test)]

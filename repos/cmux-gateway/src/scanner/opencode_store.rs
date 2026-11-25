@@ -33,11 +33,13 @@ const MAX_DETAIL_CHARS: usize = 4000;
 /// Rows fetched per `max_turns` when only the tail is needed.
 const ROWS_PER_TURN: usize = 20;
 const MAX_ROWS: usize = 2000;
-/// Turn snapshots are re-read at most this often (the chat watcher ticks every 500 ms).
-const TURN_TTL: Duration = Duration::from_millis(400);
-const STATUS_TTL: Duration = Duration::from_millis(400);
+/// Turn snapshots and status are re-read when the DB/WAL changes or after TTL expires (must be >500ms watcher tick).
+const TURN_TTL: Duration = Duration::from_millis(1500);
+const STATUS_TTL: Duration = Duration::from_millis(1500);
 /// Known session ids per database. A full id scan is cheap; a per-record probe is not.
 const IDS_TTL: Duration = Duration::from_secs(3);
+const SQLITE_TIMEOUT: Duration = Duration::from_secs(3);
+const MAX_CACHE_ENTRIES: usize = 128;
 
 /// A live OpenCode session's derived state.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -120,6 +122,7 @@ pub fn parse_pseudo_path(path: &Path) -> Option<(PathBuf, String)> {
 
 struct Cached<T> {
     at: Instant,
+    stamp: u128,
     value: T,
 }
 
@@ -130,30 +133,95 @@ static STATUS: LazyLock<Mutex<HashMap<String, Cached<Option<OpenCodeStatus>>>>> 
 static IDS: LazyLock<Mutex<HashMap<String, Cached<HashSet<String>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
-fn cached<T: Clone>(map: &Mutex<HashMap<String, Cached<T>>>, key: &str, ttl: Duration) -> Option<T> {
+fn file_stamp(path: &Path) -> u128 {
+    let Ok(m) = std::fs::metadata(path) else {
+        return 0;
+    };
+    let ns = m
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    ns ^ ((m.len() as u128) << 64)
+}
+
+fn db_stamp(db: &Path) -> u128 {
+    let wal = PathBuf::from(format!("{}-wal", db.display()));
+    file_stamp(db).wrapping_mul(31) ^ file_stamp(&wal)
+}
+
+fn cached<T: Clone>(
+    map: &Mutex<HashMap<String, Cached<T>>>,
+    key: &str,
+    stamp: u128,
+    ttl: Duration,
+) -> Option<T> {
     let guard = map.lock().ok()?;
     let hit = guard.get(key)?;
+    if stamp != 0 && hit.stamp != stamp {
+        return None;
+    }
     (hit.at.elapsed() < ttl).then(|| hit.value.clone())
 }
 
-fn store<T>(map: &Mutex<HashMap<String, Cached<T>>>, key: String, value: T) {
+fn store<T>(map: &Mutex<HashMap<String, Cached<T>>>, key: String, stamp: u128, value: T) {
     if let Ok(mut guard) = map.lock() {
-        guard.insert(key, Cached { at: Instant::now(), value });
+        if guard.len() >= MAX_CACHE_ENTRIES {
+            guard.retain(|_, v| v.at.elapsed() < Duration::from_secs(300));
+            if guard.len() >= MAX_CACHE_ENTRIES {
+                guard.clear();
+            }
+        }
+        guard.insert(key, Cached { at: Instant::now(), stamp, value });
     }
 }
 
-/// Run a query and parse `sqlite3 -json` output. Errors keep the caller on the terminal fallback.
+/// Run a query with a bounded wait timeout and parse `sqlite3 -json` output.
 fn query(db: &Path, sql: &str) -> Result<Vec<serde_json::Value>, String> {
-    let out = Command::new("sqlite3")
+    use std::io::Read;
+    use std::process::Stdio;
+
+    let mut child = Command::new("sqlite3")
         .args(["-readonly", "-json"])
         .arg(db)
         .arg(sql)
-        .output()
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
         .map_err(|e| format!("sqlite3: {e}"))?;
-    if !out.status.success() {
-        return Err(String::from_utf8_lossy(&out.stderr).trim().to_string());
+
+    let deadline = Instant::now() + SQLITE_TIMEOUT;
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(st)) => break st,
+            Ok(None) if Instant::now() < deadline => {
+                std::thread::sleep(Duration::from_millis(5));
+            }
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("sqlite3 timed out".into());
+            }
+            Err(e) => {
+                let _ = child.kill();
+                return Err(format!("sqlite3: {e}"));
+            }
+        }
+    };
+
+    let mut stdout = Vec::new();
+    if let Some(mut out) = child.stdout.take() {
+        let _ = out.read_to_end(&mut stdout);
     }
-    let text = String::from_utf8_lossy(&out.stdout);
+    if !status.success() {
+        let mut stderr = Vec::new();
+        if let Some(mut err) = child.stderr.take() {
+            let _ = err.read_to_end(&mut stderr);
+        }
+        return Err(String::from_utf8_lossy(&stderr).trim().to_string());
+    }
+    let text = String::from_utf8_lossy(&stdout);
     if text.trim().is_empty() {
         return Ok(Vec::new());
     }
@@ -161,7 +229,8 @@ fn query(db: &Path, sql: &str) -> Result<Vec<serde_json::Value>, String> {
 }
 
 fn session_ids(db: &Path) -> HashSet<String> {
-    if let Some(ids) = cached(&IDS, &db.to_string_lossy(), IDS_TTL) {
+    let stamp = db_stamp(db);
+    if let Some(ids) = cached(&IDS, &db.to_string_lossy(), stamp, IDS_TTL) {
         return ids;
     }
     let ids: HashSet<String> = query(db, "SELECT id FROM session_v2")
@@ -171,7 +240,7 @@ fn session_ids(db: &Path) -> HashSet<String> {
                 .collect()
         })
         .unwrap_or_default();
-    store(&IDS, db.to_string_lossy().into_owned(), ids.clone());
+    store(&IDS, db.to_string_lossy().into_owned(), stamp, ids.clone());
     ids
 }
 
@@ -362,12 +431,13 @@ pub fn read_recent_turns_page(
     if !is_session_id(session_id) {
         return Ok((Vec::new(), 0));
     }
-    let key = pseudo_path(db, session_id);
-    if let Some(hit) = cached(&TURNS, &key, TURN_TTL) {
+    let key = format!("{}:{max_turns}", pseudo_path(db, session_id));
+    let stamp = db_stamp(db);
+    if let Some(hit) = cached(&TURNS, &key, stamp, TURN_TTL) {
         return hit;
     }
     let result = read_uncached(db, session_id, surface_id, max_turns);
-    store(&TURNS, key, result.clone());
+    store(&TURNS, key, stamp, result.clone());
     result
 }
 
@@ -427,11 +497,12 @@ pub fn status(db: &Path, session_id: &str) -> Option<OpenCodeStatus> {
         return None;
     }
     let key = pseudo_path(db, session_id);
-    if let Some(hit) = cached(&STATUS, &key, STATUS_TTL) {
+    let stamp = db_stamp(db);
+    if let Some(hit) = cached(&STATUS, &key, stamp, STATUS_TTL) {
         return hit;
     }
     let value = status_uncached(db, session_id);
-    store(&STATUS, key, value.clone());
+    store(&STATUS, key, stamp, value.clone());
     value
 }
 

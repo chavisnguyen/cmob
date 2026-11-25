@@ -61,6 +61,7 @@ struct Inner {
 #[derive(Clone)]
 pub struct DeviceRegistry {
     inner: Arc<Mutex<Inner>>,
+    persist_lock: Arc<Mutex<()>>,
     path: Option<PathBuf>,
 }
 
@@ -131,6 +132,7 @@ impl DeviceRegistry {
         }
         Self {
             inner: Arc::new(Mutex::new(Inner { tickets: HashMap::new(), devices })),
+            persist_lock: Arc::new(Mutex::new(())),
             path,
         }
     }
@@ -176,8 +178,8 @@ impl DeviceRegistry {
             created_at: wall,
             last_seen: wall,
         });
-        // Persist while holding the lock so a stale snapshot can never overwrite a newer one.
-        self.persist(&g.devices);
+        drop(g);
+        self.persist_latest();
         Some(token)
     }
 
@@ -194,9 +196,18 @@ impl DeviceRegistry {
         if now.saturating_sub(g.devices[idx].last_seen) > DEVICE_TTL_SECS {
             return false;
         }
-        if now.saturating_sub(g.devices[idx].last_seen) >= TOUCH_INTERVAL_SECS {
+        let touched = now.saturating_sub(g.devices[idx].last_seen) >= TOUCH_INTERVAL_SECS;
+        if touched {
             g.devices[idx].last_seen = now;
-            self.persist(&g.devices);
+        }
+        drop(g);
+        if touched {
+            if let Ok(handle) = tokio::runtime::Handle::try_current() {
+                let reg = self.clone();
+                handle.spawn_blocking(move || reg.persist_latest());
+            } else {
+                self.persist_latest();
+            }
         }
         true
     }
@@ -218,8 +229,9 @@ impl DeviceRegistry {
             .partition(|d| wall.saturating_sub(d.last_seen) <= DEVICE_TTL_SECS);
         g.devices = keep;
         let ids: Vec<String> = gone.into_iter().map(|d| d.id).collect();
+        drop(g);
         if !ids.is_empty() {
-            self.persist(&g.devices);
+            self.persist_latest();
         }
         ids
     }
@@ -245,14 +257,22 @@ impl DeviceRegistry {
         let before = g.devices.len();
         g.devices.retain(|d| d.id != id);
         let removed = g.devices.len() != before;
+        drop(g);
         if removed {
-            self.persist(&g.devices);
+            self.persist_latest();
         }
         removed
     }
 
     pub fn device_count(&self) -> usize {
         self.inner.lock().unwrap().devices.len()
+    }
+
+    /// Serializes disk persistence without holding `inner` across file I/O or `fsync`.
+    fn persist_latest(&self) {
+        let _persist_guard = self.persist_lock.lock().unwrap();
+        let snapshot = self.inner.lock().unwrap().devices.clone();
+        self.persist(&snapshot);
     }
 
     fn persist(&self, devices: &[DeviceRecord]) {

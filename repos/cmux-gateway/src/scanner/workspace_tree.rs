@@ -208,17 +208,15 @@ impl WorkspaceTreeBuilder {
             }
         }
 
-        // Kiro has no cmux hook file; map live Kiro sessions to surfaces by controlling tty.
-        let kiro_by_tty = tokio::task::spawn_blocking(KiroSessionIndex::scan_default_by_tty)
-            .await
-            .unwrap_or_default();
-
-        // Live agent processes per controlling tty. `None` => scan failed, keep legacy behaviour.
-        // Hook sessions are never removed after an agent exits and surface titles can be plain
-        // directory names, so a surface only counts as "agent" while an agent process owns its tty.
-        let live_agents_by_tty = tokio::task::spawn_blocking(Self::scan_agent_processes_by_tty)
-            .await
-            .unwrap_or(None);
+        // Single `ps -axo pid=,tty=,command=` scan yields both pid->tty (Kiro) and tty->agents (liveness).
+        let (pid_ttys, live_agents_by_tty) =
+            tokio::task::spawn_blocking(Self::scan_processes_snapshot)
+                .await
+                .unwrap_or((HashMap::new(), None));
+        let kiro_by_tty =
+            tokio::task::spawn_blocking(move || KiroSessionIndex::scan_default_by_pid_map(&pid_ttys))
+                .await
+                .unwrap_or_default();
         crate::scanner::liveness::store_proc_scan(&live_agents_by_tty);
 
         // Step 3: Combine raw tree, workspace dirs, and hook store index
@@ -390,40 +388,80 @@ impl WorkspaceTreeBuilder {
             }
         }
 
-        // Prune remembered surfaces that no longer exist in cmux
+        // Prune remembered surfaces and tty cache that no longer exist in cmux
         if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
             cache.retain(|k, _| all_surface_ids.contains(k));
         }
+        crate::scanner::liveness::prune_surfaces(&all_surface_ids);
 
         Ok(result_workspaces)
     }
 
-    /// Build workspace summary list for mobile.workspace.list
+    /// Lightweight workspace summary list for `mobile.workspace.list` (skips `ps` and Kiro scans).
     pub async fn list_workspaces(
         bridge: &DualTransportCmuxBridge,
         hook_index: &HookStoreIndex,
     ) -> Result<Vec<WorkspaceSummary>, CmuxBridgeError> {
-        let tree = Self::build_tree(bridge, hook_index).await?;
-        let summaries = tree
-            .into_iter()
-            .map(|w| {
-                let has_running = w.status == "running";
-                let surface_count = w.surfaces.len();
-                WorkspaceSummary {
-                    id: w.id,
-                    r#ref: w.r#ref,
-                    title: w.title,
-                    pinned: w.pinned,
-                    selected: w.selected,
-                    status: w.status,
-                    current_directory: w.current_directory,
-                    color: w.color,
-                    snippet: w.snippet,
+        let tree_output = bridge.run_command("tree", &["--json", "--id-format", "both"]).await?;
+        let tree_data: RawCmuxTreeOutput = serde_json::from_str(&tree_output)
+            .map_err(|e| CmuxBridgeError::JsonParseError(format!("cmux tree: {e}")))?;
+
+        let mut dirs_by_id: HashMap<String, String> = HashMap::new();
+        let mut latest_msg_by_id: HashMap<String, String> = HashMap::new();
+        let mut color_by_id: HashMap<String, String> = HashMap::new();
+        if let Ok(ws_list) = bridge.rpc_call("workspace.list", None).await.and_then(|out| {
+            serde_json::from_str::<RawWorkspaceListOutput>(&out)
+                .map_err(|e| CmuxBridgeError::JsonParseError(e.to_string()))
+        }) {
+            for w in ws_list.workspaces {
+                if let Some(id) = w.id {
+                    if let Some(dir) = w.current_directory {
+                        dirs_by_id.insert(id.clone(), dir);
+                    }
+                    if let Some(color) = w.custom_color.as_deref().and_then(Self::sanitize_hex_color) {
+                        color_by_id.insert(id.clone(), color);
+                    }
+                    if let Some(msg) = w.latest_conversation_message {
+                        latest_msg_by_id.insert(id, msg);
+                    }
+                }
+            }
+        }
+
+        let mut summaries = Vec::new();
+        for win in tree_data.windows {
+            for raw_ws in win.workspaces {
+                let ws_id = raw_ws.id.unwrap_or_default();
+                let ws_ref = raw_ws.r#ref.unwrap_or_else(|| format!("workspace:{ws_id}"));
+                let title = raw_ws.title.unwrap_or_else(|| "Workspace".to_string());
+                let pinned = raw_ws.pinned.unwrap_or(false);
+                let selected = raw_ws.selected.unwrap_or(false);
+                let current_directory = dirs_by_id.get(&ws_id).cloned().unwrap_or_else(|| "~".to_string());
+                let snippet = hook_index
+                    .get_workspace_snippet(&ws_id)
+                    .or_else(|| latest_msg_by_id.get(&ws_id).cloned());
+                let has_running = hook_index.is_workspace_running(&ws_id);
+                let status = if has_running { "running" } else { "idle" }.to_string();
+                let surface_count: usize = raw_ws
+                    .panes
+                    .iter()
+                    .map(|p| p.surfaces.len())
+                    .sum();
+                summaries.push(WorkspaceSummary {
+                    id: ws_id.clone(),
+                    r#ref: ws_ref,
+                    title,
+                    pinned,
+                    selected,
+                    status,
+                    current_directory,
+                    color: color_by_id.get(&ws_id).cloned(),
+                    snippet,
                     surface_count,
                     has_running_agent: has_running,
-                }
-            })
-            .collect();
+                });
+            }
+        }
         Ok(summaries)
     }
 
@@ -475,6 +513,44 @@ impl WorkspaceTreeBuilder {
             return Self::kind_from_bin(&argv1);
         }
         Self::kind_from_bin(&argv0)
+    }
+
+    /// Single `ps -axo pid=,tty=,command=` scan producing both `pid -> tty` (for Kiro leases) and
+    /// `tty -> agent kinds` (for surface liveness).
+    pub fn scan_processes_snapshot() -> (HashMap<u32, String>, Option<HashMap<String, HashSet<&'static str>>>) {
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-axo", "pid=,tty=,command="])
+            .output()
+        else {
+            return (HashMap::new(), None);
+        };
+        if !out.status.success() {
+            return (HashMap::new(), None);
+        }
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let mut pid_ttys = HashMap::new();
+        let mut agent_ps_lines = String::new();
+        for line in stdout.lines() {
+            let mut parts = line.split_whitespace();
+            let (Some(pid_str), Some(tty)) = (parts.next(), parts.next()) else { continue };
+            let clean_tty = tty.trim_start_matches("/dev/");
+            if clean_tty.is_empty() || clean_tty.chars().all(|c| c == '?' || c == '-') {
+                continue;
+            }
+            if let Ok(pid) = pid_str.parse::<u32>() {
+                pid_ttys.insert(pid, clean_tty.to_string());
+            }
+            if let Some(pos) = line.find(tty) {
+                let cmd = line[pos + tty.len()..].trim_start();
+                if !cmd.is_empty() {
+                    agent_ps_lines.push_str(clean_tty);
+                    agent_ps_lines.push(' ');
+                    agent_ps_lines.push_str(cmd);
+                    agent_ps_lines.push('\n');
+                }
+            }
+        }
+        (pid_ttys, Some(Self::parse_agent_processes(&agent_ps_lines)))
     }
 
     /// Group agent processes by controlling tty (`ttys005` etc.). `None` when `ps` fails.

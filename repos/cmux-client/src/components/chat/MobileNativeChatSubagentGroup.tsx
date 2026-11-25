@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   Bot,
   ChevronDown,
@@ -15,7 +15,7 @@ interface MobileNativeChatSubagentGroupProps {
   agents: SubagentEntry[];
 }
 
-export function MobileNativeChatSubagentGroup({
+export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubagentGroup({
   groupId: _groupId,
   agents,
 }: MobileNativeChatSubagentGroupProps) {
@@ -109,7 +109,7 @@ export function MobileNativeChatSubagentGroup({
       )}
     </div>
   );
-}
+});
 
 function formatTokens(tokens: number): string {
   if (tokens < 1000) return `${tokens} tokens`;

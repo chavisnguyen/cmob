@@ -127,6 +127,7 @@ export function SurfaceDetailView({
   // A plain shell has nobody to chat with: only agents (and their startup dialogs) get the Chat view.
   const chatAvailable = hasAgent || Boolean(startupDialog);
   const activeMode: "chat" | "terminal" = chatAvailable ? viewMode : "terminal";
+  const chatSubscriptionEnabled = hasAgent && activeMode === "chat";
   const [isWorking, setIsWorking] = useState(false);
   const [lifecycleState, setLifecycleState] = useState<AgentLifecycleState>("idle");
   const [activityText, setActivityText] = useState<string | null>(null);
@@ -157,21 +158,55 @@ export function SurfaceDetailView({
   const applySnapshot = useCallback((resp: SessionSnapshot) => {
     if (resp.turns) {
       setTurns((prev) => {
+        if (prev.length === 0 && resp.turns.length === 0) return prev;
         if (prev.length === resp.turns.length && prev.length > 0) {
-          const lastPrev = prev[prev.length - 1];
-          const lastNext = resp.turns[resp.turns.length - 1];
-          if (lastPrev.id === lastNext.id && lastPrev.events.length === lastNext.events.length) {
+          const lastIdx = prev.length - 1;
+          const lastPrev = prev[lastIdx];
+          const lastNext = resp.turns[lastIdx];
+          if (
+            lastPrev.id === lastNext.id &&
+            lastPrev.events.length === lastNext.events.length &&
+            JSON.stringify(lastPrev) === JSON.stringify(lastNext)
+          ) {
             return prev;
           }
         }
-        return resp.turns;
+        if (prev.length === 0) return resp.turns;
+        const prevById = new Map(prev.map((t) => [t.id, t]));
+        return resp.turns.map((nextTurn, idx) => {
+          const oldTurn = prevById.get(nextTurn.id);
+          if (
+            oldTurn &&
+            idx < resp.turns.length - 1 &&
+            oldTurn.role === nextTurn.role &&
+            oldTurn.events.length === nextTurn.events.length &&
+            (oldTurn.events.length === 0 ||
+              JSON.stringify(oldTurn.events[oldTurn.events.length - 1]) ===
+                JSON.stringify(nextTurn.events[nextTurn.events.length - 1]))
+          ) {
+            return oldTurn;
+          }
+          return nextTurn;
+        });
       });
     }
     if (resp.has_more !== undefined) {
       setHasMoreHistory(resp.has_more);
     }
-    // Gateways without the field never report a dialog.
-    setStartupDialog(resp.startup_dialog ?? null);
+    setStartupDialog((prev) => {
+      const next = resp.startup_dialog ?? null;
+      if (prev === next) return prev;
+      if (!prev || !next) return next;
+      if (
+        prev.title === next.title &&
+        prev.description === next.description &&
+        prev.aimed === next.aimed &&
+        prev.choices.length === next.choices.length
+      ) {
+        return prev;
+      }
+      return next;
+    });
     setAwaitingPrompt(resp.awaiting_prompt ?? null);
     if (resp.lifecycle_state) {
       setLifecycleState(resp.lifecycle_state);
@@ -191,34 +226,47 @@ export function SurfaceDetailView({
   }, []);
 
   const loadingRef = useRef(false);
+  const turnLimitRef = useRef(turnLimit);
+  useEffect(() => {
+    turnLimitRef.current = turnLimit;
+  }, [turnLimit]);
+
   // Primitive identity of the agent: App refreshes the workspace tree every 5 s and hands down a new
   // `surface.agent` object each time, which would otherwise rebuild this callback and restart the poll timer.
   const agentSid = surface.agent?.session_id;
   const agentKd = surface.agent?.agent_kind;
-  const loadSessionTurns = useCallback(async () => {
-    if (loadingRef.current) return;
-    loadingRef.current = true;
-    try {
-      const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
-        surface_id: surface.id || surface.ref,
-        session_id: agentSid,
-        agent_kind: agentKd,
-        max_turns: turnLimit,
-      });
-      if (resp) applySnapshot(resp);
-    } catch (err) {
-      console.warn("Failed to load session turns:", err);
-    } finally {
-      loadingRef.current = false;
-    }
-  }, [surface.id, surface.ref, agentSid, agentKd, applySnapshot, turnLimit]);
+  const loadSessionTurns = useCallback(
+    async (requestedMaxTurns?: number) => {
+      if (loadingRef.current) return;
+      loadingRef.current = true;
+      try {
+        const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
+          surface_id: surface.id || surface.ref,
+          session_id: agentSid,
+          agent_kind: agentKd,
+          max_turns: requestedMaxTurns ?? turnLimitRef.current,
+        });
+        if (resp) applySnapshot(resp);
+      } catch (err) {
+        console.warn("Failed to load session turns:", err);
+      } finally {
+        loadingRef.current = false;
+      }
+    },
+    [surface.id, surface.ref, agentSid, agentKd, applySnapshot],
+  );
 
   const [subscribed, setSubscribed] = useState(false);
+  const subscribedRef = useRef(false);
+  useEffect(() => {
+    subscribedRef.current = subscribed;
+  }, [subscribed]);
+
   const surfaceKey = surface.id || surface.ref;
   const agentSessionId = surface.agent?.session_id;
   const agentKindForSub = surface.agent?.agent_kind;
   useEffect(() => {
-    if (connState !== "connected") {
+    if (connState !== "connected" || !chatSubscriptionEnabled) {
       setSubscribed(false);
       return;
     }
@@ -236,7 +284,7 @@ export function SurfaceDetailView({
         surface_id: surfaceKey,
         session_id: agentSessionId,
         agent_kind: agentKindForSub,
-        max_turns: turnLimit,
+        max_turns: turnLimitRef.current,
       })
       .then(() => {
         if (!controller.signal.aborted) setSubscribed(true);
@@ -253,18 +301,19 @@ export function SurfaceDetailView({
     };
   }, [
     connState,
+    chatSubscriptionEnabled,
     surfaceKey,
     surface.id,
     surface.ref,
     agentSessionId,
     agentKindForSub,
     applySnapshot,
-    turnLimit,
   ]);
 
   // Reset paging when switching surface.
   useEffect(() => {
     setTurnLimit(TURN_PAGE_SIZE);
+    turnLimitRef.current = TURN_PAGE_SIZE;
     setHasMoreHistory(false);
     setTurns([]);
     setInitialLoading(true);
@@ -282,8 +331,18 @@ export function SurfaceDetailView({
         max_turns: next,
       });
       if (resp) applySnapshot(resp);
-      // Re-subscribes with the larger window so live pushes keep the older turns.
       setTurnLimit(next);
+      turnLimitRef.current = next;
+      if (subscribedRef.current && wsClient.getState() === "connected") {
+        void wsClient
+          .call("mobile.chat.subscribe", {
+            surface_id: surfaceKey,
+            session_id: agentSessionId,
+            agent_kind: agentKindForSub,
+            max_turns: next,
+          })
+          .catch(() => {});
+      }
       if (next >= MAX_TURN_LIMIT) setHasMoreHistory(false);
     } catch (err) {
       console.warn("Failed to load older turns:", err);
@@ -296,21 +355,34 @@ export function SurfaceDetailView({
     turnLimit,
     surface.id,
     surface.ref,
+    surfaceKey,
     agentSid,
     agentKd,
+    agentSessionId,
+    agentKindForSub,
     applySnapshot,
   ]);
 
+  // Fetch initial snapshot once on chat mount; poll only as a fallback when push subscription is inactive.
   useEffect(() => {
-    void loadSessionTurns();
-    const interval = setInterval(
-      () => {
+    if (connState !== "connected" || !chatSubscriptionEnabled) return;
+    if (!subscribedRef.current) {
+      void loadSessionTurns();
+    }
+    if (subscribed) return;
+    const interval = setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
         void loadSessionTurns();
-      },
-      subscribed ? 5000 : 1000,
-    );
+      }
+    }, 2000);
     return () => clearInterval(interval);
-  }, [loadSessionTurns, subscribed]);
+  }, [connState, chatSubscriptionEnabled, loadSessionTurns, subscribed]);
+
+  // One-shot startup-dialog check when opening a plain shell surface without an active agent hook.
+  useEffect(() => {
+    if (connState !== "connected" || hasAgent) return;
+    void loadSessionTurns(1);
+  }, [connState, hasAgent, surfaceKey, loadSessionTurns]);
 
   // Drop pending sends once the transcript shows them (one more user turn with that text than at send time)
   // or after the TTL. Orca keeps them until the journal echo: native-chat-in-flight-sends.

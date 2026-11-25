@@ -24,6 +24,13 @@ pub fn record_surface_tty(surface_id: &str, tty: &str) {
     }
 }
 
+/// Drop closed surfaces so `SURFACE_TTY` stays bounded over long daemon lifetimes.
+pub fn prune_surfaces(live_ids: &HashSet<String>) {
+    if let Ok(mut map) = SURFACE_TTY.write() {
+        map.retain(|k, _| live_ids.contains(k));
+    }
+}
+
 /// Seed the cache with a scan the tree builder already made.
 pub fn store_proc_scan(scan: &ProcScan) {
     if let Ok(mut c) = PROC_CACHE.lock() {

@@ -167,7 +167,11 @@ export class GatewayWsClient {
   private token: string;
   private pendingRequests = new Map<
     RequestId,
-    { resolve: (val: unknown) => void; reject: (err: Error) => void }
+    {
+      resolve: (val: unknown) => void;
+      reject: (err: Error) => void;
+      timer: ReturnType<typeof setTimeout>;
+    }
   >();
   private eventListeners = new Set<EventHandler>();
   private stateChangeListeners = new Set<(state: ConnectionState) => void>();
@@ -381,7 +385,11 @@ export class GatewayWsClient {
   private syncHeartbeat(): void {
     const want = this.currentState === "connected";
     if (want && !this.heartbeatTimer) {
-      this.heartbeatTimer = setInterval(() => void this.probe(8000), 20_000);
+      this.heartbeatTimer = setInterval(() => {
+        if (typeof document === "undefined" || document.visibilityState === "visible") {
+          void this.probe(8000);
+        }
+      }, 20_000);
       this.hookPageLifecycle();
     } else if (!want && this.heartbeatTimer) {
       clearInterval(this.heartbeatTimer);
@@ -635,6 +643,7 @@ export class GatewayWsClient {
           if (resp.id !== undefined && this.pendingRequests.has(resp.id)) {
             const pending = this.pendingRequests.get(resp.id)!;
             this.pendingRequests.delete(resp.id);
+            clearTimeout(pending.timer);
             if (resp.error) {
               pending.reject(new Error(resp.error.message));
             } else {
@@ -732,6 +741,7 @@ export class GatewayWsClient {
 
   private cleanupPendingRequests(): void {
     for (const [, pending] of this.pendingRequests) {
+      clearTimeout(pending.timer);
       pending.reject(new Error("Connection closed"));
     }
     this.pendingRequests.clear();
@@ -752,20 +762,21 @@ export class GatewayWsClient {
 
     const req: JsonRpcRequest = createRpcRequest(method, params);
     return new Promise<T>((resolve, reject) => {
-      this.pendingRequests.set(req.id, {
-        resolve: resolve as (val: unknown) => void,
-        reject,
-      });
-      this.ws?.send(JSON.stringify(req));
-
       // Default 10s request timeout; callers whose gateway work is slow (chat.send waits for the agent to
       // ingest a paste) pass a longer one so a delivered message is not reported as failed.
-      setTimeout(() => {
+      const timer = setTimeout(() => {
         if (this.pendingRequests.has(req.id)) {
           this.pendingRequests.delete(req.id);
           reject(new Error(`RPC timeout for method: ${method}`));
         }
       }, options?.timeoutMs ?? 10000);
+
+      this.pendingRequests.set(req.id, {
+        resolve: resolve as (val: unknown) => void,
+        reject,
+        timer,
+      });
+      this.ws?.send(JSON.stringify(req));
     });
   }
 }

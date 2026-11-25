@@ -8,19 +8,9 @@
  * - ref/orca/mobile/src/session/native-chat/transcript/MobileNativeChatAwaitingInputRow.tsx
  */
 
-import { useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
-import {
-  Send,
-  Square,
-  CheckCircle2,
-  Clock,
-  AlertTriangle,
-  ChevronUp,
-  Loader2,
-  ImagePlus,
-  SlidersHorizontal,
-  X,
-} from "lucide-react";
+import { memo, useState, useRef, useEffect, useLayoutEffect, useMemo, useCallback } from "react";
+import { useVirtualizer, elementScroll } from "@tanstack/react-virtual";
+import { CheckCircle2, Clock, AlertTriangle, ChevronUp, Loader2, X } from "lucide-react";
 import type {
   AgentTurn,
   AgentEvent,
@@ -38,21 +28,10 @@ import { CollapsibleText } from "./CollapsibleText";
 import { NativeChatTurnActivityLine } from "./NativeChatTurnActivityLine";
 import { AgentIcon } from "../common/AgentIcon";
 import { agentDisplayName } from "../common/agentBrand";
-import {
-  DRAIN_SETTLE_MS,
-  canDrain,
-  enqueue,
-  queueStatusLabel,
-  removeQueued,
-  resolveEffectiveAwaiting,
-  type QueuedMessage,
-} from "./chatQueue";
-import { suggestSlashCommands } from "./slashCommands";
-import { MAX_IMAGES_PER_MESSAGE, PartialSendError, prepareImageForUpload } from "./imageAttach";
-import { contextTokens, formatTokens, latestUsage } from "./usageSummary";
-import { hasAgentOptions } from "./agentOptions";
-import { AgentOptionsSheet } from "./AgentOptionsSheet";
-import { shouldSubmitComposerKey } from "./composerKey";
+import { resolveEffectiveAwaiting } from "./chatQueue";
+import { latestUsage } from "./usageSummary";
+import { ChatComposer, type ChatComposerHandle } from "./ChatComposer";
+import { TURN_LIST_GAP_PX, createProgrammaticScrollMarks, estimateTurnHeight } from "./chatVirtual";
 
 interface OrcaChatViewProps {
   turns: AgentTurn[];
@@ -105,8 +84,6 @@ function cleanUserPrompt(text: string): string {
     .trim();
 }
 
-const WINDOW_CHUNK_SIZE = 30;
-
 export function OrcaChatView({
   turns,
   agentKind,
@@ -128,16 +105,24 @@ export function OrcaChatView({
   onOpenTerminal,
   isDesktop = false,
 }: OrcaChatViewProps) {
-  const [inputText, setInputText] = useState("");
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
   const [isScrolledUp, setIsScrolledUp] = useState(false);
-  const [visibleCount, setVisibleCount] = useState(WINDOW_CHUNK_SIZE);
+  const [sendError, setSendError] = useState<string | null>(null);
+  const [answeringChoice, setAnsweringChoice] = useState<number | null>(null);
+  const [isDraggingImage, setIsDraggingImage] = useState(false);
+  const [scrollMargin, setScrollMargin] = useState(0);
 
   const scrollContainerRef = useRef<HTMLDivElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
+  const sizerRef = useRef<HTMLDivElement>(null);
   const bottomAnchorRef = useRef<HTMLDivElement>(null);
+  const composerHandleRef = useRef<ChatComposerHandle>(null);
+  const dragDepthRef = useRef(0);
   const isFollowingRef = useRef(true);
+  const turnsRef = useRef(turns);
+  turnsRef.current = turns;
+  const programmaticScrollMarks = useMemo(() => createProgrammaticScrollMarks(), []);
 
   // Sync isStopping held state back to false when agent transitions out of running
   useEffect(() => {
@@ -146,7 +131,7 @@ export function OrcaChatView({
     }
   }, [isWorking]);
 
-  const handleInterrupt = async () => {
+  const handleInterrupt = useCallback(async () => {
     if (isStopping) return;
     setIsStopping(true);
     try {
@@ -155,7 +140,7 @@ export function OrcaChatView({
       console.warn("Interrupt failed:", err);
       setIsStopping(false);
     }
-  };
+  }, [isStopping, onInterrupt]);
 
   // Check if there is an active awaiting-input in the latest turn.
   // Solves Zombie Approval Card: Never resurrect old answered questions from historical turns.
@@ -194,82 +179,139 @@ export function OrcaChatView({
     [latestAwaiting, lifecycleState, isWorking, startupDialog, awaitingPrompt],
   );
 
-  // Windowed visible turns for pagination & performance
-  const hasHiddenLocal = turns.length > visibleCount;
-  const hasEarlier = hasHiddenLocal || (hasMoreHistory && !!onLoadOlder);
-  const visibleTurns = useMemo(() => {
-    if (!hasHiddenLocal) return turns;
-    return turns.slice(turns.length - visibleCount);
-  }, [turns, visibleCount, hasHiddenLocal]);
+  const hasEarlier = Boolean(hasMoreHistory && onLoadOlder);
 
-  // Scroll to tail helper
-  const scrollToTail = useCallback((behavior: ScrollBehavior = "instant") => {
-    if (bottomAnchorRef.current) {
-      bottomAnchorRef.current.scrollIntoView({ behavior, block: "end" });
-    } else if (scrollContainerRef.current) {
-      scrollContainerRef.current.scrollTop = scrollContainerRef.current.scrollHeight;
+  // oxlint-disable-next-line react/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: turns.length,
+    getScrollElement: () => scrollContainerRef.current,
+    estimateSize: (index) => {
+      const turn = turns[index];
+      return turn ? estimateTurnHeight(turn) : 80;
+    },
+    getItemKey: (index) => turns[index]?.id || `turn-${index}`,
+    overscan: 6,
+    gap: TURN_LIST_GAP_PX,
+    scrollMargin,
+    anchorTo: "end",
+    followOnAppend: false,
+    scrollEndThreshold: -1,
+    scrollToFn: (offset, options, instance) => {
+      const el = scrollContainerRef.current;
+      if (el) programmaticScrollMarks.mark(el);
+      elementScroll(offset, options, instance);
+    },
+  });
+
+  virtualizer.shouldAdjustScrollPositionOnItemSizeChange = (item, _delta, instance) => {
+    const offset = instance.scrollOffset ?? 0;
+    const written = scrollContainerRef.current?.scrollTop ?? offset;
+    if (Math.abs(written - offset) > 120) {
+      return false;
     }
+    return isFollowingRef.current || item.end <= offset + instance.options.scrollMargin;
+  };
+
+  const updateScrollMargin = useCallback(() => {
+    const scrollEl = scrollContainerRef.current;
+    const sizerEl = sizerRef.current;
+    if (!scrollEl || !sizerEl) {
+      setScrollMargin((prev) => (prev === 0 ? prev : 0));
+      return;
+    }
+    const next = Math.max(
+      0,
+      Math.round(
+        sizerEl.getBoundingClientRect().top -
+          scrollEl.getBoundingClientRect().top +
+          scrollEl.scrollTop,
+      ),
+    );
+    setScrollMargin((prev) => (prev === next ? prev : next));
   }, []);
+
+  useLayoutEffect(() => {
+    updateScrollMargin();
+  }, [updateScrollMargin, hasEarlier, turns.length]);
+
+  // Scroll to tail helper (direct scrollTop assignment avoids cross-container scrollIntoView side-effects)
+  const scrollToTail = useCallback(
+    (behavior: ScrollBehavior = "instant") => {
+      const container = scrollContainerRef.current;
+      if (container) {
+        if (behavior !== "smooth" && turnsRef.current.length > 0) {
+          programmaticScrollMarks.mark(container);
+          virtualizer.scrollToEnd({ behavior: "auto" });
+        }
+        programmaticScrollMarks.mark(container);
+        if (behavior === "smooth") {
+          container.scrollTo({ top: container.scrollHeight, behavior: "smooth" });
+        } else {
+          container.scrollTop = container.scrollHeight;
+        }
+        return;
+      }
+      bottomAnchorRef.current?.scrollIntoView({ behavior, block: "end" });
+    },
+    [programmaticScrollMarks, virtualizer],
+  );
 
   // Immediate bottom pinning on mount and on turn updates
   useLayoutEffect(() => {
-    if (isFollowingRef.current) {
+    if (!isFollowingRef.current) return;
+    scrollToTail("instant");
+    let r2 = 0;
+    const r1 = requestAnimationFrame(() => {
       scrollToTail("instant");
-      const r1 = requestAnimationFrame(() => {
+      r2 = requestAnimationFrame(() => {
         scrollToTail("instant");
-        const r2 = requestAnimationFrame(() => {
-          scrollToTail("instant");
-        });
-        return () => cancelAnimationFrame(r2);
       });
-      return () => cancelAnimationFrame(r1);
-    }
-  }, [visibleTurns.length, isWorking, isSubmitting, scrollToTail]);
+    });
+    return () => {
+      cancelAnimationFrame(r1);
+      if (r2) cancelAnimationFrame(r2);
+    };
+  }, [turns.length, isWorking, isSubmitting, scrollToTail]);
 
-  // Content resize observer: keep anchored at the bottom when fonts/markdown/diffs expand
+  // Content & viewport resize observer: keep scrollMargin synced and pinned at tail when following
   useEffect(() => {
-    const container = contentRef.current;
-    if (!container) return;
+    const contentEl = contentRef.current;
+    const scrollEl = scrollContainerRef.current;
+    if (!contentEl && !scrollEl) return;
     const observer = new ResizeObserver(() => {
+      updateScrollMargin();
       if (isFollowingRef.current) {
         scrollToTail("instant");
       }
     });
-    observer.observe(container);
+    if (contentEl) observer.observe(contentEl);
+    if (scrollEl) observer.observe(scrollEl);
     return () => observer.disconnect();
-  }, [scrollToTail]);
+  }, [scrollToTail, updateScrollMargin]);
 
   // Load earlier messages while keeping scroll position stable.
-  // Local window first (already fetched), then ask the gateway for an older page.
-  // The anchor (distance from bottom) is restored in a layout effect once the new turns render.
   const pendingAnchorRef = useRef<number | null>(null);
   const handleLoadEarlier = useCallback(() => {
     const container = scrollContainerRef.current;
     if (!container || !hasEarlier || isLoadingOlder || pendingAnchorRef.current !== null) return;
     pendingAnchorRef.current = container.scrollHeight - container.scrollTop;
-    if (hasHiddenLocal) {
-      setVisibleCount((prev) => Math.min(turns.length, prev + WINDOW_CHUNK_SIZE));
-    } else if (onLoadOlder) {
-      // Make the window large enough to show every fetched turn once they arrive.
-      setVisibleCount((prev) => Math.max(prev, turns.length + WINDOW_CHUNK_SIZE));
-      void onLoadOlder().finally(() => {
-        // If nothing new arrived, release the anchor so later loads are not blocked.
-        requestAnimationFrame(() => {
-          pendingAnchorRef.current = null;
-        });
+    void onLoadOlder!().finally(() => {
+      requestAnimationFrame(() => {
+        pendingAnchorRef.current = null;
       });
-    }
-  }, [hasEarlier, hasHiddenLocal, isLoadingOlder, onLoadOlder, turns.length]);
+    });
+  }, [hasEarlier, isLoadingOlder, onLoadOlder]);
 
   useLayoutEffect(() => {
     const container = scrollContainerRef.current;
     const anchor = pendingAnchorRef.current;
     if (!container || anchor === null) return;
     if (!isFollowingRef.current) {
-      container.scrollTop = container.scrollHeight - anchor;
+      programmaticScrollMarks.mark(container);
+      container.scrollTop = Math.max(0, container.scrollHeight - anchor);
     }
     pendingAnchorRef.current = null;
-  }, [visibleTurns.length]);
+  }, [turns.length, programmaticScrollMarks]);
 
   // When the content does not fill the viewport there is no scroll event, so keep pulling older
   // pages until it overflows (or history runs out).
@@ -280,19 +322,21 @@ export function OrcaChatView({
       if (container.scrollHeight <= container.clientHeight + 60) handleLoadEarlier();
     });
     return () => cancelAnimationFrame(id);
-  }, [visibleTurns.length, hasEarlier, isLoading, isLoadingOlder, handleLoadEarlier]);
+  }, [turns.length, hasEarlier, isLoading, isLoadingOlder, handleLoadEarlier]);
 
   const handleScroll = () => {
-    if (!scrollContainerRef.current) return;
-    const { scrollTop, scrollHeight, clientHeight } = scrollContainerRef.current;
+    const container = scrollContainerRef.current;
+    if (!container) return;
+    if (programmaticScrollMarks.consume(container)) return;
+    const { scrollTop, scrollHeight, clientHeight } = container;
     const distanceToBottom = scrollHeight - (scrollTop + clientHeight);
 
     const isUp = distanceToBottom > 80;
     isFollowingRef.current = !isUp;
-    setIsScrolledUp(isUp);
+    setIsScrolledUp((prev) => (prev === isUp ? prev : isUp));
 
     // Auto load earlier if user scrolled near the top
-    if (scrollTop < 60 && hasEarlier) {
+    if (scrollTop < 60 && hasEarlier && !isLoadingOlder) {
       handleLoadEarlier();
     }
   };
@@ -319,23 +363,19 @@ export function OrcaChatView({
     const onViewportChange = () => {
       const vv = window.visualViewport;
       if (!vv) return;
-      // On desktop, clicking the textarea must not yank scroll back to the bottom.
       if (isDesktopRef.current) {
         setIsKeyboardVisible(false);
         return;
       }
-      // When virtual keyboard opens on mobile, visualViewport.height shrinks significantly
-      // Some iOS modes (Home Screen app) also shrink innerHeight, so the height delta can read ~0;
-      // a focused text field is the fallback signal that the on-screen keyboard is up.
       const ae = document.activeElement;
       const textFocused = ae instanceof HTMLTextAreaElement || ae instanceof HTMLInputElement;
       const keyboardOpen = window.innerHeight - vv.height > 100 || textFocused;
-      setIsKeyboardVisible(keyboardOpen);
+      setIsKeyboardVisible((prev) => (prev === keyboardOpen ? prev : keyboardOpen));
       if (keyboardOpen) {
         if (window.scrollY !== 0) {
           window.scrollTo(0, 0);
         }
-        bottomAnchorRef.current?.scrollIntoView({ behavior: "instant", block: "end" });
+        scrollToTail("instant");
       }
     };
 
@@ -351,22 +391,7 @@ export function OrcaChatView({
       window.removeEventListener("focusin", onViewportChange);
       window.removeEventListener("focusout", onViewportChange);
     };
-  }, []);
-
-  const handleInputFocus = () => {
-    // Prevent iOS WebKit from scrolling the entire page / layout viewport upwards
-    if (typeof window !== "undefined") {
-      requestAnimationFrame(() => {
-        window.scrollTo(0, 0);
-        document.body.scrollTop = 0;
-      });
-    }
-  };
-
-  const composerRef = useRef<HTMLTextAreaElement>(null);
-  // Why the last send was refused (e.g. the agent is showing a startup dialog); cleared on typing.
-  const [sendError, setSendError] = useState<string | null>(null);
-  const [answeringChoice, setAnsweringChoice] = useState<number | null>(null);
+  }, [scrollToTail]);
 
   const handleAnswer = async (choice: number) => {
     if (!onAnswerDialog || answeringChoice !== null) return;
@@ -380,244 +405,31 @@ export function OrcaChatView({
       setAnsweringChoice(null);
     }
   };
-  // Auto-grow the composer up to ~6 lines.
-  useLayoutEffect(() => {
-    const el = composerRef.current;
-    if (!el) return;
-    el.style.height = "auto";
-    el.style.height = `${Math.min(el.scrollHeight, 132)}px`;
-  }, [inputText]);
-
-  // Messages typed while the agent is busy wait here and go out one at a time once it is idle.
-  const [queue, setQueue] = useState<QueuedMessage[]>([]);
-  const [queuePaused, setQueuePaused] = useState(false);
-  const queueRef = useRef(queue);
-  const drainingRef = useRef(false);
-  useEffect(() => {
-    queueRef.current = queue;
-  }, [queue]);
-
-  /** Delivers one message. Returns false (and shows the error) when the gateway refused it. */
-  /** How many of the last send's images were already pasted into the agent when it failed. */
-  const deliveredRef = useRef(0);
-
-  const sendNow = async (text: string, imagePaths: string[] = []): Promise<boolean> => {
-    deliveredRef.current = 0;
-    setSendError(null);
-    setIsSubmitting(true);
-    isFollowingRef.current = true;
-    try {
-      await onSend(text, imagePaths);
-      setIsScrolledUp(false);
-      scrollToTail("instant");
-      return true;
-    } catch (err) {
-      console.warn("Send failed:", err);
-      if (err instanceof PartialSendError) deliveredRef.current = err.delivered;
-      setSendError(err instanceof Error ? err.message : "Could not send the message.");
-      return false;
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
-  // Images picked for the next message, already uploaded to the host (path) with a local preview.
-  const [images, setImages] = useState<Array<{ id: string; path: string; previewUrl: string }>>([]);
-  const [uploading, setUploading] = useState(0);
-  const fileInputRef = useRef<HTMLInputElement>(null);
-
-  const handlePickImages = async (files: FileList | File[] | null) => {
-    if (!files || !onUploadImage) return;
-    const room = MAX_IMAGES_PER_MESSAGE - images.length - uploading;
-    const picked = Array.from(files).slice(0, Math.max(0, room));
-    if (files.length > picked.length)
-      setSendError(`You can attach up to ${MAX_IMAGES_PER_MESSAGE} images.`);
-    for (const file of picked) {
-      setUploading((n) => n + 1);
-      try {
-        const prepared = await prepareImageForUpload(file);
-        const path = await onUploadImage(prepared.base64);
-        setImages((cur) => [
-          ...cur,
-          { id: `img-${Date.now()}-${cur.length}`, path, previewUrl: prepared.previewUrl },
-        ]);
-      } catch (err) {
-        setSendError(err instanceof Error ? err.message : "Could not upload the image.");
-      } finally {
-        setUploading((n) => n - 1);
-      }
-    }
-    if (fileInputRef.current) fileInputRef.current.value = "";
-  };
-
-  const imagesRef = useRef(images);
-  useEffect(() => {
-    imagesRef.current = images;
-  }, [images]);
-  // Free the preview blobs of images still attached when the composer goes away.
-  useEffect(
-    () => () => {
-      imagesRef.current.forEach((i) => URL.revokeObjectURL(i.previewUrl));
-    },
-    [],
-  );
-
-  const removeImage = (id: string) =>
-    setImages((cur) => {
-      const gone = cur.find((i) => i.id === id);
-      if (gone) URL.revokeObjectURL(gone.previewUrl);
-      return cur.filter((i) => i.id !== id);
-    });
-
-  const handleSendPrompt = async () => {
-    const hasContent = inputText.trim().length > 0 || images.length > 0;
-    if (!hasContent || isSubmitting || uploading > 0) return;
-    const text = inputText.trim();
-    const sent = images;
-    const paths = sent.map((i) => i.path);
-    setInputText("");
-    setImages([]);
-    // Queue instead of sending while the agent is busy or waiting on an approval/question: a line typed
-    // into a permission prompt would answer it by accident.
-    if (isWorking || lifecycleState === "waiting" || !!effectiveAwaiting || !!startupDialog) {
-      setQueue((q) =>
-        enqueue(q, text, `q-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, paths),
-      );
-      sent.forEach((i) => URL.revokeObjectURL(i.previewUrl)); // the queue keeps only the host paths
-      return;
-    }
-    if (await sendNow(text, paths)) {
-      sent.forEach((i) => URL.revokeObjectURL(i.previewUrl));
-      return;
-    }
-    // Delivery failed: give the message back instead of losing it, merging with anything typed meanwhile.
-    // Images already pasted into the agent are not restored (a retry would paste them twice).
-    const remaining = sent.slice(deliveredRef.current);
-    setInputText((current) => (current && current !== text ? `${text}\n${current}` : text));
-    setImages((cur) => [...remaining, ...cur].slice(0, MAX_IMAGES_PER_MESSAGE));
-  };
-
-  const needsAnswer = !!effectiveAwaiting || !!startupDialog;
-
-  const handleSendQueuedNow = async (item: QueuedMessage) => {
-    if (drainingRef.current || isSubmitting) return;
-    drainingRef.current = true;
-    setQueue((q) => removeQueued(q, item.id));
-    try {
-      const ok = await sendNow(item.text, item.images);
-      if (ok) {
-        setQueuePaused(false);
-      } else {
-        setQueue((q) => [{ ...item, images: item.images.slice(deliveredRef.current) }, ...q]);
-        setQueuePaused(true);
-      }
-    } finally {
-      drainingRef.current = false;
-    }
-  };
-  useEffect(() => {
-    if (queuePaused) return;
-    if (
-      !canDrain({
-        queueLength: queue.length,
-        isWorking,
-        isSubmitting,
-        lifecycle: lifecycleState,
-        needsAnswer,
-      })
-    ) {
-      return;
-    }
-    const timer = setTimeout(async () => {
-      const head = queueRef.current[0];
-      if (!head || drainingRef.current) return;
-      drainingRef.current = true;
-      setQueue((q) => removeQueued(q, head.id));
-      const ok = await sendNow(head.text, head.images);
-      if (!ok) {
-        // Put it back (minus images already pasted) and stop: retrying automatically would loop on a
-        // persistent error.
-        setQueue((q) => [{ ...head, images: head.images.slice(deliveredRef.current) }, ...q]);
-        setQueuePaused(true);
-      }
-      drainingRef.current = false;
-    }, DRAIN_SETTLE_MS);
-    return () => clearTimeout(timer);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [queue, queuePaused, isWorking, isSubmitting, lifecycleState, needsAnswer]);
 
   const usage = useMemo(() => latestUsage(turns), [turns]);
-  const [showOptions, setShowOptions] = useState(false);
-  const canSetOptions = !!surfaceId && hasAgentOptions(agentKind);
+  const needsAnswer = !!effectiveAwaiting || !!startupDialog;
 
-  const slashSuggestions = useMemo(
-    () => suggestSlashCommands(agentKind, inputText),
-    [agentKind, inputText],
+  const handleComposerScrollToTail = useCallback(() => {
+    isFollowingRef.current = true;
+    setIsScrolledUp(false);
+    scrollToTail("instant");
+  }, [scrollToTail]);
+
+  const handleSubmitAwaiting = useCallback(
+    async (resp: string) => {
+      await onSend(resp);
+    },
+    [onSend],
   );
-  const [slashDismissed, setSlashDismissed] = useState(false);
-  const [activeSlashIdx, setActiveSlashIdx] = useState(0);
-  const [isDraggingImage, setIsDraggingImage] = useState(false);
-  const dragDepthRef = useRef(0);
 
-  useEffect(() => {
-    setSlashDismissed(false);
-    setActiveSlashIdx(0);
-  }, [inputText, agentKind]);
-
-  const visibleSlashSuggestions = slashDismissed ? [] : slashSuggestions;
-
-  const applySlashCommand = (name: string) => {
-    setInputText(`/${name} `);
-    setSlashDismissed(true);
-    composerRef.current?.focus();
-  };
-
-  const handleComposerKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    const isIme = e.nativeEvent.isComposing || e.keyCode === 229;
-    if (isIme) return;
-
-    if (visibleSlashSuggestions.length > 0) {
-      if (e.key === "ArrowDown") {
-        e.preventDefault();
-        setActiveSlashIdx((i) => (i + 1) % visibleSlashSuggestions.length);
-        return;
-      }
-      if (e.key === "ArrowUp") {
-        e.preventDefault();
-        setActiveSlashIdx(
-          (i) => (i - 1 + visibleSlashSuggestions.length) % visibleSlashSuggestions.length,
-        );
-        return;
-      }
-      if (e.key === "Escape") {
-        e.preventDefault();
-        setSlashDismissed(true);
-        return;
-      }
-      if (e.key === "Tab" || (e.key === "Enter" && !e.shiftKey)) {
-        const picked = visibleSlashSuggestions[activeSlashIdx] ?? visibleSlashSuggestions[0];
-        if (picked) {
-          e.preventDefault();
-          applySlashCommand(picked.name);
-          return;
-        }
-      }
-    }
-
-    if (
-      shouldSubmitComposerKey({
-        key: e.key,
-        shiftKey: e.shiftKey,
-        isComposing: e.nativeEvent.isComposing,
-        keyCode: e.keyCode,
-        isDesktop,
-        hasSlashMenu: visibleSlashSuggestions.length > 0,
-      })
-    ) {
-      e.preventDefault();
-      void handleSendPrompt();
-    }
-  };
+  const virtualItems = turns.length > 0 ? virtualizer.getVirtualItems() : [];
+  const totalVirtualHeight = turns.length > 0 ? virtualizer.getTotalSize() : 0;
+  const firstVirtualItem = virtualItems[0];
+  const lastVirtualItem = virtualItems[virtualItems.length - 1];
+  const topSpacerHeight = firstVirtualItem ? Math.max(0, firstVirtualItem.start - scrollMargin) : 0;
+  const bottomSpacerHeight = lastVirtualItem
+    ? Math.max(0, totalVirtualHeight - (lastVirtualItem.end - scrollMargin))
+    : 0;
 
   return (
     <div
@@ -644,7 +456,7 @@ export function OrcaChatView({
         setIsDraggingImage(false);
         const dropped = Array.from(e.dataTransfer.files).filter((f) => f.type.startsWith("image/"));
         if (dropped.length > 0) {
-          void handlePickImages(dropped);
+          void composerHandleRef.current?.pickImages(dropped);
         }
       }}
       className={`flex flex-col h-full w-full max-w-full bg-bg text-fg relative overflow-hidden ${
@@ -667,15 +479,15 @@ export function OrcaChatView({
         <div
           ref={scrollContainerRef}
           onScroll={handleScroll}
-          className="relative h-full overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-2.5 space-y-2 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full select-text"
+          className="relative h-full overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-2.5 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full select-text"
         >
           <div
             ref={contentRef}
-            className="space-y-2 min-h-full flex flex-col justify-end min-w-0 max-w-4xl mx-auto w-full"
+            className="min-h-full flex flex-col justify-end min-w-0 max-w-4xl mx-auto w-full"
           >
             {/* Load Earlier Messages Banner */}
             {hasEarlier && (
-              <div className="flex justify-center py-1.5 shrink-0">
+              <div className="flex justify-center py-1.5 pb-2 shrink-0">
                 <button
                   type="button"
                   onClick={handleLoadEarlier}
@@ -684,11 +496,7 @@ export function OrcaChatView({
                 >
                   <ChevronUp className="w-3 h-3 text-muted" />
                   <span>
-                    {isLoadingOlder
-                      ? "Loading earlier messages…"
-                      : hasHiddenLocal
-                        ? `Load earlier messages (${turns.length - visibleCount} more)`
-                        : "Load earlier messages"}
+                    {isLoadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
                   </span>
                 </button>
               </div>
@@ -713,42 +521,58 @@ export function OrcaChatView({
                 </p>
               </div>
             ) : (
-              visibleTurns.map((turn, tIdx) => {
-                const isUser = turn.role === "user";
-                const isLastTurn = tIdx === visibleTurns.length - 1;
-
-                return (
+              <div ref={sizerRef} className="w-full min-w-0">
+                {topSpacerHeight > 0 && (
                   <div
-                    key={turn.id || `turn-${tIdx}`}
-                    className={`flex flex-col ${isUser ? "items-end" : "items-start"} w-full min-w-0 max-w-full my-0.5`}
-                  >
-                    {isUser ? (
-                      /* User Prompt Bubble matching Orca dark capsule */
-                      <div className="max-w-[88%] bg-raised border border-white/10 text-fg rounded-2xl rounded-tr-sm px-3.5 py-2 text-[13px] leading-relaxed shadow-sm min-w-0 break-words [overflow-wrap:anywhere]">
-                        {turn.events.map((ev, eIdx) =>
-                          ev.kind === "user" ? (
-                            <CollapsibleText
-                              key={`u-${eIdx}`}
-                              text={cleanUserPrompt(ev.text)}
-                              className="whitespace-pre-wrap font-sans min-w-0 break-words [overflow-wrap:anywhere]"
-                            />
-                          ) : null,
+                    aria-hidden="true"
+                    style={{ height: topSpacerHeight, overflowAnchor: "none" }}
+                  />
+                )}
+                {(() => {
+                  let previousEnd = firstVirtualItem ? firstVirtualItem.start : scrollMargin;
+                  return virtualItems.map((virtualItem) => {
+                    const turn = turns[virtualItem.index];
+                    if (!turn) return null;
+                    const gapHeight = Math.max(0, virtualItem.start - previousEnd);
+                    previousEnd = virtualItem.end;
+                    const isLastTurn = virtualItem.index === turns.length - 1;
+                    return (
+                      <div key={virtualItem.key} className="w-full min-w-0">
+                        {gapHeight > 0 && (
+                          <div
+                            aria-hidden="true"
+                            style={{ height: gapHeight, overflowAnchor: "none" }}
+                          />
                         )}
+                        <div
+                          data-index={virtualItem.index}
+                          ref={virtualizer.measureElement}
+                          className="flow-root w-full min-w-0"
+                        >
+                          <ChatTurnRow
+                            turn={turn}
+                            isLastTurn={isLastTurn}
+                            isWorking={isLastTurn && isWorking}
+                            activeAwaiting={isLastTurn ? latestAwaiting : null}
+                            onSubmitAwaiting={handleSubmitAwaiting}
+                          />
+                        </div>
                       </div>
-                    ) : (
-                      /* Assistant Turn Container */
-                      <div className="w-full max-w-full min-w-0 space-y-1.5">
-                        {renderAssistantTurnEvents(turn.events, isLastTurn, latestAwaiting, onSend)}
-                      </div>
-                    )}
-                  </div>
-                );
-              })
+                    );
+                  });
+                })()}
+                {bottomSpacerHeight > 0 && (
+                  <div
+                    aria-hidden="true"
+                    style={{ height: bottomSpacerHeight, overflowAnchor: "none" }}
+                  />
+                )}
+              </div>
             )}
 
             {/* Orca Live Activity Line (Instant feedback while agent is thinking/working) */}
             {(isWorking || isSubmitting) && (
-              <div className="w-full flex justify-start my-0.5 pl-1 min-w-0 max-w-full">
+              <div className="w-full flex justify-start pt-2 my-0.5 pl-1 min-w-0 max-w-full">
                 <NativeChatTurnActivityLine activityText={activityText} />
               </div>
             )}
@@ -843,241 +667,76 @@ export function OrcaChatView({
             </div>
           )}
 
-          {queue.length > 0 && (
-            <div className="mb-1.5 space-y-1" aria-label="Queued messages">
-              {queue.map((m, i) => (
-                <div
-                  key={m.id}
-                  className="flex items-center gap-2 px-3 py-1.5 rounded-xl border border-white/[0.1] bg-surface text-[12.5px] text-fg-soft"
-                >
-                  <span className="shrink-0 text-accent-soft font-semibold">
-                    {queueStatusLabel({ index: i, queuePaused, lifecycleState, needsAnswer })}
-                  </span>
-                  <span className="min-w-0 flex-1 truncate">
-                    {m.images.length > 0 ? `🖼 ${m.images.length} · ` : ""}
-                    {m.text}
-                  </span>
-                  {queuePaused && i === 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setQueuePaused(false)}
-                      className="shrink-0 px-2 h-6 rounded-md bg-accent text-white text-[12px] font-semibold"
-                    >
-                      Resume
-                    </button>
-                  )}
-                  <button
-                    type="button"
-                    disabled={isSubmitting}
-                    onClick={() => void handleSendQueuedNow(m)}
-                    className="shrink-0 px-2 h-6 rounded-md bg-white/[0.08] hover:bg-white/[0.14] text-fg text-[12px] font-medium disabled:opacity-40"
-                  >
-                    Send now
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setQueue((q) => removeQueued(q, m.id))}
-                    className="shrink-0 w-6 h-6 rounded-md hover:bg-white/[0.08] text-muted flex items-center justify-center"
-                    aria-label="Remove queued message"
-                  >
-                    <X className="w-3.5 h-3.5" />
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-
-          {visibleSlashSuggestions.length > 0 && (
-            <div
-              role="listbox"
-              aria-label="Slash commands"
-              className="mb-1.5 rounded-xl border border-white/[0.1] bg-surface overflow-hidden"
-            >
-              {visibleSlashSuggestions.map((c, idx) => (
-                <button
-                  key={c.name}
-                  type="button"
-                  role="option"
-                  aria-selected={idx === activeSlashIdx}
-                  onClick={() => applySlashCommand(c.name)}
-                  className={`w-full flex items-baseline gap-2 px-3 py-2 text-left transition-colors ${
-                    idx === activeSlashIdx ? "bg-white/[0.08]" : "hover:bg-white/[0.06]"
-                  }`}
-                >
-                  <span className="text-[13.5px] font-mono text-accent-soft">/{c.name}</span>
-                  <span className="min-w-0 truncate text-[12px] text-muted">{c.description}</span>
-                </button>
-              ))}
-            </div>
-          )}
-
-          {sendError && (
-            <div
-              role="alert"
-              className="mb-1.5 px-3 py-2 rounded-xl border border-amber-500/30 bg-amber-500/10 text-[12.5px] leading-snug text-amber-200"
-            >
-              {sendError}
-            </div>
-          )}
-
-          {(images.length > 0 || uploading > 0) && (
-            <div className="mb-1.5 flex flex-wrap gap-2" aria-label="Attached images">
-              {images.map((img) => (
-                <div
-                  key={img.id}
-                  className="relative w-14 h-14 rounded-xl overflow-hidden border border-white/[0.14]"
-                >
-                  <img src={img.previewUrl} alt="Attached" className="w-full h-full object-cover" />
-                  <button
-                    type="button"
-                    onClick={() => removeImage(img.id)}
-                    className="absolute top-0.5 right-0.5 w-5 h-5 rounded-full bg-black/70 text-white flex items-center justify-center"
-                    aria-label="Remove image"
-                  >
-                    <X className="w-3 h-3" />
-                  </button>
-                </div>
-              ))}
-              {uploading > 0 && (
-                <div className="w-14 h-14 rounded-xl border border-white/[0.14] flex items-center justify-center">
-                  <Loader2 className="w-4 h-4 animate-spin text-accent-soft" />
-                </div>
-              )}
-            </div>
-          )}
-
-          {(usage || canSetOptions) && (
-            <div className="mb-1 px-1 flex items-center justify-between gap-2">
-              <div
-                className="min-w-0 text-[11.5px] text-dim truncate"
-                title={
-                  usage
-                    ? `Input ${usage.input_tokens} · output ${usage.output_tokens} · cache read ${usage.cache_read_tokens ?? 0} · cache write ${usage.cache_creation_tokens ?? 0}`
-                    : undefined
-                }
-              >
-                {usage
-                  ? `Context ${formatTokens(contextTokens(usage))} tokens${usage.model ? ` · ${usage.model}` : ""}`
-                  : ""}
-              </div>
-              {canSetOptions && (
-                <button
-                  type="button"
-                  onClick={() => setShowOptions(true)}
-                  className="shrink-0 h-7 px-2.5 rounded-lg bg-raised hover:bg-line text-[12px] font-semibold text-fg-soft inline-flex items-center gap-1.5"
-                  aria-label="Model and effort"
-                >
-                  <SlidersHorizontal className="w-3.5 h-3.5" />
-                  Model
-                </button>
-              )}
-            </div>
-          )}
-
-          {showOptions && surfaceId && (
-            <AgentOptionsSheet
-              surfaceId={surfaceId}
-              agentKind={agentKind}
-              currentModel={usage?.model}
-              onClose={() => setShowOptions(false)}
-              onOpenTerminal={onOpenTerminal}
-            />
-          )}
-
-          {/* Floating Mobile Prompt Composer with Orca Rounded Capsule */}
-          <div className="flex items-end gap-1 bg-surface border border-line rounded-[24px] pl-4 pr-1.5 py-1.5">
-            {/* Desktop: Enter sends, Shift+Enter inserts newline; Mobile: Enter inserts newline. */}
-            <textarea
-              ref={composerRef}
-              rows={1}
-              value={inputText}
-              onChange={(e) => {
-                setInputText(e.target.value);
-                if (sendError) setSendError(null);
-              }}
-              onKeyDown={handleComposerKeyDown}
-              onFocus={handleInputFocus}
-              onPaste={(e) => {
-                // Pasting a copied photo (iOS "Copy" on an image) arrives as a clipboard file, not text.
-                const pasted = Array.from(e.clipboardData.files).filter((f) =>
-                  f.type.startsWith("image/"),
-                );
-                if (pasted.length === 0 || !onUploadImage) return;
-                e.preventDefault();
-                void handlePickImages(pasted);
-              }}
-              enterKeyHint={isDesktop ? "send" : "enter"}
-              placeholder={
-                isDesktop
-                  ? `Message ${agentDisplayName(agentKind)} (Enter to send, Shift+Enter for newline)...`
-                  : `Message ${agentDisplayName(agentKind)}...`
-              }
-              className="flex-1 bg-transparent border-0 text-[15px] leading-[22px] text-fg placeholder-dim outline-none transition-colors py-[7px] min-w-0 resize-none max-h-[132px]"
-            />
-
-            {onUploadImage && (
-              <>
-                <input
-                  ref={fileInputRef}
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  hidden
-                  onChange={(e) => void handlePickImages(e.target.files)}
-                />
-                <button
-                  type="button"
-                  onClick={() => fileInputRef.current?.click()}
-                  disabled={images.length + uploading >= MAX_IMAGES_PER_MESSAGE}
-                  className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-muted hover:text-white disabled:opacity-30"
-                  title="Attach image"
-                  aria-label="Attach image"
-                >
-                  <ImagePlus className="w-[18px] h-[18px]" />
-                </button>
-              </>
-            )}
-
-            {/* Orca Critical Action Swap Button: Stop while agent is running; Send otherwise */}
-            {isWorking && !inputText.trim() && images.length === 0 && !isSubmitting ? (
-              <button
-                type="button"
-                onClick={handleInterrupt}
-                disabled={isStopping}
-                className="w-9 h-9 bg-raised hover:bg-rose-950/60 hover:text-rose-400 border border-line text-fg-soft rounded-full transition-colors shadow-sm shrink-0 flex items-center justify-center disabled:opacity-50"
-                title={isStopping ? "Stopping..." : "Stop the agent (Ctrl+C)"}
-                aria-label={isStopping ? "Stopping" : "Stop"}
-              >
-                {isStopping ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
-                ) : (
-                  <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
-                )}
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={handleSendPrompt}
-                disabled={
-                  (!inputText.trim() && images.length === 0) || isSubmitting || uploading > 0
-                }
-                className="w-9 h-9 bg-accent hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-white rounded-full transition-colors shrink-0 flex items-center justify-center"
-                title="Send prompt"
-                aria-label="Send"
-              >
-                {isSubmitting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
-                ) : (
-                  <Send className="w-[18px] h-[18px]" />
-                )}
-              </button>
-            )}
-          </div>
+          <ChatComposer
+            ref={composerHandleRef}
+            agentKind={agentKind}
+            surfaceId={surfaceId}
+            isWorking={isWorking}
+            lifecycleState={lifecycleState}
+            needsAnswer={needsAnswer}
+            usage={usage}
+            isDesktop={isDesktop}
+            isStopping={isStopping}
+            sendError={sendError}
+            onSetSendError={setSendError}
+            onSend={onSend}
+            onUploadImage={onUploadImage}
+            onInterrupt={handleInterrupt}
+            onOpenTerminal={onOpenTerminal}
+            onScrollToTail={handleComposerScrollToTail}
+            onSubmittingChange={setIsSubmitting}
+          />
         </div>
       </div>
     </div>
   );
 }
+
+const ChatTurnRow = memo(function ChatTurnRow({
+  turn,
+  isLastTurn,
+  isWorking,
+  activeAwaiting,
+  onSubmitAwaiting,
+}: {
+  turn: AgentTurn;
+  isLastTurn: boolean;
+  isWorking: boolean;
+  activeAwaiting: AwaitingInput | null;
+  onSubmitAwaiting: (text: string) => Promise<void>;
+}) {
+  const isUser = turn.role === "user";
+
+  return (
+    <div
+      className={`flex flex-col ${isUser ? "items-end" : "items-start"} w-full min-w-0 max-w-full`}
+    >
+      {isUser ? (
+        <div className="max-w-[88%] bg-raised border border-white/10 text-fg rounded-2xl rounded-tr-sm px-3.5 py-2 text-[13px] leading-relaxed shadow-sm min-w-0 break-words [overflow-wrap:anywhere]">
+          {turn.events.map((ev, eIdx) =>
+            ev.kind === "user" ? (
+              <CollapsibleText
+                key={`u-${eIdx}`}
+                text={cleanUserPrompt(ev.text)}
+                className="whitespace-pre-wrap font-sans min-w-0 break-words [overflow-wrap:anywhere]"
+              />
+            ) : null,
+          )}
+        </div>
+      ) : (
+        <div className="w-full max-w-full min-w-0 space-y-1.5">
+          {renderAssistantTurnEvents(
+            turn.events,
+            isLastTurn,
+            isWorking,
+            activeAwaiting,
+            onSubmitAwaiting,
+          )}
+        </div>
+      )}
+    </div>
+  );
+});
 
 /**
  * Group sequential events in an assistant turn into Orca-style components:
@@ -1090,8 +749,9 @@ export function OrcaChatView({
 function renderAssistantTurnEvents(
   events: AgentEvent[],
   isLastTurn: boolean,
+  isWorking: boolean,
   latestAwaiting: AwaitingInput | null,
-  onSend: (text: string) => Promise<void>,
+  onSubmitAwaiting: (text: string) => Promise<void>,
 ) {
   const renderedElements: React.ReactNode[] = [];
   let pendingTools: ToolCallItem[] = [];
@@ -1104,14 +764,13 @@ function renderAssistantTurnEvents(
         <MobileNativeChatToolRun
           key={`tr-${keyPrefix}-${toolItems[0].id}`}
           tools={toolItems}
-          live={isLastTurn && toolItems.some((t) => !t.isEnd)}
+          live={isWorking && isLastTurn && toolItems.some((t) => !t.isEnd)}
         />,
       );
     }
   };
 
   events.forEach((ev, idx) => {
-    // 1. Tool start/end -> accumulate into pendingTools for grouping
     if (ev.kind === "tool-start") {
       pendingTools.push({
         id: ev.tool_id,
@@ -1140,37 +799,30 @@ function renderAssistantTurnEvents(
       return;
     }
 
-    // If thinking is empty, skip it completely and do NOT flush pending tools!
-    // Token usage is shown in the composer, never in the timeline, and must not split a tool run.
     if (ev.kind === "usage") {
       return;
     }
     if (ev.kind === "thinking" && (!ev.text || !ev.text.trim())) {
       return;
     }
-
-    // If delta or assistant text is empty or whitespace, skip without flushing!
     if ((ev.kind === "assistant" || ev.kind === "delta") && (!ev.text || !ev.text.trim())) {
       return;
     }
 
-    // Flush any pending tool runs before non-tool event
     flushTools(`idx-${idx}`);
 
-    // 2. Thinking Accordion
     if (ev.kind === "thinking") {
       renderedElements.push(
         <MobileNativeChatReasoningRow
           key={`th-${idx}`}
           id={`reasoning-${idx}`}
           text={ev.text}
-          live={isLastTurn && idx === events.length - 1}
+          live={isWorking && isLastTurn && idx === events.length - 1}
         />,
       );
       return;
     }
 
-    // 3. Subagents Roster Card
     if (ev.kind === "subagents") {
       renderedElements.push(
         <MobileNativeChatSubagentGroup
@@ -1182,7 +834,6 @@ function renderAssistantTurnEvents(
       return;
     }
 
-    // 4. Awaiting Input Interactive Card
     if (ev.kind === "awaiting-input") {
       const isActive = isLastTurn && latestAwaiting === ev;
       if (!isActive) {
@@ -1209,15 +860,12 @@ function renderAssistantTurnEvents(
         <MobileNativeChatAwaitingInputRow
           key={`ask-${idx}`}
           awaiting={ev}
-          onSubmit={async (resp) => {
-            await onSend(resp);
-          }}
+          onSubmit={onSubmitAwaiting}
         />,
       );
       return;
     }
 
-    // 5. Assistant Text / Markdown Prose
     if (ev.kind === "assistant" || ev.kind === "delta") {
       renderedElements.push(
         <div key={`ast-${idx}`} className="py-1">
@@ -1227,7 +875,6 @@ function renderAssistantTurnEvents(
       return;
     }
 
-    // 6. Status notification
     if (ev.kind === "status") {
       renderedElements.push(
         <div key={`st-${idx}`} className="flex items-center gap-1.5 text-xs text-muted py-0.5">
@@ -1238,7 +885,6 @@ function renderAssistantTurnEvents(
       return;
     }
 
-    // 7. Error message
     if (ev.kind === "error") {
       renderedElements.push(
         <div
@@ -1253,7 +899,6 @@ function renderAssistantTurnEvents(
     }
   });
 
-  // Flush any trailing tools
   flushTools("final");
 
   return renderedElements;

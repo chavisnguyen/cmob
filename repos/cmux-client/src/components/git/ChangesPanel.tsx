@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { ChevronLeft, GitBranch, Loader2, RefreshCw, X } from "lucide-react";
 import { RPC_METHODS } from "../../protocol/rpc";
 import { wsClient } from "../../transport/wsClient";
@@ -30,8 +31,67 @@ const LINE_CLASS: Record<DiffLineKind, string> = {
   context: "text-fg-soft",
 };
 
+const DIFF_LINE_HEIGHT_PX = 20;
+
 function isStaged(f: GitFile): boolean {
   return f.index !== " " && f.index !== "?";
+}
+
+function VirtualizedChangesDiff({
+  lines,
+  truncated,
+  scrollElementRef,
+}: {
+  lines: string[];
+  truncated: boolean;
+  scrollElementRef: RefObject<HTMLDivElement | null>;
+}) {
+  // oxlint-disable-next-line react/incompatible-library
+  const virtualizer = useVirtualizer({
+    count: lines.length,
+    getScrollElement: () => scrollElementRef.current,
+    estimateSize: () => DIFF_LINE_HEIGHT_PX,
+    overscan: 20,
+    scrollMargin: 8,
+  });
+
+  useEffect(() => {
+    if (scrollElementRef.current) {
+      scrollElementRef.current.scrollTop = 0;
+    }
+  }, [lines, scrollElementRef]);
+
+  const virtualItems = virtualizer.getVirtualItems();
+  const totalHeight = virtualizer.getTotalSize();
+  const first = virtualItems[0];
+  const last = virtualItems[virtualItems.length - 1];
+  const topSpacer = first ? Math.max(0, first.start - 8) : 0;
+  const bottomSpacer = last ? Math.max(0, totalHeight - (last.end - 8)) : 0;
+
+  return (
+    <pre className="text-[12px] leading-[20px] font-mono min-w-max pb-6 pt-2">
+      {topSpacer > 0 && (
+        <div aria-hidden="true" style={{ height: topSpacer, overflowAnchor: "none" }} />
+      )}
+      {virtualItems.map((item) => {
+        const line = lines[item.index] ?? "";
+        return (
+          <div
+            key={item.key}
+            className={`h-[20px] px-3 whitespace-pre ${LINE_CLASS[classifyDiffLine(line)]}`}
+          >
+            {line || " "}
+          </div>
+        );
+      })}
+      {bottomSpacer > 0 && (
+        <div aria-hidden="true" style={{ height: bottomSpacer, overflowAnchor: "none" }} />
+      )}
+      {truncated && (
+        <div className="px-3 py-2 text-amber-300">Diff truncated (too large for the client).</div>
+      )}
+    </pre>
+  );
 }
 
 /** Read-only view of the working tree changes of a workspace (status, then per-file diff). */
@@ -111,7 +171,9 @@ export function ChangesPanel({
     };
   }, [open, workspaceId]);
 
-  const stat = diff ? diffStat(diff.diff) : null;
+  const diffScrollRef = useRef<HTMLDivElement>(null);
+  const stat = useMemo(() => (diff ? diffStat(diff.diff) : null), [diff]);
+  const diffLines = useMemo(() => (diff ? diff.diff.split("\n") : []), [diff]);
 
   return (
     <div
@@ -240,7 +302,10 @@ export function ChangesPanel({
             })}
           </div>
 
-          <div className={`${open ? "block" : "hidden lg:block"} flex-1 overflow-auto`}>
+          <div
+            ref={diffScrollRef}
+            className={`${open ? "block" : "hidden lg:block"} flex-1 overflow-auto`}
+          >
             {!open && (
               <div className="h-full flex items-center justify-center p-6 text-[13.5px] text-dim">
                 Select a file change on the left to inspect its diff.
@@ -253,21 +318,11 @@ export function ChangesPanel({
               </div>
             )}
             {open && diff && (
-              <pre className="text-[12px] leading-[1.45] font-mono min-w-max pb-6 pt-2">
-                {diff.diff.split("\n").map((line, i) => (
-                  <div
-                    key={i}
-                    className={`px-3 whitespace-pre ${LINE_CLASS[classifyDiffLine(line)]}`}
-                  >
-                    {line || " "}
-                  </div>
-                ))}
-                {diff.truncated && (
-                  <div className="px-3 py-2 text-amber-300">
-                    Diff truncated (too large for the client).
-                  </div>
-                )}
-              </pre>
+              <VirtualizedChangesDiff
+                lines={diffLines}
+                truncated={diff.truncated}
+                scrollElementRef={diffScrollRef}
+              />
             )}
           </div>
         </div>

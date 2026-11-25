@@ -55,28 +55,51 @@ pub struct HookSessionRecord {
 
 const STALE_AFTER_SECS: f64 = 30.0 * 60.0;
 const TAIL_BYTES: u64 = 512 * 1024;
+const MAX_STATIC_CACHE: usize = 512;
 
-fn unix_now() -> f64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs_f64())
-        .unwrap_or(0.0)
+fn file_mtime_and_len(path: &Path) -> Option<(u128, u64)> {
+    let meta = fs::metadata(path).ok()?;
+    let ns = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Some((ns, meta.len()))
 }
 
-/// Last complete JSON record of a JSONL file (reads only the tail).
+static LAST_RECORD_CACHE: LazyLock<Mutex<HashMap<String, (u128, u64, Option<serde_json::Value>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// Last complete JSON record of a JSONL file (reads only the tail, cached by mtime+len).
 fn last_jsonl_record(path: &str) -> Option<serde_json::Value> {
+    let (mtime_ns, len) = file_mtime_and_len(Path::new(path))?;
+    if let Ok(c) = LAST_RECORD_CACHE.lock() {
+        if let Some((cm, cl, val)) = c.get(path) {
+            if *cm == mtime_ns && *cl == len {
+                return val.clone();
+            }
+        }
+    }
     let mut f = fs::File::open(path).ok()?;
-    let len = f.metadata().ok()?.len();
     let start = len.saturating_sub(TAIL_BYTES);
     f.seek(SeekFrom::Start(start)).ok()?;
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).ok()?;
     let text = String::from_utf8_lossy(&buf);
-    text.lines()
+    let rec = text
+        .lines()
         .rev()
         .map(str::trim)
         .filter(|l| !l.is_empty())
-        .find_map(|l| serde_json::from_str::<serde_json::Value>(l).ok())
+        .find_map(|l| serde_json::from_str::<serde_json::Value>(l).ok());
+    if let Ok(mut c) = LAST_RECORD_CACHE.lock() {
+        if c.len() >= MAX_STATIC_CACHE {
+            c.clear();
+        }
+        c.insert(path.to_string(), (mtime_ns, len, rec.clone()));
+    }
+    rec
 }
 
 /// Antigravity transcript_full.jsonl: a turn ends with `PLANNER_RESPONSE`, `status: DONE`, and no
@@ -170,6 +193,9 @@ pub fn resolve_codex_top_level_rollout(path: &str) -> String {
     }
     let resolved = current.to_string_lossy().into_owned();
     if let Ok(mut c) = CODEX_ROLLOUT_CACHE.lock() {
+        if c.len() >= MAX_STATIC_CACHE {
+            c.clear();
+        }
         c.insert(path.to_string(), resolved.clone());
     }
     resolved
@@ -179,8 +205,13 @@ pub fn resolve_codex_top_level_rollout(path: &str) -> String {
 /// changes, so it is read once per path.
 static PARENT_CACHE: LazyLock<Mutex<HashMap<String, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static SIDECHAIN_CACHE: LazyLock<Mutex<HashMap<String, bool>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+static CODEX_IS_SUBAGENT_CACHE: LazyLock<Mutex<HashMap<String, bool>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
 
 pub fn is_codex_subagent_rollout(path: &str) -> bool {
+    if let Some(hit) = CODEX_IS_SUBAGENT_CACHE.lock().ok().and_then(|c| c.get(path).copied()) {
+        return hit;
+    }
     let Ok(file) = fs::File::open(path) else {
         return false;
     };
@@ -192,7 +223,14 @@ pub fn is_codex_subagent_rollout(path: &str) -> bool {
     {
         return false;
     }
-    codex_parent_thread_id(&first).is_some()
+    let res = codex_parent_thread_id(&first).is_some();
+    if let Ok(mut c) = CODEX_IS_SUBAGENT_CACHE.lock() {
+        if c.len() >= MAX_STATIC_CACHE {
+            c.clear();
+        }
+        c.insert(path.to_string(), res);
+    }
+    res
 }
 
 pub fn is_claude_sidechain_file(path: &str) -> bool {
@@ -267,12 +305,12 @@ impl HookSessionRecord {
     /// Completion timestamp of the latest finished turn in the transcript (if available), used to
     /// deduplicate turn notifications (matching Orca `turnCompletedAt`).
     pub fn turn_completed_stamp(&self) -> Option<f64> {
-        use crate::scanner::turn_marks::{claude_last_mark, codex_last_mark, read_tail, TurnMark};
+        use crate::scanner::turn_marks::{cached_claude_mark, cached_codex_mark, TurnMark};
         let kind = crate::cmux::agents::spec_for(self.resolved_agent_kind()).map(|s| s.kind)?;
         let path = self.transcript_path.as_deref()?;
         let mark = match kind {
-            "claude" => claude_last_mark(&read_tail(path)?),
-            "codex" => codex_last_mark(&read_tail(path)?),
+            "claude" => cached_claude_mark(path),
+            "codex" => cached_codex_mark(path),
             _ => None,
         }?;
         (mark.state == TurnMark::Completed).then_some(mark.at).flatten()
@@ -292,6 +330,9 @@ impl HookSessionRecord {
         }
         let parent = parse_subagent_parent(&first);
         if let Ok(mut c) = PARENT_CACHE.lock() {
+            if c.len() >= MAX_STATIC_CACHE {
+                c.clear();
+            }
             c.insert(path.to_string(), parent.clone());
         }
         parent
@@ -517,7 +558,17 @@ pub struct HookSessionsFile {
     pub active_sessions_by_workspace: HashMap<String, ActiveWorkspaceEntry>,
 }
 
-/// Consolidated hook store indexing all discovered agent sessions across surfaces and workspaces.
+type HookDirCacheEntry = (Vec<(PathBuf, u128, u64)>, std::time::Instant, HookStoreIndex);
+static HOOK_DIR_CACHE: LazyLock<Mutex<HashMap<PathBuf, HookDirCacheEntry>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const HOOK_DIR_MAX_TTL: std::time::Duration = std::time::Duration::from_secs(5);
+
+fn unix_now() -> f64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs_f64())
+        .unwrap_or(0.0)
+}
 #[derive(Debug, Clone, Default)]
 pub struct HookStoreIndex {
     pub sessions_by_id: HashMap<String, HookSessionRecord>,
@@ -535,7 +586,14 @@ impl HookStoreIndex {
         PathBuf::from(home).join(".cmuxterm")
     }
 
-    /// Load and scan hook files from the given directory (e.g. ~/.cmuxterm)
+    /// Async wrapper that executes `scan_dir` on a blocking worker thread.
+    pub async fn scan_dir_async(dir: PathBuf) -> Self {
+        tokio::task::spawn_blocking(move || Self::scan_dir(&dir))
+            .await
+            .unwrap_or_default()
+    }
+
+    /// Load and scan hook files from the given directory (e.g. ~/.cmuxterm), cached by file mtime+size.
     pub fn scan_dir(dir: &Path) -> Self {
         let mut index = Self::default();
         if !dir.exists() || !dir.is_dir() {
@@ -547,6 +605,7 @@ impl HookStoreIndex {
             Err(_) => return index,
         };
 
+        let mut files: Vec<(PathBuf, String, u128, u64)> = Vec::new();
         for entry in entries.flatten() {
             let path = entry.path();
             if let Some(agent_kind) = path
@@ -554,8 +613,31 @@ impl HookStoreIndex {
                 .and_then(|n| n.to_str())
                 .and_then(|name| name.strip_suffix("-hook-sessions.json"))
             {
-                index.load_file(&path, agent_kind);
+                let (mtime_ns, len) = file_mtime_and_len(&path).unwrap_or((0, 0));
+                files.push((path.clone(), agent_kind.to_string(), mtime_ns, len));
             }
+        }
+        files.sort_by(|a, b| a.0.cmp(&b.0));
+
+        let stamps: Vec<(PathBuf, u128, u64)> =
+            files.iter().map(|(p, _, m, l)| (p.clone(), *m, *l)).collect();
+        if let Ok(cache) = HOOK_DIR_CACHE.lock() {
+            if let Some((cached_stamps, cached_at, cached_idx)) = cache.get(dir) {
+                if *cached_stamps == stamps && cached_at.elapsed() < HOOK_DIR_MAX_TTL {
+                    return cached_idx.clone();
+                }
+            }
+        }
+
+        for (path, agent_kind, _, _) in &files {
+            index.load_file(path, agent_kind);
+        }
+
+        if let Ok(mut cache) = HOOK_DIR_CACHE.lock() {
+            if cache.len() >= 16 {
+                cache.clear();
+            }
+            cache.insert(dir.to_path_buf(), (stamps, std::time::Instant::now(), index.clone()));
         }
 
         index

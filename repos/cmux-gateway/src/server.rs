@@ -12,9 +12,10 @@ use axum::{
 use tower_http::cors::{AllowOrigin, CorsLayer};
 use futures_util::StreamExt;
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use tokio::sync::{mpsc, Notify, RwLock};
+use tokio::sync::{mpsc, Notify, RwLock, Semaphore};
 use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
@@ -430,10 +431,22 @@ pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
                 continue;
             };
             let Ok(tree) = serde_json::from_str::<serde_json::Value>(&raw) else { continue };
+            let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
             let ws_dirs = workspace_dirs_map(&state.cmux_bridge).await;
             let mut seen_dialogs = std::collections::HashSet::new();
             for (surface_id, tty) in terminal_surfaces(&tree) {
                 let Some((_, agent)) = recent.iter().find(|(t, _)| *t == tty) else { continue };
+                // Skip expensive capture-pane probes while the surface is actively running a turn.
+                if hook_index
+                    .get_active_session_for_surface(&surface_id)
+                    .is_some_and(|rec| rec.resolved_lifecycle() == AgentLifecycleState::Working)
+                {
+                    registry::set(&surface_id, None);
+                    if active_dialogs.remove(&surface_id) {
+                        emit_dismiss(&state, &surface_id, &[make_push_tag(&surface_id, "cmux-dialog")]).await;
+                    }
+                    continue;
+                }
                 match state.cmux_bridge.current_dialog(Some(&surface_id)).await {
                     Some(d) => {
                         registry::set(&surface_id, Some(&d.fingerprint));
@@ -891,16 +904,16 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
         }
     }
 
-    let device_id = state.devices.device_id_for_token(&session_token);
-    let label = device_id
+    let cached_device_id = state.devices.device_id_for_token(&session_token);
+    let label = cached_device_id
         .as_ref()
         .and_then(|id| state.devices.list().into_iter().find(|d| &d.id == id))
         .map(|d| d.label)
         .filter(|l| !l.is_empty())
-        .unwrap_or_else(|| if device_id.is_some() { "device".into() } else { "gateway token".into() });
+        .unwrap_or_else(|| if cached_device_id.is_some() { "device".into() } else { "gateway token".into() });
     let _client_guard = state.clients.register(ClientInfo {
         session_id: session_id.clone(),
-        device_id,
+        device_id: cached_device_id.clone(),
         label,
         user_agent,
         connected_at: std::time::SystemTime::now()
@@ -912,9 +925,10 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
     });
 
     // 2. Authenticated Message Dispatch Loop.
-    // Server-push frames (chat subscriptions) arrive over `out_rx` and are interleaved with
-    // client requests, so a single socket carries both request/response and event traffic.
-    let (out_tx, mut out_rx) = mpsc::channel::<String>(32);
+    // Server-push frames (chat/terminal subscriptions + concurrent RPC replies) flow through `out_tx`
+    // so slow RPCs never stall socket reads, terminal output, or live notifications.
+    let (out_tx, mut out_rx) = mpsc::channel::<String>(128);
+    let rpc_sem = Arc::new(Semaphore::new(16));
     let mut notif_rx = state.notif_tx.subscribe();
     let mut subs: HashMap<String, JoinHandle<()>> = HashMap::new();
     let mut term_subs: HashMap<String, TerminalSubscriptionHandle> = HashMap::new();
@@ -949,15 +963,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
                         let req: Result<JsonRpcRequest, _> = serde_json::from_str(&text);
                         match req {
                             Ok(rpc_req) => {
-                                let response = match rpc_req.method.as_str() {
+                                let inline_response = match rpc_req.method.as_str() {
                                     METHOD_CHAT_SUBSCRIBE | METHOD_CHAT_UNSUBSCRIBE => {
-                                        handle_subscription(&rpc_req, &state, &out_tx, &mut subs)
+                                        Some(handle_subscription(&rpc_req, &state, &out_tx, &mut subs))
                                     }
                                     METHOD_TERMINAL_SUBSCRIBE | METHOD_TERMINAL_UNSUBSCRIBE => {
-                                        handle_terminal_subscription(&rpc_req, &state, &out_tx, &mut term_subs).await
+                                        Some(handle_terminal_subscription(&rpc_req, &state, &out_tx, &mut term_subs).await)
                                     }
                                     METHOD_TERMINAL_VIEWPORT => {
-                                        handle_terminal_viewport(&rpc_req, &state, &term_subs).await
+                                        Some(handle_terminal_viewport(&rpc_req, &state, &term_subs).await)
                                     }
                                     METHOD_CLIENT_VIEWING => {
                                         let surface_id = rpc_req
@@ -972,56 +986,74 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
                                             .and_then(|v| v.as_bool())
                                             .unwrap_or(true);
                                         state.clients.set_viewing(&session_id, surface_id.clone(), visible);
-                                        JsonRpcResponse::result(
-                                            rpc_req.id.clone(),
-                                            serde_json::json!({
-                                                "ok": true,
-                                                "surface_id": surface_id,
-                                                "visible": visible,
-                                            }),
+                                        Some(
+                                            JsonRpcResponse::result(
+                                                rpc_req.id.clone(),
+                                                serde_json::json!({
+                                                    "ok": true,
+                                                    "surface_id": surface_id,
+                                                    "visible": visible,
+                                                }),
+                                            )
+                                            .unwrap(),
                                         )
-                                        .unwrap()
                                     }
                                     _ => {
                                         let mut rpc_req = rpc_req;
                                         if rpc_req.method == METHOD_PUSH_REGISTER {
-                                            // Bind the subscription to the authenticated device; never trust
-                                            // a client-supplied `device_id`.
                                             if let Some(obj) = rpc_req.params.as_object_mut() {
                                                 obj.remove("device_id");
                                                 obj.remove("muted_categories");
-                                                if let Some(id) = state.devices.device_id_for_token(&session_token) {
+                                                if let Some(id) = cached_device_id.clone() {
                                                     obj.insert("device_id".into(), serde_json::Value::String(id));
                                                 }
                                             }
                                         }
                                         if rpc_req.method == METHOD_PUSH_PREFERENCES {
-                                            // A device may only change its own subscription's preferences.
                                             if let Some(obj) = rpc_req.params.as_object_mut() {
                                                 obj.remove("device_id");
-                                                if let Some(id) = state.devices.device_id_for_token(&session_token) {
+                                                if let Some(id) = cached_device_id.clone() {
                                                     obj.insert("device_id".into(), serde_json::Value::String(id));
                                                 }
                                             }
                                         }
-                                        let resp = dispatch_rpc(&rpc_req, &state).await;
-                                        if matches!(
+                                        let wakeup = if matches!(
                                             rpc_req.method.as_str(),
                                             METHOD_TERMINAL_INPUT
                                                 | METHOD_TERMINAL_PASTE
                                                 | METHOD_TERMINAL_SCROLL
                                                 | METHOD_TERMINAL_SEND
                                         ) {
-                                            if let Some(surf_id) = rpc_req.params.get("surface_id").and_then(|val| val.as_str()) {
-                                                notify_terminal_subscriber(&term_subs, surf_id);
+                                            rpc_req
+                                                .params
+                                                .get("surface_id")
+                                                .and_then(|val| val.as_str())
+                                                .and_then(|sid| term_subs.get(sid))
+                                                .map(|s| (s.notify.clone(), s.delayed_wakeup.clone()))
+                                        } else {
+                                            None
+                                        };
+                                        let state_cl = state.clone();
+                                        let out_tx_cl = out_tx.clone();
+                                        let sem_cl = rpc_sem.clone();
+                                        tokio::spawn(async move {
+                                            let Ok(_permit) = sem_cl.acquire_owned().await else { return };
+                                            let resp = dispatch_rpc(&rpc_req, &state_cl).await;
+                                            if let Some((notify, delayed_pending)) = wakeup {
+                                                trigger_terminal_wakeup(&notify, &delayed_pending);
                                             }
-                                        }
-                                        resp
+                                            if let Ok(resp_json) = serde_json::to_string(&resp) {
+                                                let _ = out_tx_cl.send(resp_json).await;
+                                            }
+                                        });
+                                        None
                                     }
                                 };
-                                let resp_json = serde_json::to_string(&response).unwrap();
-                                if socket.send(Message::Text(resp_json.into())).await.is_err() {
-                                    break;
+                                if let Some(response) = inline_response {
+                                    let resp_json = serde_json::to_string(&response).unwrap();
+                                    if socket.send(Message::Text(resp_json.into())).await.is_err() {
+                                        break;
+                                    }
                                 }
                             }
                             Err(e) => {
@@ -1113,14 +1145,20 @@ struct TerminalSubscriptionHandle {
     task: JoinHandle<()>,
     config: Arc<RwLock<TerminalStreamConfig>>,
     notify: Arc<Notify>,
+    delayed_wakeup: Arc<AtomicBool>,
 }
 
-fn notify_terminal_subscriber(term_subs: &HashMap<String, TerminalSubscriptionHandle>, surface_id: &str) {
-    if let Some(sub) = term_subs.get(surface_id) {
-        sub.notify.notify_one();
-        let delayed_notify = sub.notify.clone();
+fn trigger_terminal_wakeup(notify: &Arc<Notify>, delayed_pending: &Arc<AtomicBool>) {
+    notify.notify_one();
+    if delayed_pending
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Relaxed)
+        .is_ok()
+    {
+        let delayed_notify = notify.clone();
+        let flag = delayed_pending.clone();
         tokio::spawn(async move {
             tokio::time::sleep(Duration::from_millis(55)).await;
+            flag.store(false, Ordering::Release);
             delayed_notify.notify_one();
         });
     }
@@ -1257,6 +1295,7 @@ async fn handle_terminal_subscription(
             task,
             config,
             notify,
+            delayed_wakeup: Arc::new(AtomicBool::new(false)),
         },
     );
 
@@ -1543,14 +1582,18 @@ async fn resolve_session(state: &AppState, surface_id: &str, session_id: &str) -
     // OpenCode's hook record has no transcript, so the running-tool activity line comes from the
     // session database. A `Waiting` hook event (permission prompt) is not represented there, so it wins.
     if res.agent_kind == "opencode" && res.lifecycle != AgentLifecycleState::Waiting {
-        if let Some(status) = res
-            .transcript_path
-            .as_deref()
-            .and_then(|p| crate::scanner::opencode_store::status_for_path(std::path::Path::new(p)))
-        {
-            res.lifecycle = status.lifecycle;
-            if res.lifecycle == AgentLifecycleState::Working {
-                res.last_subtitle = status.last_subtitle;
+        if let Some(path) = res.transcript_path.clone() {
+            let status = tokio::task::spawn_blocking(move || {
+                crate::scanner::opencode_store::status_for_path(std::path::Path::new(&path))
+            })
+            .await
+            .ok()
+            .flatten();
+            if let Some(status) = status {
+                res.lifecycle = status.lifecycle;
+                if res.lifecycle == AgentLifecycleState::Working {
+                    res.last_subtitle = status.last_subtitle;
+                }
             }
         }
     }
@@ -1558,19 +1601,23 @@ async fn resolve_session(state: &AppState, surface_id: &str, session_id: &str) -
 }
 
 async fn resolve_session_raw(state: &AppState, surface_id: &str, session_id: &str) -> Option<ResolvedSession> {
-    let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+    let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
     let record = if !session_id.is_empty() {
         hook_index.sessions_by_id.get(session_id)
     } else {
         hook_index.get_active_session_for_surface(surface_id)
     };
     if let Some(rec) = record {
+        let rec_clone = rec.clone();
+        let lifecycle = tokio::task::spawn_blocking(move || rec_clone.live_lifecycle())
+            .await
+            .unwrap_or_else(|_| rec.resolved_lifecycle());
         return Some(ResolvedSession {
             session_id: rec.session_id.clone(),
             surface_id: rec.surface_id.clone(),
             agent_kind: rec.resolved_agent_kind().to_string(),
             transcript_path: rec.transcript_path.clone(),
-            lifecycle: rec.live_lifecycle(),
+            lifecycle,
             last_event: rec.hook_event_name.clone(),
             last_subtitle: rec.last_subtitle.clone(),
             last_body: rec.last_body.clone(),
@@ -1585,8 +1632,17 @@ async fn resolve_session_raw(state: &AppState, surface_id: &str, session_id: &st
         .flatten()?;
     let agent = surface.agent?;
     let path = agent.transcript_path.clone()?;
-    let (lifecycle, subtitle) = match (agent.agent_kind.as_str(), KiroSessionIndex::analyze_file(std::path::Path::new(&path))) {
-        ("kiro", Some(s)) => (s.lifecycle, s.last_subtitle),
+    let path_for_kiro = path.clone();
+    let kiro_status = if agent.agent_kind == "kiro" {
+        tokio::task::spawn_blocking(move || KiroSessionIndex::analyze_file(std::path::Path::new(&path_for_kiro)))
+            .await
+            .ok()
+            .flatten()
+    } else {
+        None
+    };
+    let (lifecycle, subtitle) = match kiro_status {
+        Some(s) => (s.lifecycle, s.last_subtitle),
         _ => (
             match agent.status.as_str() {
                 "running" => AgentLifecycleState::Working,
@@ -1852,22 +1908,24 @@ async fn startup_dialog_value(state: &AppState, surface_id: &str) -> serde_json:
 }
 
 /// Cheap change detector: lifecycle/subtitle plus transcript mtime and size.
-fn fingerprint(res: &Option<ResolvedSession>) -> String {
+async fn fingerprint(res: &Option<ResolvedSession>) -> String {
     let Some(r) = res else { return "none".to_string() };
-    let (mtime, len) = r
-        .transcript_path
-        .as_deref()
-        .and_then(|p| std::fs::metadata(p).ok())
-        .map(|m| {
-            let t = m
-                .modified()
-                .ok()
-                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(|d| d.as_nanos())
-                .unwrap_or(0);
-            (t, m.len())
-        })
-        .unwrap_or((0, 0));
+    let (mtime, len) = match r.transcript_path.as_deref() {
+        Some(p) => tokio::fs::metadata(p)
+            .await
+            .ok()
+            .map(|m| {
+                let t = m
+                    .modified()
+                    .ok()
+                    .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                    .map(|d| d.as_nanos())
+                    .unwrap_or(0);
+                (t, m.len())
+            })
+            .unwrap_or((0, 0)),
+        None => (0, 0),
+    };
     format!(
         "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{mtime}|{len}",
         r.session_id, r.lifecycle, r.last_event, r.last_subtitle, r.last_body, r.tool_name
@@ -1905,7 +1963,12 @@ async fn chat_watcher(
                 let mut r = r.clone();
                 if let Some(p) = &r.transcript_path {
                     if r.agent_kind == "kiro" {
-                        if let Some(s) = KiroSessionIndex::analyze_file(std::path::Path::new(p)) {
+                        let p_owned = p.clone();
+                        if let Ok(Some(s)) = tokio::task::spawn_blocking(move || {
+                            KiroSessionIndex::analyze_file(std::path::Path::new(&p_owned))
+                        })
+                        .await
+                        {
                             r.lifecycle = s.lifecycle;
                             r.last_subtitle = s.last_subtitle;
                         }
@@ -1942,7 +2005,7 @@ async fn chat_watcher(
         }
         let dialog_fp = dialog.0.get("fingerprint").and_then(|f| f.as_str()).unwrap_or("");
         let screen_fp = approval_screen.0.as_deref().unwrap_or("");
-        let fp = format!("{}|{dialog_fp}|{screen_fp}", fingerprint(&resolved));
+        let fp = format!("{}|{dialog_fp}|{screen_fp}", fingerprint(&resolved).await);
         if last_fp.as_deref() == Some(fp.as_str()) {
             continue;
         }
@@ -1981,7 +2044,7 @@ async fn workspace_dir(state: &AppState, params: &serde_json::Value) -> Result<s
         .and_then(|v| v.as_str())
         .filter(|v| !v.is_empty())
         .ok_or_else(|| JsonRpcError::invalid_params("Missing workspace_id parameter"))?;
-    let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+    let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
     let tree = WorkspaceTreeBuilder::build_tree(&state.cmux_bridge, &hook_index)
         .await
         .map_err(|e| JsonRpcError::internal_error(e.to_string()))?;
@@ -2077,7 +2140,7 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
             }
         }
         METHOD_WORKSPACE_TREE => {
-            let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+            let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
             match WorkspaceTreeBuilder::build_tree(&state.cmux_bridge, &hook_index).await {
                 Ok(workspaces) => JsonRpcResponse::result(
                     req.id.clone(),
@@ -2091,7 +2154,7 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
             }
         }
         METHOD_WORKSPACE_LIST => {
-            let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+            let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
             match WorkspaceTreeBuilder::list_workspaces(&state.cmux_bridge, &hook_index).await {
                 Ok(workspaces) => JsonRpcResponse::result(
                     req.id.clone(),
@@ -2106,7 +2169,7 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
         }
         METHOD_SURFACE_GET => {
             let surface_id = req.params.get("surface_id").and_then(|v| v.as_str()).unwrap_or("");
-            let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+            let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
             match WorkspaceTreeBuilder::get_surface(&state.cmux_bridge, &hook_index, surface_id).await {
                 Ok(Some(surface)) => JsonRpcResponse::result(
                     req.id.clone(),
@@ -2124,7 +2187,7 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
             }
         }
         METHOD_CHAT_SESSIONS => {
-            let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+            let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
             let sessions: Vec<_> = hook_index.sessions_by_id.values().cloned().collect();
             JsonRpcResponse::result(
                 req.id.clone(),
@@ -2283,7 +2346,7 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
             }
             // `claude --resume` looks the session up under the project directory it ran in, so the fork
             // must start in the session's own cwd (hook record), not wherever the new tab would default to.
-            let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+            let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
             let Some(record) = hook_index.sessions_by_id.get(session) else {
                 return JsonRpcResponse::error(
                     Some(req.id.clone()),

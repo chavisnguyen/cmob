@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import { Brain, ChevronDown, ChevronUp } from "lucide-react";
 
 interface MobileNativeChatReasoningRowProps {
@@ -8,7 +8,7 @@ interface MobileNativeChatReasoningRowProps {
   durationSeconds?: number;
 }
 
-export function MobileNativeChatReasoningRow({
+export const MobileNativeChatReasoningRow = memo(function MobileNativeChatReasoningRow({
   id: _id,
   text,
   live = false,
@@ -71,4 +71,4 @@ export function MobileNativeChatReasoningRow({
       )}
     </div>
   );
-}
+});

@@ -95,10 +95,9 @@ pub fn parse_agy_models(out: &str) -> Vec<serde_json::Value> {
 /// Model list of Antigravity. It depends on the signed-in account (`agy changelog`), so it is asked live
 /// rather than kept in a static table.
 pub async fn antigravity_options() -> Result<serde_json::Value, String> {
-    let out = tokio::time::timeout(
-        std::time::Duration::from_secs(15),
-        tokio::process::Command::new("agy").arg("models").output(),
-    )
+    let mut cmd = tokio::process::Command::new("agy");
+    cmd.arg("models").kill_on_drop(true);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(15), cmd.output())
     .await
     .map_err(|_| "agy models timed out".to_string())?
     .map_err(|e| format!("could not run agy: {e}"))?;

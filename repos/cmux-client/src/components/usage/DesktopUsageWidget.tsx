@@ -37,15 +37,23 @@ export function DesktopUsageWidget({
   onRefresh: () => void;
 }) {
   const [open, setOpen] = useState(false);
+  const [localNow, setLocalNow] = useState(() => Date.now());
 
   useEffect(() => {
     if (!open) return;
+    setLocalNow(Date.now());
+    const tick = setInterval(() => setLocalNow(Date.now()), 30_000);
     const onKeyDown = (e: KeyboardEvent) => {
       if (e.key === "Escape") setOpen(false);
     };
     window.addEventListener("keydown", onKeyDown);
-    return () => window.removeEventListener("keydown", onKeyDown);
+    return () => {
+      clearInterval(tick);
+      window.removeEventListener("keydown", onKeyDown);
+    };
   }, [open]);
+
+  const effectiveNow = Math.max(now, localNow);
 
   const headline = snapshot ? tightestHeadlineAcrossProviders(snapshot.providers) : null;
 
@@ -90,7 +98,7 @@ export function DesktopUsageWidget({
                 <div className="text-[14px] font-semibold text-fg">Model Usage</div>
                 <div className="text-[11px] text-dim truncate">
                   {hostName}
-                  {snapshot ? ` · ${formatUpdatedAgo(snapshot.updated_at, now)}` : ""}
+                  {snapshot ? ` · ${formatUpdatedAgo(snapshot.updated_at, effectiveNow)}` : ""}
                 </div>
               </div>
               <div className="flex items-center gap-1 shrink-0">
@@ -123,7 +131,7 @@ export function DesktopUsageWidget({
                 loading={loading}
                 error={error}
                 unsupported={unsupported}
-                now={now}
+                now={effectiveNow}
               />
             </div>
           </div>

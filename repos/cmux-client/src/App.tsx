@@ -92,6 +92,80 @@ const plainText = (md: string) =>
     .replace(/\s+/g, " ")
     .trim();
 
+function sameSurface(a: SurfaceNode, b: SurfaceNode): boolean {
+  if (
+    a.id !== b.id ||
+    a.ref !== b.ref ||
+    a.title !== b.title ||
+    a.surface_type !== b.surface_type ||
+    a.tty !== b.tty ||
+    a.selected !== b.selected ||
+    a.focused !== b.focused
+  ) {
+    return false;
+  }
+  const aa = a.agent;
+  const ba = b.agent;
+  if (aa === ba) return true;
+  if (!aa || !ba) return false;
+  return (
+    aa.agent_kind === ba.agent_kind &&
+    aa.status === ba.status &&
+    aa.session_id === ba.session_id &&
+    aa.transcript_path === ba.transcript_path
+  );
+}
+
+function sameWorkspace(a: WorkspaceNode, b: WorkspaceNode): boolean {
+  if (
+    a.id !== b.id ||
+    a.ref !== b.ref ||
+    a.title !== b.title ||
+    a.status !== b.status ||
+    a.pinned !== b.pinned ||
+    a.selected !== b.selected ||
+    a.current_directory !== b.current_directory ||
+    a.snippet !== b.snippet ||
+    a.color !== b.color ||
+    a.surfaces.length !== b.surfaces.length
+  ) {
+    return false;
+  }
+  for (let i = 0; i < a.surfaces.length; i += 1) {
+    if (!sameSurface(a.surfaces[i], b.surfaces[i])) return false;
+  }
+  return true;
+}
+
+/**
+ * Reconciles workspace snapshots from 5s polls, keeping identical object references intact so
+ * downstream views and memoized components do not re-render when nothing changed.
+ */
+function mergeWorkspaces(prev: WorkspaceNode[], next: WorkspaceNode[]): WorkspaceNode[] {
+  if (prev.length === 0) return next;
+  const byId = new Map(prev.map((w) => [w.id, w]));
+  let allSame = prev.length === next.length;
+  const merged = next.map((ws, idx) => {
+    const oldWs = byId.get(ws.id);
+    if (!oldWs) {
+      allSame = false;
+      return ws;
+    }
+    if (sameWorkspace(oldWs, ws)) {
+      if (prev[idx] !== oldWs) allSame = false;
+      return oldWs;
+    }
+    allSame = false;
+    const oldSurfById = new Map(oldWs.surfaces.map((s) => [s.id || s.ref, s]));
+    const mergedSurfaces = ws.surfaces.map((s) => {
+      const oldSurf = oldSurfById.get(s.id || s.ref);
+      return oldSurf && sameSurface(oldSurf, s) ? oldSurf : s;
+    });
+    return { ...ws, surfaces: mergedSurfaces };
+  });
+  return allSame ? prev : merged;
+}
+
 export function App() {
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
   const [workspaces, setWorkspaces] = useState<WorkspaceNode[]>([]);
@@ -153,6 +227,7 @@ export function App() {
     connState,
     hostKey: activeHostId || activeHost?.endpoint || "",
     pollMs: mainTab === "usage" ? 30_000 : 60_000,
+    trackAgeTick: mainTab === "usage",
   });
 
   useEffect(() => {
@@ -224,38 +299,39 @@ export function App() {
         if (!isDesktopRef.current) {
           showDetailEntry();
         }
-        setActiveToasts((prev) => prev.filter((t) => t.surface_id !== match.id));
+        setActiveToasts((prev) => {
+          if (prev.length === 0) return prev;
+          const next = prev.filter((t) => t.surface_id !== match.id);
+          return next.length === prev.length ? prev : next;
+        });
         return;
       }
     }
   }, []);
 
   // History API sync: system back / browser back / edge swipe pop one screen at a time.
-  const handlePop = useCallback(
-    (view: AppView) => {
-      if (isDesktopRef.current) {
-        if (mainTabRef.current !== "workspaces") {
-          setMainTab("workspaces");
-        }
-        return;
-      }
-      if (mainTab !== "workspaces") {
+  const handlePop = useCallback((view: AppView) => {
+    if (isDesktopRef.current) {
+      if (mainTabRef.current !== "workspaces") {
         setMainTab("workspaces");
-        return;
       }
-      if (view === "workspaces") {
-        setActiveView("workspaces");
-        setSelectedWorkspace(null);
-        setSelectedSurface(null);
-      } else if (view === "surfaces") {
-        setActiveView(selectedWorkspaceRef.current ? "surfaces" : "workspaces");
-        setSelectedSurface(null);
-      } else {
-        setActiveView(selectedSurfaceRef.current ? "detail" : "surfaces");
-      }
-    },
-    [mainTab],
-  );
+      return;
+    }
+    if (mainTabRef.current !== "workspaces") {
+      setMainTab("workspaces");
+      return;
+    }
+    if (view === "workspaces") {
+      setActiveView("workspaces");
+      setSelectedWorkspace(null);
+      setSelectedSurface(null);
+    } else if (view === "surfaces") {
+      setActiveView(selectedWorkspaceRef.current ? "surfaces" : "workspaces");
+      setSelectedSurface(null);
+    } else {
+      setActiveView(selectedSurfaceRef.current ? "detail" : "surfaces");
+    }
+  }, []);
   useHistoryNavigation(handlePop);
 
   useEffect(() => installGlobalButtonHaptics(), []);
@@ -273,25 +349,33 @@ export function App() {
   );
 
   // Fetch workspaces tree from Gateway
-  const fetchWorkspaces = useCallback(async () => {
+  const fetchWorkspaces = useCallback(async (showSpinner = false) => {
     if (wsClient.getState() !== "connected") return;
     if (isFetchingRef.current) return;
     isFetchingRef.current = true;
-    setLoading(true);
+    const shouldShowLoading = showSpinner || workspacesRef.current.length === 0;
+    if (shouldShowLoading) setLoading(true);
     try {
       const resp = await wsClient.call<{ workspaces: WorkspaceNode[] }>(RPC_METHODS.WORKSPACE_TREE);
       if (resp?.workspaces) {
-        setWorkspaces(resp.workspaces);
+        const merged = mergeWorkspaces(workspacesRef.current, resp.workspaces);
+        if (merged !== workspacesRef.current) {
+          setWorkspaces(merged);
+        }
 
         const reconciled = reconcileSelection({
-          workspaces: resp.workspaces,
+          workspaces: merged,
           selectedWorkspace: selectedWorkspaceRef.current,
           selectedSurface: selectedSurfaceRef.current,
           isDesktop: isDesktopRef.current,
           hasPendingJump: Boolean(pendingSurfaceJumpRef.current),
         });
-        setSelectedWorkspace(reconciled.workspace);
-        setSelectedSurface(reconciled.surface);
+        if (reconciled.workspace !== selectedWorkspaceRef.current) {
+          setSelectedWorkspace(reconciled.workspace);
+        }
+        if (reconciled.surface !== selectedSurfaceRef.current) {
+          setSelectedSurface(reconciled.surface);
+        }
         if (reconciled.fallbackView && !isDesktopRef.current) {
           setActiveView(reconciled.fallbackView);
         }
@@ -300,7 +384,7 @@ export function App() {
       console.warn("Failed to fetch workspaces:", err);
     } finally {
       isFetchingRef.current = false;
-      setLoading(false);
+      if (shouldShowLoading) setLoading(false);
     }
   }, []);
 
@@ -405,13 +489,27 @@ export function App() {
   }, [jumpToSurface]);
 
   useEffect(() => {
-    if (connState === "connected") {
-      void fetchWorkspaces();
-      const interval = setInterval(() => {
-        void fetchWorkspaces();
-      }, 5000);
-      return () => clearInterval(interval);
+    if (connState !== "connected") return;
+    void fetchWorkspaces(false);
+    const interval = setInterval(() => {
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        void fetchWorkspaces(false);
+      }
+    }, 5000);
+    const onVisibility = () => {
+      if (document.visibilityState === "visible") {
+        void fetchWorkspaces(false);
+      }
+    };
+    if (typeof document !== "undefined") {
+      document.addEventListener("visibilitychange", onVisibility);
     }
+    return () => {
+      clearInterval(interval);
+      if (typeof document !== "undefined") {
+        document.removeEventListener("visibilitychange", onVisibility);
+      }
+    };
   }, [connState, fetchWorkspaces]);
 
   // Resolve cold-start deep-link to surface once workspaces are loaded
@@ -455,7 +553,11 @@ export function App() {
   // Clear toasts for the surface the user just opened.
   useEffect(() => {
     if (isViewingSurface && selectedSurface) {
-      setActiveToasts((prev) => prev.filter((t) => t.surface_id !== selectedSurface.id));
+      setActiveToasts((prev) => {
+        if (prev.length === 0) return prev;
+        const next = prev.filter((t) => t.surface_id !== selectedSurface.id);
+        return next.length === prev.length ? prev : next;
+      });
     }
   }, [isViewingSurface, selectedSurface]);
 
@@ -604,6 +706,10 @@ export function App() {
       setSelectedSurface(null);
     });
   };
+
+  const handleForceRefreshWorkspaces = useCallback(() => {
+    void fetchWorkspaces(true);
+  }, [fetchWorkspaces]);
 
   const handleSaveToken = () => {
     wsClient.setToken(tokenInput.trim());
@@ -860,7 +966,7 @@ export function App() {
                   <WorkspaceListView
                     workspaces={workspaces}
                     loading={loading}
-                    onRefresh={fetchWorkspaces}
+                    onRefresh={handleForceRefreshWorkspaces}
                     onSelectWorkspace={handleSelectWorkspace}
                     hostsCount={hosts.length}
                     connState={connState}
@@ -892,7 +998,7 @@ export function App() {
                 onOpenChanges={() => {
                   if (selectedWorkspace) setChangesWs(selectedWorkspace);
                 }}
-                onRefresh={() => void fetchWorkspaces()}
+                onRefresh={handleForceRefreshWorkspaces}
                 usageWidget={
                   <DesktopUsageWidget
                     hostName={activeHost?.name ?? "No computer"}
@@ -980,7 +1086,7 @@ export function App() {
                     onCreateSurface={handleCreateSurface}
                     onRenameSurface={handleRenameSurface}
                     onCloseSurface={handleCloseSurface}
-                    onRefresh={fetchWorkspaces}
+                    onRefresh={handleForceRefreshWorkspaces}
                     desktopLayout
                   />
                 ) : selectedWorkspace ? (
@@ -1015,7 +1121,7 @@ export function App() {
                     <WorkspaceListView
                       workspaces={workspaces}
                       loading={loading}
-                      onRefresh={fetchWorkspaces}
+                      onRefresh={handleForceRefreshWorkspaces}
                       onSelectWorkspace={handleSelectWorkspace}
                       hostsCount={hosts.length}
                       connState={connState}
@@ -1031,7 +1137,7 @@ export function App() {
                       onCreateSurface={handleCreateSurface}
                       onRenameSurface={handleRenameSurface}
                       onCloseSurface={handleCloseSurface}
-                      onRefresh={fetchWorkspaces}
+                      onRefresh={handleForceRefreshWorkspaces}
                     />
                   )}
 
@@ -1047,7 +1153,7 @@ export function App() {
                       onCreateSurface={handleCreateSurface}
                       onRenameSurface={handleRenameSurface}
                       onCloseSurface={handleCloseSurface}
-                      onRefresh={fetchWorkspaces}
+                      onRefresh={handleForceRefreshWorkspaces}
                     />
                   )}
                 </>

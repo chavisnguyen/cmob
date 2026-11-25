@@ -1,6 +1,9 @@
+use std::collections::HashMap;
 use std::fs::File;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::UNIX_EPOCH;
 
 use crate::protocol::event::{
     AgentEvent, AgentRole, AgentTurn, AwaitingInput, SubagentEntry, SubagentState,
@@ -30,7 +33,7 @@ fn cap_detail(s: String) -> String {
 /// Codex rollouts record the same conversation twice depending on `session_meta.history_mode`:
 /// `paginated` uses `event_msg`/`item_completed` items, otherwise `response_item` records are used.
 /// Only one family is consumed per file so messages are never duplicated.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct CodexState {
     paginated: bool,
     /// Path of the rollout being parsed; child rollouts are located relative to it.
@@ -186,6 +189,87 @@ fn assistant_turn<'a>(
     current_turn.get_or_insert_with(|| {
         AgentTurn::new(format!("turn-{}", turns.len() + 1), surface_id, AgentRole::Assistant)
     })
+}
+
+struct CachedTranscript {
+    mtime_ns: u128,
+    byte_offset: u64,
+    turns: Vec<AgentTurn>,
+    current_turn: Option<AgentTurn>,
+    codex: CodexState,
+}
+
+static TRANSCRIPT_CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), CachedTranscript>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const MAX_TRANSCRIPT_CACHE: usize = 32;
+
+fn file_mtime_len(path: &Path) -> Result<(u128, u64), std::io::Error> {
+    let meta = std::fs::metadata(path)?;
+    let mtime_ns = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Ok((mtime_ns, meta.len()))
+}
+
+fn parse_transcript_line(
+    trimmed: &str,
+    surface_id: &str,
+    codex: &mut CodexState,
+    current_turn: &mut Option<AgentTurn>,
+    turns: &mut Vec<AgentTurn>,
+) {
+    let Ok(val) = serde_json::from_str::<serde_json::Value>(trimmed) else {
+        return;
+    };
+
+    if val.get("type").is_none() && val.get("payload").and_then(|p| p.get("type")).is_some() {
+        TranscriptReader::parse_kiro_line(&val, surface_id, current_turn, turns);
+        return;
+    }
+
+    if val
+        .get("type")
+        .and_then(|t| t.as_str())
+        .is_some_and(|t| matches!(t, "session_meta" | "event_msg" | "response_item" | "turn_context"))
+    {
+        TranscriptReader::parse_codex_line(&val, surface_id, codex, current_turn, turns);
+        return;
+    }
+
+    let is_agy = val
+        .get("type")
+        .and_then(|t| t.as_str())
+        .is_some_and(|t| matches!(t, "USER_INPUT" | "PLANNER_RESPONSE" | "GENERIC" | "SYSTEM_MESSAGE"));
+
+    if is_agy {
+        TranscriptReader::parse_antigravity_line(val, surface_id, current_turn, turns);
+        return;
+    }
+
+    TranscriptReader::parse_claude_line(val, surface_id, current_turn, turns);
+}
+
+fn refresh_working_codex_subagents(parent: &Path, turns: &mut [AgentTurn]) {
+    for turn in turns.iter_mut() {
+        for ev in turn.events.iter_mut() {
+            if let AgentEvent::Subagents { group_id, agents } = ev {
+                if group_id == "codex-subagents" {
+                    for agent in agents.iter_mut() {
+                        if agent.state == SubagentState::Working {
+                            let (state, tokens) = codex_child_status(parent, &agent.id);
+                            agent.state = state;
+                            if tokens.is_some() {
+                                agent.tokens = tokens;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
 }
 
 impl TranscriptReader {
@@ -469,15 +553,12 @@ impl TranscriptReader {
         Self::read_recent_turns_page(transcript_path, surface_id, max_turns).map(|(turns, _)| turns)
     }
 
-    /// Like `read_recent_turns`, also returning the total number of turns in the transcript so the
-    /// client knows whether older history exists (`has_more = total > turns.len()`).
+    /// Incrementally parses JSONL transcripts by tracking byte offset per `(path, surface_id)`.
     pub fn read_recent_turns_page(
         transcript_path: &Path,
         surface_id: &str,
         max_turns: usize,
     ) -> Result<(Vec<AgentTurn>, usize), std::io::Error> {
-        // SQLite-backed agents (OpenCode) are referenced as `<db path>#<session id>`; there is no file
-        // to open. See `scanner::opencode_store`.
         if let Some((db, session_id)) = crate::scanner::opencode_store::parse_pseudo_path(transcript_path) {
             return crate::scanner::opencode_store::read_recent_turns_page(&db, &session_id, surface_id, max_turns)
                 .map_err(std::io::Error::other);
@@ -486,74 +567,84 @@ impl TranscriptReader {
             return Ok((Vec::new(), 0));
         }
 
-        let file = File::open(transcript_path)?;
-        let reader = BufReader::new(file);
+        let (mtime_ns, len) = file_mtime_len(transcript_path)?;
+        let cache_key = (transcript_path.to_path_buf(), surface_id.to_string());
 
-        let mut turns: Vec<AgentTurn> = Vec::new();
-        let mut current_turn: Option<AgentTurn> = None;
-        let mut codex = CodexState { rollout_path: Some(transcript_path.to_path_buf()), ..Default::default() };
+        let cached_opt = TRANSCRIPT_CACHE.lock().ok().and_then(|mut c| {
+            let hit = c.remove(&cache_key)?;
+            let reusable = len > hit.byte_offset || (len == hit.byte_offset && mtime_ns == hit.mtime_ns);
+            reusable.then_some(hit)
+        });
 
-        for line in reader.lines() {
-            let line_str = match line {
-                Ok(l) => l,
-                Err(_) => continue,
-            };
-            let trimmed = line_str.trim();
-            if trimmed.is_empty() {
-                continue;
+        let mut cached = cached_opt.unwrap_or_else(|| CachedTranscript {
+            mtime_ns: 0,
+            byte_offset: 0,
+            turns: Vec::new(),
+            current_turn: None,
+            codex: CodexState {
+                rollout_path: Some(transcript_path.to_path_buf()),
+                ..Default::default()
+            },
+        });
+
+        if len > cached.byte_offset {
+            let mut file = File::open(transcript_path)?;
+            file.seek(SeekFrom::Start(cached.byte_offset))?;
+            let mut reader = BufReader::new(file);
+            let mut offset = cached.byte_offset;
+            let mut line_buf = Vec::new();
+            loop {
+                line_buf.clear();
+                let n = reader.read_until(b'\n', &mut line_buf)?;
+                if n == 0 {
+                    break;
+                }
+                let ends_nl = line_buf.ends_with(b"\n");
+                let text = String::from_utf8_lossy(&line_buf);
+                let trimmed = text.trim();
+                if !ends_nl && !trimmed.is_empty() && serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
+                    // Partial line still being written; stop advancing offset here so next tick finishes it.
+                    break;
+                }
+                offset += n as u64;
+                if !trimmed.is_empty() {
+                    parse_transcript_line(
+                        trimmed,
+                        surface_id,
+                        &mut cached.codex,
+                        &mut cached.current_turn,
+                        &mut cached.turns,
+                    );
+                }
             }
-
-            let val: serde_json::Value = match serde_json::from_str(trimmed) {
-                Ok(v) => v,
-                Err(_) => continue,
-            };
-
-            // Kiro: `{id, timestamp, payload:{type,...}}` with no top-level `type`
-            // (verified on real ~/.kiro/sessions/*/sess_*/messages.jsonl).
-            if val.get("type").is_none()
-                && val.get("payload").and_then(|p| p.get("type")).is_some()
-            {
-                Self::parse_kiro_line(&val, surface_id, &mut current_turn, &mut turns);
-                continue;
-            }
-
-            // Codex rollout: top-level `type` of session_meta | event_msg | response_item | turn_context
-            // (ref/orca/src/main/ai-vault/scanners/codex/session-scanner-codex-parser.ts:124-179).
-            if val
-                .get("type")
-                .and_then(|t| t.as_str())
-                .is_some_and(|t| matches!(t, "session_meta" | "event_msg" | "response_item" | "turn_context"))
-            {
-                Self::parse_codex_line(&val, surface_id, &mut codex, &mut current_turn, &mut turns);
-                continue;
-            }
-
-            // Detect format: Antigravity vs Claude
-            let is_agy = val
-                .get("type")
-                .and_then(|t| t.as_str())
-                .is_some_and(|t| matches!(t, "USER_INPUT" | "PLANNER_RESPONSE" | "GENERIC" | "SYSTEM_MESSAGE"));
-
-            if is_agy {
-                Self::parse_antigravity_line(val, surface_id, &mut current_turn, &mut turns);
-                continue;
-            }
-
-            // Fallback / Claude format
-            Self::parse_claude_line(val, surface_id, &mut current_turn, &mut turns);
+            cached.byte_offset = offset;
+            cached.mtime_ns = mtime_ns;
         }
 
-        if let Some(t) = current_turn {
-            turns.push(t);
+        let total = cached.turns.len() + usize::from(cached.current_turn.is_some());
+        let tail_start = total.saturating_sub(max_turns);
+        let mut slice: Vec<AgentTurn> = if tail_start < cached.turns.len() {
+            let mut out = cached.turns[tail_start..].to_vec();
+            if let Some(t) = &cached.current_turn {
+                out.push(t.clone());
+            }
+            out
+        } else if let Some(t) = &cached.current_turn {
+            vec![t.clone()]
+        } else {
+            Vec::new()
+        };
+
+        if let Ok(mut c) = TRANSCRIPT_CACHE.lock() {
+            if c.len() >= MAX_TRANSCRIPT_CACHE {
+                c.clear();
+            }
+            c.insert(cache_key, cached);
         }
 
-        let total = turns.len();
-        if turns.len() > max_turns {
-            let start = turns.len() - max_turns;
-            turns = turns.split_off(start);
-        }
+        refresh_working_codex_subagents(transcript_path, &mut slice);
 
-        Ok((turns, total))
+        Ok((slice, total))
     }
 
     fn parse_ask_event(name: &str, args: Option<&serde_json::Value>) -> Option<AgentEvent> {

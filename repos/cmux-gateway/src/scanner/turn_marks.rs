@@ -16,8 +16,11 @@
 //!
 //! Codex (`event_msg` payloads): `task_started` => working, `task_complete` => completed, `turn_aborted` => interrupted.
 
+use std::collections::HashMap;
 use std::fs;
 use std::io::{Read, Seek, SeekFrom};
+use std::sync::{LazyLock, Mutex};
+use std::time::UNIX_EPOCH;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TurnMark {
@@ -43,6 +46,48 @@ pub fn read_tail(path: &str) -> Option<String> {
     let mut buf = Vec::new();
     f.read_to_end(&mut buf).ok()?;
     Some(String::from_utf8_lossy(&buf).into_owned())
+}
+
+static MARK_CACHE: LazyLock<Mutex<HashMap<(String, &'static str), (u128, u64, Option<Mark>)>>> =
+    LazyLock::new(|| Mutex::new(HashMap::new()));
+const MAX_MARK_CACHE: usize = 256;
+
+fn cached_last_mark(path: &str, kind: &'static str, decode: fn(&str) -> Option<Mark>) -> Option<Mark> {
+    let meta = fs::metadata(path).ok()?;
+    let mtime_ns = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    let len = meta.len();
+    let key = (path.to_string(), kind);
+    if let Ok(cache) = MARK_CACHE.lock() {
+        if let Some((cached_mtime, cached_len, cached_mark)) = cache.get(&key) {
+            if *cached_mtime == mtime_ns && *cached_len == len {
+                return *cached_mark;
+            }
+        }
+    }
+    let tail = read_tail(path)?;
+    let mark = decode(&tail);
+    if let Ok(mut cache) = MARK_CACHE.lock() {
+        if cache.len() >= MAX_MARK_CACHE {
+            cache.clear();
+        }
+        cache.insert(key, (mtime_ns, len, mark));
+    }
+    mark
+}
+
+/// Cached `claude_last_mark` keyed by `(path, mtime, len)` so 500ms scanners skip unchanged files.
+pub fn cached_claude_mark(path: &str) -> Option<Mark> {
+    cached_last_mark(path, "claude", claude_last_mark)
+}
+
+/// Cached `codex_last_mark` keyed by `(path, mtime, len)` so 500ms scanners skip unchanged files.
+pub fn cached_codex_mark(path: &str) -> Option<Mark> {
+    cached_last_mark(path, "codex", codex_last_mark)
 }
 
 /// `2026-11-12T10:47:18.363Z` -> unix seconds. Only the UTC (`Z`) form the agents write.

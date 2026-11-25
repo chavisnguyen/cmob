@@ -73,6 +73,30 @@ impl KiroSessionIndex {
         }
     }
 
+    /// Batch-fetch `pid -> tty` via a single `ps` invocation so scanning many leases does not fork per file.
+    pub fn all_ttys_by_pid() -> HashMap<u32, String> {
+        let mut map = HashMap::new();
+        let Ok(out) = std::process::Command::new("ps")
+            .args(["-axo", "pid=,tty="])
+            .output()
+        else {
+            return map;
+        };
+        if !out.status.success() {
+            return map;
+        }
+        for line in String::from_utf8_lossy(&out.stdout).lines() {
+            let mut parts = line.split_whitespace();
+            let (Some(pid_str), Some(tty)) = (parts.next(), parts.next()) else { continue };
+            let Ok(pid) = pid_str.parse::<u32>() else { continue };
+            let clean = tty.trim_start_matches("/dev/");
+            if !clean.is_empty() && !clean.chars().all(|c| c == '?' || c == '-') {
+                map.insert(pid, clean.to_string());
+            }
+        }
+        map
+    }
+
     /// Scan live Kiro sessions and return the most recently modified one per tty.
     pub fn scan_by_tty(home: &Path, tty_for_pid: &dyn Fn(u32) -> Option<String>) -> HashMap<String, KiroSession> {
         let mut by_tty: HashMap<String, KiroSession> = HashMap::new();
@@ -123,7 +147,13 @@ impl KiroSessionIndex {
     }
 
     pub fn scan_default_by_tty() -> HashMap<String, KiroSession> {
-        Self::scan_by_tty(&Self::default_home(), &Self::tty_for_pid)
+        let pid_ttys = Self::all_ttys_by_pid();
+        Self::scan_by_tty(&Self::default_home(), &|pid| pid_ttys.get(&pid).cloned())
+    }
+
+    /// Scan live Kiro sessions using a pre-scanned `pid -> tty` table (zero extra `ps` forks).
+    pub fn scan_default_by_pid_map(pid_ttys: &HashMap<u32, String>) -> HashMap<String, KiroSession> {
+        Self::scan_by_tty(&Self::default_home(), &|pid| pid_ttys.get(&pid).cloned())
     }
 
     /// Locate `sessions/*/<session_id>/messages.jsonl`.

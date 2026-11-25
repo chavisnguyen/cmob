@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { memo, useState } from "react";
 import {
   Terminal,
   FileText,
@@ -25,7 +25,10 @@ interface MobileNativeChatToolRunProps {
   live?: boolean;
 }
 
-export function MobileNativeChatToolRun({ tools, live = false }: MobileNativeChatToolRunProps) {
+export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
+  tools,
+  live = false,
+}: MobileNativeChatToolRunProps) {
   const [isExpanded, setIsExpanded] = useState(false);
 
   if (tools.length === 0) return null;
@@ -125,7 +128,7 @@ export function MobileNativeChatToolRun({ tools, live = false }: MobileNativeCha
       )}
     </div>
   );
-}
+});
 
 function getToolCategoryIcon(name: string) {
   const lower = name.toLowerCase();

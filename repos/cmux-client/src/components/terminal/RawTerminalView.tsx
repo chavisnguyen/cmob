@@ -174,7 +174,10 @@ export function RawTerminalView({
   const lastAltTapRef = useRef(0);
   const shouldAutoScrollRef = useRef(true);
   const lastAppliedKeyRef = useRef<string>("");
+  const lastThemeKeyRef = useRef<string>("");
   const lastSentViewportRef = useRef<string>("");
+  const touchGestureRafRef = useRef<number>(0);
+  const pendingTouchStateRef = useRef<{ scale?: number; panX: number; panY: number } | null>(null);
   const resizeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const scrollAccRef = useRef(0);
   const userScaleRef = useRef(1);
@@ -248,9 +251,11 @@ export function RawTerminalView({
     if (!container || !term) return;
 
     if (viewportModeRef.current === "mobile") {
-      setFitScale(1);
-      setUserScale(1);
-      setPanOffset({ x: 0, y: 0 });
+      if (fitScaleRef.current !== 1) setFitScale(1);
+      if (userScaleRef.current !== 1) setUserScale(1);
+      if (panOffsetRef.current.x !== 0 || panOffsetRef.current.y !== 0) {
+        setPanOffset({ x: 0, y: 0 });
+      }
       return;
     }
 
@@ -266,7 +271,9 @@ export function RawTerminalView({
       cellWidth: screenWidth > 0 ? 0 : cellWidth,
       scrollWidth: screenWidth > 0 ? screenWidth + XTERM_PADDING_PX * 2 : scrollWidth,
     });
-    setFitScale(nextFitScale);
+    if (Math.abs(fitScaleRef.current - nextFitScale) > 0.001) {
+      setFitScale(nextFitScale);
+    }
 
     const nextTotalScale = nextFitScale * userScaleRef.current;
     const contentWidth = term.element?.scrollWidth ?? cellWidth * cols;
@@ -280,7 +287,12 @@ export function RawTerminalView({
       viewportHeight: rect.height,
       totalScale: nextTotalScale,
     });
-    setPanOffset({ x: clamped.panX, y: clamped.panY });
+    if (
+      Math.abs(panOffsetRef.current.x - clamped.panX) > 0.5 ||
+      Math.abs(panOffsetRef.current.y - clamped.panY) > 0.5
+    ) {
+      setPanOffset({ x: clamped.panX, y: clamped.panY });
+    }
   }, []);
 
   const sendTerminalBytes = useCallback(
@@ -335,12 +347,20 @@ export function RawTerminalView({
 
       const converted = convertRenderGridToAnsi(grid);
       modesRef.current = converted.modes;
-      term.options.theme = converted.theme;
+      const themeKey = `${converted.theme.foreground ?? ""}:${converted.theme.background ?? ""}:${converted.theme.cursor ?? ""}`;
+      if (themeKey !== lastThemeKeyRef.current) {
+        lastThemeKeyRef.current = themeKey;
+        term.options.theme = converted.theme;
+      }
 
       if (term.cols !== converted.columns || term.rows !== converted.rows) {
         term.resize(converted.columns, converted.rows);
       }
-      setGridDims({ cols: converted.columns, rows: converted.rows });
+      setGridDims((prev) =>
+        prev.cols === converted.columns && prev.rows === converted.rows
+          ? prev
+          : { cols: converted.columns, rows: converted.rows },
+      );
 
       const activeBuffer = term.buffer.active;
       const wasAtBottom = activeBuffer.viewportY >= activeBuffer.baseY;
@@ -597,7 +617,6 @@ export function RawTerminalView({
       .then(() => {
         if (!controller.signal.aborted) {
           setSubscribed(true);
-          void fetchReplay();
         }
       })
       .catch((err) => {
@@ -619,8 +638,10 @@ export function RawTerminalView({
     if (subscribed) return;
     void fetchReplay();
     const interval = setInterval(() => {
-      void fetchReplay();
-    }, 800);
+      if (typeof document === "undefined" || document.visibilityState === "visible") {
+        void fetchReplay();
+      }
+    }, 1000);
     return () => clearInterval(interval);
   }, [subscribed, fetchReplay]);
 
@@ -765,6 +786,28 @@ export function RawTerminalView({
     }
   };
 
+  const scheduleTouchTransform = (next: { scale?: number; panX: number; panY: number }) => {
+    pendingTouchStateRef.current = next;
+    if (touchGestureRafRef.current) return;
+    touchGestureRafRef.current = requestAnimationFrame(() => {
+      touchGestureRafRef.current = 0;
+      const pending = pendingTouchStateRef.current;
+      if (!pending) return;
+      pendingTouchStateRef.current = null;
+      if (pending.scale !== undefined) setUserScale(pending.scale);
+      setPanOffset({ x: pending.panX, y: pending.panY });
+    });
+  };
+
+  useEffect(
+    () => () => {
+      if (touchGestureRafRef.current) {
+        cancelAnimationFrame(touchGestureRafRef.current);
+      }
+    },
+    [],
+  );
+
   const handleTouchMove = (event: React.TouchEvent<HTMLDivElement>) => {
     const container = viewportRef.current;
     const term = termRef.current;
@@ -785,7 +828,6 @@ export function RawTerminalView({
           gestureRef.current.startUserScale * (distance / gestureRef.current.startDistance),
         ),
       );
-      setUserScale(nextUserScale);
 
       const rect = container.getBoundingClientRect();
       const { cellWidth } = readXtermCellMetrics(term);
@@ -801,7 +843,7 @@ export function RawTerminalView({
         viewportHeight: rect.height,
         totalScale,
       });
-      setPanOffset({ x: clamped.panX, y: clamped.panY });
+      scheduleTouchTransform({ scale: nextUserScale, panX: clamped.panX, panY: clamped.panY });
       return;
     }
 
@@ -828,7 +870,7 @@ export function RawTerminalView({
           viewportHeight: rect.height,
           totalScale,
         });
-        setPanOffset({ x: clamped.panX, y: clamped.panY });
+        scheduleTouchTransform({ panX: clamped.panX, panY: clamped.panY });
         return;
       }
 
@@ -1000,7 +1042,7 @@ export function RawTerminalView({
               event.stopPropagation();
               handleScrollToBottom();
             }}
-            className="absolute bottom-3 right-3 h-9 px-3.5 flex items-center gap-1.5 rounded-full bg-raised/95 hover:bg-line text-fg text-[13px] font-medium shadow-lg backdrop-blur-sm border border-white/[0.14] transition-all z-10 font-sans"
+            className="absolute bottom-3 right-3 h-9 px-3.5 flex items-center gap-1.5 rounded-full bg-raised hover:bg-line text-fg text-[13px] font-medium shadow-lg border border-white/[0.14] transition-all z-10 font-sans"
           >
             <ChevronDown className="w-4 h-4" />
             <span>Bottom</span>

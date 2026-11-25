@@ -1,4 +1,4 @@
-import { Children, isValidElement, useState, type ReactElement, type ReactNode } from "react";
+import { Children, isValidElement, memo, useState, type ReactElement, type ReactNode } from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy } from "lucide-react";
@@ -10,7 +10,7 @@ interface NativeChatProseProps {
 const REMARK_PLUGINS = [remarkGfm];
 
 /** Agent output rendered as GitHub-flavoured markdown. Raw HTML is never interpreted (react-markdown default). */
-export function NativeChatProse({ content }: NativeChatProseProps) {
+export const NativeChatProse = memo(function NativeChatProse({ content }: NativeChatProseProps) {
   return (
     <div className="space-y-2.5 text-[14.5px] text-fg-soft leading-[1.6] break-words [overflow-wrap:anywhere] min-w-0 max-w-full">
       <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
@@ -18,7 +18,7 @@ export function NativeChatProse({ content }: NativeChatProseProps) {
       </ReactMarkdown>
     </div>
   );
-}
+});
 
 function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   const [copied, setCopied] = useState(false);

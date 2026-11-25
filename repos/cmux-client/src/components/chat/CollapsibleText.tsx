@@ -1,9 +1,15 @@
-import { useMemo, useState } from "react";
+import { memo, useMemo, useState } from "react";
 import { ChevronDown, ChevronUp, Info } from "lucide-react";
 import { planCollapse } from "./collapse";
 
 /** Chat text that folds when long, so one message cannot push the rest of the conversation off a phone screen. */
-export function CollapsibleText({ text, className = "" }: { text: string; className?: string }) {
+export const CollapsibleText = memo(function CollapsibleText({
+  text,
+  className = "",
+}: {
+  text: string;
+  className?: string;
+}) {
   const plan = useMemo(() => planCollapse(text), [text]);
   const [open, setOpen] = useState(false);
 
@@ -41,4 +47,4 @@ export function CollapsibleText({ text, className = "" }: { text: string; classN
       </button>
     </div>
   );
-}
+});

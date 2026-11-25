@@ -43,6 +43,23 @@ export function haptic(kind: HapticKind = "light"): void {
   }
 }
 
+function ensurePositioned(el: HTMLElement): void {
+  const inlinePos = el.style.position;
+  if (inlinePos && inlinePos !== "static") return;
+  const cls = el.classList;
+  if (
+    cls.contains("relative") ||
+    cls.contains("absolute") ||
+    cls.contains("fixed") ||
+    cls.contains("sticky")
+  ) {
+    return;
+  }
+  if (getComputedStyle(el).position === "static") {
+    el.style.position = "relative";
+  }
+}
+
 /** Attach a transparent label + hidden switch inside `el`, so a real tap on it plays the iOS haptic. */
 function attachIosTrigger(el: HTMLElement): void {
   if (el.querySelector(`:scope > [${TRIGGER_ATTR}]`)) return;
@@ -74,7 +91,7 @@ function attachIosTrigger(el: HTMLElement): void {
   sw.addEventListener("click", (e) => e.stopPropagation());
 
   label.append(sw);
-  if (getComputedStyle(el).position === "static") el.style.position = "relative";
+  ensurePositioned(el);
 
   if (el.tagName === "BUTTON") {
     // Same as ios-haptics: overlay on top of the button content.
@@ -86,9 +103,15 @@ function attachIosTrigger(el: HTMLElement): void {
   // while taps on the row's plain content land on the overlay.
   el.prepend(label);
   el.querySelectorAll<HTMLElement>(NESTED_INTERACTIVE).forEach((child) => {
-    if (child !== el && getComputedStyle(child).position === "static")
-      child.style.position = "relative";
+    if (child !== el) ensurePositioned(child);
   });
+}
+
+function scanSubtree(root: ParentNode): void {
+  if (root instanceof HTMLElement && root.matches(HAPTIC_SELECTOR)) {
+    attachIosTrigger(root);
+  }
+  root.querySelectorAll<HTMLElement>(HAPTIC_SELECTOR).forEach(attachIosTrigger);
 }
 
 /**
@@ -108,30 +131,36 @@ export function installGlobalButtonHaptics(): () => void {
     return () => document.removeEventListener("click", onClick, { capture: true });
   }
 
-  let scheduled = false;
-  const scan = () => {
-    scheduled = false;
-    document.querySelectorAll<HTMLElement>(HAPTIC_SELECTOR).forEach(attachIosTrigger);
+  let rafId = 0;
+  const pendingRoots = new Set<HTMLElement>();
+  const flush = () => {
+    rafId = 0;
+    for (const root of pendingRoots) {
+      if (root.isConnected) scanSubtree(root);
+    }
+    pendingRoots.clear();
   };
-  const schedule = () => {
-    if (!scheduled) {
-      scheduled = true;
-      requestAnimationFrame(scan);
+  const scheduleRoot = (el: HTMLElement) => {
+    pendingRoots.add(el);
+    if (!rafId) {
+      rafId = requestAnimationFrame(flush);
     }
   };
-  scan();
+  scanSubtree(document);
   const observer = new MutationObserver((records) => {
-    // Ignore our own label insertions and pure text churn (terminal output).
+    // Ignore our own label insertions and pure text/xterm nodes; inspect only added element subtrees.
     for (const r of records) {
-      for (const n of r.addedNodes) {
-        if (n instanceof HTMLElement && !n.hasAttribute(TRIGGER_ATTR)) {
-          schedule();
-          return;
-        }
-      }
       if (r.type === "attributes") {
-        schedule();
-        return;
+        if (r.target instanceof HTMLElement && r.target.matches(HAPTIC_SELECTOR)) {
+          scheduleRoot(r.target);
+        }
+        continue;
+      }
+      for (const n of r.addedNodes) {
+        if (!(n instanceof HTMLElement) || n.hasAttribute(TRIGGER_ATTR)) continue;
+        if (n.matches(HAPTIC_SELECTOR) || n.querySelector(HAPTIC_SELECTOR)) {
+          scheduleRoot(n);
+        }
       }
     }
   });
@@ -141,5 +170,9 @@ export function installGlobalButtonHaptics(): () => void {
     attributes: true,
     attributeFilter: ["disabled"],
   });
-  return () => observer.disconnect();
+  return () => {
+    observer.disconnect();
+    if (rafId) cancelAnimationFrame(rafId);
+    pendingRoots.clear();
+  };
 }
