@@ -70,12 +70,10 @@ import { WorkspaceListView } from "./views/WorkspaceListView";
 import { SurfaceListView } from "./views/SurfaceListView";
 import { SurfaceDetailView } from "./views/SurfaceDetailView";
 import { DeviceListView } from "./views/DeviceListView";
-import { DesktopSidebar } from "./components/desktop/DesktopSidebar";
 import { DesktopTabStrip } from "./components/desktop/DesktopTabStrip";
 import { PairHostModal } from "./components/hosts/PairHostModal";
 import { HostSwitchSheet } from "./components/hosts/HostSwitchSheet";
 import { NewSurfaceModal, type CreateSurfaceParams } from "./components/surface/NewSurfaceModal";
-import { RenameSurfaceModal } from "./components/surface/RenameSurfaceModal";
 import { CloseSurfaceDialog } from "./components/surface/CloseSurfaceDialog";
 import { ChangesPanel } from "./components/git/ChangesPanel";
 import { PairingConfirmModal } from "./components/hosts/PairingConfirmModal";
@@ -124,7 +122,6 @@ export function App() {
   const isDesktop = useIsDesktop();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarNewWs, setSidebarNewWs] = useState<WorkspaceNode | null>(null);
-  const [sidebarRenameTarget, setSidebarRenameTarget] = useState<SurfaceNode | null>(null);
   const [sidebarCloseTarget, setSidebarCloseTarget] = useState<{
     ws: WorkspaceNode;
     surface: SurfaceNode;
@@ -590,13 +587,6 @@ export function App() {
     setActiveView("detail");
   };
 
-  const handleDesktopSelectSurface = (ws: WorkspaceNode, surf: SurfaceNode) => {
-    setMainTab("workspaces");
-    setSelectedWorkspace(ws);
-    setSelectedSurface(surf);
-    setActiveView("detail");
-  };
-
   const handleBackToWorkspaces = () =>
     goBack(() => {
       setActiveView("workspaces");
@@ -685,6 +675,136 @@ export function App() {
   const isConnecting = connState === "connecting" || connState === "authenticating";
   const hasNoHosts = hosts.length === 0 && connState !== "connected" && !isConnecting;
 
+  const topBrandHeader = (
+    <div
+      className={`flex items-center justify-between px-4 ${
+        showIosPwaBanner || isDesktop
+          ? "min-h-[52px]"
+          : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))]"
+      } relative bg-bg border-b border-line shrink-0`}
+    >
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span className="text-[17px] font-bold tracking-tight text-fg shrink-0">Cmob</span>
+        <button
+          type="button"
+          onClick={() => setShowHostSheet(true)}
+          aria-label={`Switch computer (${connState})`}
+          className="inline-flex items-center gap-1.5 min-w-0 max-w-[180px] pl-2.5 pr-2 py-1 rounded-full bg-raised hover:bg-line text-[12.5px] font-medium text-fg-soft transition-colors"
+        >
+          <span
+            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+              connState === "connected"
+                ? "bg-emerald-400"
+                : connState === "connecting" || connState === "authenticating"
+                  ? "bg-amber-400 animate-pulse"
+                  : "bg-rose-400"
+            }`}
+          />
+          <span className="truncate">{activeHost?.name ?? "No computer"}</span>
+          <ChevronDown className="w-3 h-3 shrink-0 text-muted" />
+        </button>
+        {isDemoMode() && (
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-accent/20 text-accent-soft border border-accent/30 shrink-0">
+            Demo
+          </span>
+        )}
+      </div>
+
+      <div className="flex items-center gap-1.5 shrink-0">
+        <button
+          type="button"
+          onClick={handleToggleNotifications}
+          className={`w-9 h-9 rounded-xl bg-raised hover:bg-line flex items-center justify-center transition-colors ${
+            notifPermission === "granted"
+              ? "text-emerald-400"
+              : notifPermission === "denied"
+                ? "text-dim cursor-not-allowed"
+                : "text-amber-300"
+          }`}
+          title={`Notifications: ${notifPermission}`}
+          aria-label="Notifications"
+        >
+          {notifPermission === "granted" ? (
+            <BellRing className="w-[18px] h-[18px]" />
+          ) : (
+            <Bell className="w-[18px] h-[18px]" />
+          )}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => setShowAppMenu((v) => !v)}
+          className="w-9 h-9 rounded-xl bg-raised hover:bg-line text-fg-soft flex items-center justify-center transition-colors"
+          title="Menu"
+          aria-label="Menu"
+          aria-expanded={showAppMenu}
+        >
+          <MoreHorizontal className="w-[18px] h-[18px]" />
+        </button>
+
+        {showAppMenu && (
+          <>
+            <div className="fixed inset-0 z-40" onClick={() => setShowAppMenu(false)} />
+            <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
+              {[
+                { label: "Pair new device", icon: Plus, run: () => setShowPairModal(true) },
+                { label: "Model usage", icon: Gauge, run: () => setMainTab("usage") },
+                { label: "Hosts & devices", icon: Server, run: () => setMainTab("devices") },
+                { label: "Auth token", icon: KeyRound, run: () => setShowTokenModal(true) },
+                { label: "Reload app", icon: RefreshCw, run: handleForceReload },
+              ].map(({ label, icon: Icon, run }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => {
+                    setShowAppMenu(false);
+                    run();
+                  }}
+                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                >
+                  <Icon className="w-4 h-4 text-muted" />
+                  <span>{label}</span>
+                </button>
+              ))}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+
+  const primaryTabNav = (
+    <nav
+      aria-label="Primary navigation"
+      className="shrink-0 grid grid-cols-3 bg-surface border-t border-line pt-1.5 pb-[max(env(safe-area-inset-bottom,0px),8px)] select-none"
+    >
+      {[
+        { id: "workspaces" as const, label: "Workspaces", icon: FolderGit2 },
+        { id: "usage" as const, label: "Usage", icon: Gauge },
+        { id: "devices" as const, label: "Devices", icon: Server },
+      ].map(({ id, label, icon: Icon }) => {
+        const selected = mainTab === id;
+        return (
+          <button
+            key={id}
+            type="button"
+            onClick={() => {
+              haptic("light");
+              setMainTab(id);
+            }}
+            aria-current={selected ? "page" : undefined}
+            className={`flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+              selected ? "text-fg" : "text-muted hover:text-fg-soft"
+            }`}
+          >
+            <Icon className={`w-5 h-5 ${selected ? "text-accent-soft" : ""}`} />
+            <span className="text-[11px] font-medium">{label}</span>
+          </button>
+        );
+      })}
+    </nav>
+  );
+
   return (
     <div className="flex flex-col h-full w-full max-w-full overflow-hidden bg-bg font-sans antialiased select-none lg:select-text">
       {showIosPwaBanner && (
@@ -706,104 +826,10 @@ export function App() {
         </div>
       )}
 
-      {/* Top Header & Device Tab Strip (Mobile only) */}
+      {/* Top Header (Mobile only; desktop mounts topBrandHeader inside its sidebar) */}
       {!isDesktop && activeView !== "detail" && (
         <div className="flex flex-col shrink-0 z-30">
-          <div
-            className={`flex items-center justify-between px-4 ${
-              showIosPwaBanner
-                ? "min-h-[50px]"
-                : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))]"
-            } relative bg-bg border-b border-line`}
-          >
-            <div className="flex items-center gap-2.5">
-              <span className="text-[17px] font-bold tracking-tight text-fg">Cmob</span>
-              <button
-                type="button"
-                onClick={() => setShowHostSheet(true)}
-                aria-label={`Switch computer (${connState})`}
-                className="inline-flex items-center gap-1.5 min-w-0 max-w-[180px] pl-2.5 pr-2 py-1 rounded-full bg-raised hover:bg-line text-[12.5px] font-medium text-fg-soft transition-colors"
-              >
-                <span
-                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-                    connState === "connected"
-                      ? "bg-emerald-400"
-                      : connState === "connecting" || connState === "authenticating"
-                        ? "bg-amber-400 animate-pulse"
-                        : "bg-rose-400"
-                  }`}
-                />
-                <span className="truncate">{activeHost?.name ?? "No computer"}</span>
-                <ChevronDown className="w-3 h-3 shrink-0 text-muted" />
-              </button>
-              {isDemoMode() && (
-                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-accent/20 text-accent-soft border border-accent/30">
-                  Demo
-                </span>
-              )}
-            </div>
-
-            <div className="flex items-center gap-1.5">
-              <button
-                type="button"
-                onClick={handleToggleNotifications}
-                className={`w-9 h-9 rounded-xl bg-raised hover:bg-line flex items-center justify-center transition-colors ${
-                  notifPermission === "granted"
-                    ? "text-emerald-400"
-                    : notifPermission === "denied"
-                      ? "text-dim cursor-not-allowed"
-                      : "text-amber-300"
-                }`}
-                title={`Notifications: ${notifPermission}`}
-                aria-label="Notifications"
-              >
-                {notifPermission === "granted" ? (
-                  <BellRing className="w-[18px] h-[18px]" />
-                ) : (
-                  <Bell className="w-[18px] h-[18px]" />
-                )}
-              </button>
-
-              <button
-                type="button"
-                onClick={() => setShowAppMenu((v) => !v)}
-                className="w-9 h-9 rounded-xl bg-raised hover:bg-line text-fg-soft flex items-center justify-center transition-colors"
-                title="Menu"
-                aria-label="Menu"
-                aria-expanded={showAppMenu}
-              >
-                <MoreHorizontal className="w-[18px] h-[18px]" />
-              </button>
-
-              {showAppMenu && (
-                <>
-                  <div className="fixed inset-0 z-40" onClick={() => setShowAppMenu(false)} />
-                  <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
-                    {[
-                      { label: "Pair new device", icon: Plus, run: () => setShowPairModal(true) },
-                      { label: "Model usage", icon: Gauge, run: () => setMainTab("usage") },
-                      { label: "Hosts & devices", icon: Server, run: () => setMainTab("devices") },
-                      { label: "Auth token", icon: KeyRound, run: () => setShowTokenModal(true) },
-                      { label: "Reload app", icon: RefreshCw, run: handleForceReload },
-                    ].map(({ label, icon: Icon, run }) => (
-                      <button
-                        key={label}
-                        type="button"
-                        onClick={() => {
-                          setShowAppMenu(false);
-                          run();
-                        }}
-                        className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
-                      >
-                        <Icon className="w-4 h-4 text-muted" />
-                        <span>{label}</span>
-                      </button>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
+          {topBrandHeader}
 
           {connState === "error" && wsClient.getLastErrorMessage() && (
             <div className="mx-4 my-2 px-3.5 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-300 text-[12.5px] flex items-center justify-between gap-2 animate-fade-in">
@@ -825,31 +851,26 @@ export function App() {
         {isDesktop ? (
           <>
             {!sidebarCollapsed && (
-              <DesktopSidebar
-                hostsCount={hosts.length}
-                activeHost={activeHost}
-                connState={connState}
-                workspaces={workspaces}
-                selectedWorkspace={selectedWorkspace}
-                selectedSurface={selectedSurface}
-                mainTab={mainTab}
-                loading={loading}
-                notifPermission={notifPermission}
-                onOpenHostSwitcher={() => setShowHostSheet(true)}
-                onToggleNotifications={handleToggleNotifications}
-                onOpenPair={() => setShowPairModal(true)}
-                onOpenUsage={() => setMainTab("usage")}
-                onOpenDevices={() => setMainTab("devices")}
-                onOpenToken={() => setShowTokenModal(true)}
-                onForceReload={handleForceReload}
-                onRefresh={() => void fetchWorkspaces()}
-                onSelectWorkspace={handleSelectWorkspace}
-                onSelectSurface={handleDesktopSelectSurface}
-                onNewSurface={(ws) => setSidebarNewWs(ws)}
-                onRenameSurface={(_ws, surf) => setSidebarRenameTarget(surf)}
-                onCloseSurface={(ws, surf) => setSidebarCloseTarget({ ws, surface: surf })}
-                onOpenChanges={(ws) => setChangesWs(ws)}
-              />
+              <aside
+                aria-label="Workspaces sidebar"
+                className="w-[350px] xl:w-[380px] shrink-0 h-full flex flex-col bg-bg border-r border-line overflow-hidden"
+              >
+                {topBrandHeader}
+                <div className="flex-1 min-h-0 overflow-hidden">
+                  <WorkspaceListView
+                    workspaces={workspaces}
+                    loading={loading}
+                    onRefresh={fetchWorkspaces}
+                    onSelectWorkspace={handleSelectWorkspace}
+                    hostsCount={hosts.length}
+                    connState={connState}
+                    onPairHost={() => setShowPairModal(true)}
+                    selectedWorkspaceId={mainTab === "workspaces" ? selectedWorkspace?.id : null}
+                    hideOnboarding
+                  />
+                </div>
+                {primaryTabNav}
+              </aside>
             )}
 
             <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-bg">
@@ -1063,37 +1084,7 @@ export function App() {
               )}
             </div>
 
-            {(mainTab !== "workspaces" || activeView === "workspaces") && (
-              <nav
-                aria-label="Primary mobile tabs"
-                className="shrink-0 grid grid-cols-3 bg-surface border-t border-line pt-1.5 pb-[max(env(safe-area-inset-bottom,0px),8px)] select-none"
-              >
-                {[
-                  { id: "workspaces" as const, label: "Workspaces", icon: FolderGit2 },
-                  { id: "usage" as const, label: "Usage", icon: Gauge },
-                  { id: "devices" as const, label: "Devices", icon: Server },
-                ].map(({ id, label, icon: Icon }) => {
-                  const selected = mainTab === id;
-                  return (
-                    <button
-                      key={id}
-                      type="button"
-                      onClick={() => {
-                        haptic("light");
-                        setMainTab(id);
-                      }}
-                      aria-current={selected ? "page" : undefined}
-                      className={`flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
-                        selected ? "text-fg" : "text-muted hover:text-fg-soft"
-                      }`}
-                    >
-                      <Icon className={`w-5 h-5 ${selected ? "text-accent-soft" : ""}`} />
-                      <span className="text-[11px] font-medium">{label}</span>
-                    </button>
-                  );
-                })}
-              </nav>
-            )}
+            {(mainTab !== "workspaces" || activeView === "workspaces") && primaryTabNav}
           </div>
         )}
       </main>
@@ -1181,19 +1172,6 @@ export function App() {
           workspaceTitle={sidebarNewWs.title}
           onClose={() => setSidebarNewWs(null)}
           onCreate={handleCreateSurface}
-        />
-      )}
-
-      {sidebarRenameTarget && (
-        <RenameSurfaceModal
-          isOpen={Boolean(sidebarRenameTarget)}
-          currentTitle={sidebarRenameTarget.title}
-          onClose={() => setSidebarRenameTarget(null)}
-          onRename={async (nextTitle) => {
-            const id = sidebarRenameTarget.id || sidebarRenameTarget.ref;
-            await handleRenameSurface(id, nextTitle);
-            setSidebarRenameTarget(null);
-          }}
         />
       )}
 

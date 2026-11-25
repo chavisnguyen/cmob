@@ -46,7 +46,7 @@ export function DesktopTabStrip({
   const activeKey = activeSurface?.id || activeSurface?.ref || "";
 
   return (
-    <div className="flex items-center justify-between gap-2 h-11 px-2.5 bg-surface border-b border-line shrink-0 select-none">
+    <div className="flex items-center justify-between gap-2 h-[52px] px-2.5 bg-surface border-b border-line shrink-0 select-none">
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
         <button
           type="button"

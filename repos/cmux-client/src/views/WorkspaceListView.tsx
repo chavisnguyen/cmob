@@ -13,6 +13,8 @@ interface WorkspaceListViewProps {
   hostsCount?: number;
   connState?: ConnectionState;
   onPairHost?: () => void;
+  selectedWorkspaceId?: string | null;
+  hideOnboarding?: boolean;
 }
 
 export function WorkspaceListView({
@@ -23,6 +25,8 @@ export function WorkspaceListView({
   hostsCount,
   connState,
   onPairHost,
+  selectedWorkspaceId = null,
+  hideOnboarding = false,
 }: WorkspaceListViewProps) {
   // Pull to refresh: a drag down from the top of the list. The page itself never scrolls (fixed body),
   // so the browser's native gesture does not exist here.
@@ -99,7 +103,13 @@ export function WorkspaceListView({
           />
         </div>
 
-        {hasNoHosts && !loading && (
+        {hasNoHosts && !loading && hideOnboarding && (
+          <div className="px-6 py-12 text-center text-muted text-[13.5px]">
+            No computer paired yet.
+          </div>
+        )}
+
+        {hasNoHosts && !loading && !hideOnboarding && (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
             <h2 className="text-[20px] font-bold text-white tracking-tight mb-2">
               Welcome to Cmob
@@ -130,21 +140,27 @@ export function WorkspaceListView({
 
         {workspaces.map((ws) => {
           const isRunning = ws.status.toLowerCase() === "running";
+          const isSelected = Boolean(selectedWorkspaceId && selectedWorkspaceId === ws.id);
           const surfaceCount = ws.surfaces.length;
 
           return (
             <Pressable
               key={ws.id}
               onPress={() => onSelectWorkspace(ws)}
+              aria-current={isSelected ? "true" : undefined}
               style={
                 ws.color
                   ? {
                       boxShadow: `inset 4px 0 0 ${ws.color}`,
-                      backgroundImage: `linear-gradient(90deg, ${ws.color}26, transparent 70%)`,
+                      backgroundImage: `linear-gradient(90deg, ${ws.color}${isSelected ? "38" : "26"}, transparent ${isSelected ? "80%" : "70%"})`,
                     }
                   : undefined
               }
-              className="flex items-center justify-between px-4 py-3.5 min-h-[68px] hover:bg-bg active:bg-surface cursor-pointer transition-colors group"
+              className={`flex items-center justify-between px-4 py-3.5 min-h-[68px] cursor-pointer transition-colors group ${
+                isSelected
+                  ? "bg-raised/90 ring-1 ring-inset ring-white/[0.08]"
+                  : "hover:bg-bg active:bg-surface"
+              }`}
             >
               <div className="flex items-start gap-3 min-w-0 flex-1 pr-3">
                 <div
@@ -176,11 +192,8 @@ export function WorkspaceListView({
                     </p>
                   )}
 
-                  <div className="mt-1.5 flex items-center gap-3 text-[12px] text-dim font-mono">
-                    <span
-                      className="truncate max-w-[210px] sm:max-w-md"
-                      title={ws.current_directory}
-                    >
+                  <div className="mt-1.5 flex items-center gap-3 min-w-0 text-[12px] text-dim font-mono">
+                    <span className="truncate min-w-0 flex-1" title={ws.current_directory}>
                       {shortPath(ws.current_directory)}
                     </span>
                     <span className="flex items-center gap-1 shrink-0 text-muted">
@@ -191,7 +204,11 @@ export function WorkspaceListView({
                 </div>
               </div>
 
-              <ChevronRight className="w-5 h-5 text-dim group-hover:text-muted transition-colors shrink-0" />
+              <ChevronRight
+                className={`w-5 h-5 transition-colors shrink-0 ${
+                  isSelected ? "text-fg-soft" : "text-dim group-hover:text-muted"
+                }`}
+              />
             </Pressable>
           );
         })}

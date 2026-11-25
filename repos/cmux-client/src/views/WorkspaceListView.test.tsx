@@ -80,4 +80,44 @@ describe("WorkspaceListView", () => {
     expect(html).not.toContain("Welcome to Cmob");
     expect(html).not.toContain("No active workspaces found in cmux.");
   });
+
+  it("highlights the selected workspace and hides onboarding when requested for desktop sidebar", () => {
+    const mockWs: WorkspaceNode[] = [
+      {
+        id: "ws-1",
+        ref: "ws:1",
+        title: "Backend API",
+        status: "running",
+        pinned: false,
+        selected: true,
+        surfaces: [],
+        current_directory: "/home/user/project",
+      },
+    ];
+
+    const selectedHtml = renderToStaticMarkup(
+      <WorkspaceListView
+        workspaces={mockWs}
+        loading={false}
+        onRefresh={() => {}}
+        onSelectWorkspace={() => {}}
+        hostsCount={1}
+        selectedWorkspaceId="ws-1"
+      />,
+    );
+    expect(selectedHtml).toContain('aria-current="true"');
+
+    const emptySidebarHtml = renderToStaticMarkup(
+      <WorkspaceListView
+        workspaces={[]}
+        loading={false}
+        onRefresh={() => {}}
+        onSelectWorkspace={() => {}}
+        hostsCount={0}
+        hideOnboarding
+      />,
+    );
+    expect(emptySidebarHtml).not.toContain("Welcome to Cmob");
+    expect(emptySidebarHtml).toContain("No computer paired yet.");
+  });
 });
