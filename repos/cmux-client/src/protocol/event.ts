@@ -39,17 +39,26 @@ export interface BackgroundTaskEntry {
   settled_at?: number;
 }
 
+export interface AskQuestionItem {
+  question: string;
+  options: string[];
+  multi_select?: boolean;
+}
+
 export interface AwaitingInput {
   input_kind: "permission" | "question" | "options" | "other";
   prompt: string;
   options?: string[];
   default_choice?: string;
   multi_select?: boolean;
+  questions?: AskQuestionItem[];
+  /** Resolved answer recorded in the transcript (Orca ResolutionReceipt). */
+  answered?: string;
 }
 
 export type AgentEvent =
   | { kind: "user"; text: string }
-  | { kind: "thinking"; text: string }
+  | { kind: "thinking"; text: string; duration_secs?: number }
   | { kind: "tool-start"; tool_id: string; name: string; detail?: string }
   | {
       kind: "tool-end";

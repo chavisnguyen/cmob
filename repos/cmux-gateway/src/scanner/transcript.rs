@@ -6,8 +6,8 @@ use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 
 use crate::protocol::event::{
-    AgentEvent, AgentRole, AgentTurn, AwaitingInput, BackgroundTaskEntry, BackgroundTaskKind,
-    SubagentEntry, SubagentState,
+    AgentEvent, AgentRole, AgentTurn, AskQuestionItem, AwaitingInput, BackgroundTaskEntry,
+    BackgroundTaskKind, SubagentEntry, SubagentState,
 };
 
 /// Multi-Agent Transcript Reader
@@ -41,6 +41,8 @@ struct CodexState {
     spawn_roles: std::collections::HashMap<String, String>,
     /// call_ids of spawn/wait/close_agent calls: folded into the subagent card, not shown as tool rows.
     hidden_calls: std::collections::HashSet<String>,
+    /// Timestamp (ms) of the latest unsettled `Thinking` block in `current_turn`.
+    open_thinking_ms: Option<u64>,
 }
 
 const CODEX_AGENT_TOOLS: [&str; 3] = ["spawn_agent", "wait_agent", "close_agent"];
@@ -675,6 +677,30 @@ fn file_mtime_len(path: &Path) -> Result<(u128, u64), std::io::Error> {
     Ok((mtime_ns, meta.len()))
 }
 
+fn settle_open_thinking(
+    open_thinking_ms: &mut Option<u64>,
+    end_ms: Option<u64>,
+    current_turn: &mut Option<AgentTurn>,
+) {
+    let Some(start_ms) = open_thinking_ms.take() else {
+        return;
+    };
+    let Some(now_ms) = end_ms.filter(|&n| n >= start_ms && n - start_ms <= 600_000) else {
+        return;
+    };
+    let secs = ((now_ms - start_ms) / 1000).max(1);
+    if let Some(turn) = current_turn.as_mut() {
+        for ev in turn.events.iter_mut().rev() {
+            if let AgentEvent::Thinking { duration_secs, .. } = ev
+                && duration_secs.is_none()
+            {
+                *duration_secs = Some(secs);
+                break;
+            }
+        }
+    }
+}
+
 fn parse_transcript_line(
     trimmed: &str,
     surface_id: &str,
@@ -686,31 +712,38 @@ fn parse_transcript_line(
         return;
     };
 
+    let line_ts = TranscriptReader::record_timestamp_ms(&val);
+    settle_open_thinking(&mut codex.open_thinking_ms, line_ts, current_turn);
+
     if val.get("type").is_none() && val.get("payload").and_then(|p| p.get("type")).is_some() {
         TranscriptReader::parse_kiro_line(&val, surface_id, current_turn, turns);
-        return;
-    }
-
-    if val
+    } else if val
         .get("type")
         .and_then(|t| t.as_str())
         .is_some_and(|t| matches!(t, "session_meta" | "event_msg" | "response_item" | "turn_context"))
     {
         TranscriptReader::parse_codex_line(&val, surface_id, codex, current_turn, turns);
-        return;
-    }
-
-    let is_agy = val
+    } else if val
         .get("type")
         .and_then(|t| t.as_str())
-        .is_some_and(|t| matches!(t, "USER_INPUT" | "PLANNER_RESPONSE" | "GENERIC" | "SYSTEM_MESSAGE"));
-
-    if is_agy {
+        .is_some_and(|t| matches!(t, "USER_INPUT" | "PLANNER_RESPONSE" | "GENERIC" | "SYSTEM_MESSAGE"))
+    {
         TranscriptReader::parse_antigravity_line(val, surface_id, current_turn, turns);
-        return;
+    } else {
+        TranscriptReader::parse_claude_line(val, surface_id, current_turn, turns);
     }
 
-    TranscriptReader::parse_claude_line(val, surface_id, current_turn, turns);
+    if codex.open_thinking_ms.is_none()
+        && line_ts.is_some()
+        && current_turn.as_ref().is_some_and(|t| {
+            t.events
+                .iter()
+                .rev()
+                .any(|e| matches!(e, AgentEvent::Thinking { duration_secs: None, .. }))
+        })
+    {
+        codex.open_thinking_ms = line_ts;
+    }
 }
 
 fn refresh_working_codex_subagents(parent: &Path, turns: &mut [AgentTurn]) {
@@ -761,7 +794,10 @@ impl TranscriptReader {
                     // reasoning itself is not in the transcript). Measured on all local Kiro
                     // transcripts: 646/646 `"..."` reasoning records have a signature. Not content.
                     Some("Reasoning") if text.trim() == "..." => return,
-                    Some("Reasoning") => AgentEvent::Thinking { text: text.to_string() },
+                    Some("Reasoning") => AgentEvent::Thinking {
+                        text: text.to_string(),
+                        duration_secs: None,
+                    },
                     Some("Summary") => return,
                     _ => AgentEvent::Assistant { text: text.to_string() },
                 };
@@ -806,6 +842,8 @@ impl TranscriptReader {
                         options,
                         default_choice: None,
                         multi_select: None,
+                        questions: None,
+                        answered: None,
                     }));
             }
             "interaction_resolved" => {
@@ -1221,42 +1259,77 @@ impl TranscriptReader {
             "ask_question" | "ask_permission" | "AskUserQuestion" | "ask_user_question"
         ) {
             let args = args?;
-            if let Some(questions) = args.get("questions").and_then(|q| q.as_array()) {
-                if let Some(first) = questions.first() {
-                    let prompt = first
-                        .get("question")
-                        .and_then(|q| q.as_str())
-                        .unwrap_or("")
-                        .to_string();
-                    let options = first
-                        .get("options")
+            let owned_questions: Option<Vec<serde_json::Value>> =
+                match args.get("questions") {
+                    Some(serde_json::Value::Array(arr)) => Some(arr.clone()),
+                    Some(serde_json::Value::String(raw)) => {
+                        serde_json::from_str::<Vec<serde_json::Value>>(raw).ok()
+                    }
+                    _ => None,
+                };
+            if let Some(questions) = owned_questions
+                && let Some(first) = questions.first()
+            {
+                let extract_opts = |q: &serde_json::Value| -> Vec<String> {
+                    q.get("options")
                         .and_then(|opts| opts.as_array())
                         .map(|arr| {
                             arr.iter()
                                 .filter_map(|o| {
                                     if let Some(s) = o.as_str() {
-                                        Some(s.to_string())
-                                    } else if let Some(lbl) = o.get("label").and_then(|l| l.as_str()) {
-                                        Some(lbl.to_string())
+                                        Some(Self::clean_agy_arg_str(s))
                                     } else {
-                                        None
+                                        o.get("label")
+                                            .and_then(|l| l.as_str())
+                                            .map(Self::clean_agy_arg_str)
                                     }
                                 })
+                                .filter(|s| !s.is_empty())
                                 .collect()
-                        });
-                    let multi_select = first
-                        .get("is_multi_select")
-                        .and_then(|m| m.as_bool())
-                        .or_else(|| first.get("multiSelect").and_then(|m| m.as_bool()));
+                        })
+                        .unwrap_or_default()
+                };
+                let parsed_items: Vec<AskQuestionItem> = questions
+                    .iter()
+                    .filter_map(|q| {
+                        let q_text = q
+                            .get("question")
+                            .and_then(|v| v.as_str())
+                            .map(Self::clean_agy_arg_str)
+                            .unwrap_or_default();
+                        if q_text.is_empty() {
+                            return None;
+                        }
+                        let multi = q
+                            .get("is_multi_select")
+                            .and_then(|m| m.as_bool())
+                            .or_else(|| q.get("multiSelect").and_then(|m| m.as_bool()));
+                        Some(AskQuestionItem {
+                            question: q_text,
+                            options: extract_opts(q),
+                            multi_select: multi,
+                        })
+                    })
+                    .collect();
+
+                if let Some(first_item) = parsed_items.first().cloned() {
+                    let _ = first;
                     return Some(AgentEvent::AwaitingInput(AwaitingInput {
                         input_kind: "question".into(),
-                        prompt,
-                        options,
+                        prompt: first_item.question.clone(),
+                        options: (!first_item.options.is_empty()).then_some(first_item.options.clone()),
                         default_choice: None,
-                        multi_select,
+                        multi_select: first_item.multi_select,
+                        questions: (parsed_items.len() > 1).then_some(parsed_items),
+                        answered: None,
                     }));
                 }
-            } else if let Some(question) = args.get("question").and_then(|q| q.as_str()) {
+            } else if let Some(question) = args
+                .get("question")
+                .and_then(|q| q.as_str())
+                .map(Self::clean_agy_arg_str)
+                .filter(|s| !s.is_empty())
+            {
                 let options = args
                     .get("options")
                     .and_then(|opts| opts.as_array())
@@ -1264,21 +1337,23 @@ impl TranscriptReader {
                         arr.iter()
                             .filter_map(|o| {
                                 if let Some(s) = o.as_str() {
-                                    Some(s.to_string())
-                                } else if let Some(lbl) = o.get("label").and_then(|l| l.as_str()) {
-                                    Some(lbl.to_string())
+                                    Some(Self::clean_agy_arg_str(s))
                                 } else {
-                                    None
+                                    o.get("label")
+                                        .and_then(|l| l.as_str())
+                                        .map(Self::clean_agy_arg_str)
                                 }
                             })
                             .collect()
                     });
                 return Some(AgentEvent::AwaitingInput(AwaitingInput {
                     input_kind: "question".into(),
-                    prompt: question.to_string(),
+                    prompt: question,
                     options,
                     default_choice: None,
                     multi_select: None,
+                    questions: None,
+                    answered: None,
                 }));
             }
         }
@@ -1658,7 +1733,24 @@ impl TranscriptReader {
                                 None => turns.iter_mut().rev().find(|t| issued_here(t)),
                             };
                             if let Some(turn) = target {
-                                turn.events.push(AgentEvent::ToolEnd { tool_id, name: None, detail, ok });
+                                let has_matching_tool = turn.events.iter().any(|e| {
+                                    matches!(e, AgentEvent::ToolStart { tool_id: id, .. } if *id == tool_id)
+                                });
+                                if has_matching_tool {
+                                    turn.events.push(AgentEvent::ToolEnd { tool_id, name: None, detail, ok });
+                                } else if let Some(AgentEvent::AwaitingInput(ai)) = turn
+                                    .events
+                                    .iter_mut()
+                                    .rev()
+                                    .find(|e| matches!(e, AgentEvent::AwaitingInput(a) if a.answered.is_none()))
+                                {
+                                    // `AskUserQuestion` tool_result settles the open AwaitingInput receipt.
+                                    ai.answered = detail
+                                        .as_deref()
+                                        .map(Self::clean_question_answer_text)
+                                        .filter(|s| !s.is_empty())
+                                        .or_else(|| Some("Answered".to_string()));
+                                }
                             }
                         }
                         Some("text") => has_text = true,
@@ -1920,6 +2012,7 @@ impl TranscriptReader {
                                     if let Some(think) = block.get("thinking").and_then(|t| t.as_str()) {
                                         turn.events.push(AgentEvent::Thinking {
                                             text: think.to_string(),
+                                            duration_secs: None,
                                         });
                                     }
                                 }
@@ -2087,6 +2180,64 @@ impl TranscriptReader {
         (id.len() == 36).then(|| id.to_string())
     }
 
+    /// Strip leading `Created At: ...` / `Completed At: ...` lines that Antigravity prefixes onto
+    /// every `GENERIC` tool result (often duplicated twice).
+    pub fn strip_agy_tool_headers(raw: &str) -> &str {
+        let mut rest = raw;
+        loop {
+            let trimmed = rest.trim_start_matches(['\r', '\n']);
+            if let Some(nl) = trimmed.find('\n') {
+                let line = trimmed[..nl].trim();
+                if line.starts_with("Created At:") || line.starts_with("Completed At:") {
+                    rest = &trimmed[nl + 1..];
+                    continue;
+                }
+            } else {
+                let line = trimmed.trim();
+                if line.starts_with("Created At:") || line.starts_with("Completed At:") {
+                    return "";
+                }
+            }
+            return trimmed;
+        }
+    }
+
+    /// Normalize question tool answers (`A1: ...` from Antigravity or `"User has answered..."` from Claude)
+    /// into clean human-readable answer text for the `AwaitingInput.answered` receipt.
+    pub fn clean_question_answer_text(raw: &str) -> String {
+        let stripped = Self::strip_agy_tool_headers(raw).trim();
+        if stripped.is_empty() {
+            return String::new();
+        }
+        // Single-question Antigravity answer: `A1: <selected label>`
+        let lines: Vec<&str> = stripped.lines().collect();
+        let a_prefixed: Vec<(usize, &str)> = lines
+            .iter()
+            .enumerate()
+            .filter_map(|(i, l)| {
+                let t = l.trim();
+                let after_a = t.strip_prefix('A')?;
+                let colon = after_a.find(':')?;
+                let num = &after_a[..colon];
+                (!num.is_empty() && num.chars().all(|c| c.is_ascii_digit()))
+                    .then_some((i, after_a[colon + 1..].trim()))
+            })
+            .collect();
+        if a_prefixed.len() == 1 && a_prefixed[0].0 == 0 {
+            let first_line = a_prefixed[0].1;
+            if lines.len() == 1 {
+                return first_line.to_string();
+            }
+            let mut out = first_line.to_string();
+            for extra in &lines[1..] {
+                out.push('\n');
+                out.push_str(extra);
+            }
+            return out.trim().to_string();
+        }
+        stripped.to_string()
+    }
+
     /// Unquote JSON-stringified argument strings that Antigravity writes in `tool_calls[].args`
     /// (e.g. `"\"Client lint, test, and build\""` -> `"Client lint, test, and build"`).
     fn clean_agy_arg_str(raw: &str) -> String {
@@ -2154,6 +2305,7 @@ impl TranscriptReader {
                     if !thinking.trim().is_empty() {
                         turn.events.push(AgentEvent::Thinking {
                             text: thinking.to_string(),
+                            duration_secs: None,
                         });
                     }
                 }
@@ -2422,17 +2574,32 @@ impl TranscriptReader {
                         }
                     }
 
+                    let cleaned_body = Self::strip_agy_tool_headers(content);
                     if let Some((tool_id, name, _)) = open_tool {
                         let is_err = val.get("status").and_then(|s| s.as_str()).is_some_and(|s| s == "ERROR");
                         turn.events.push(AgentEvent::ToolEnd {
                             tool_id,
                             name: Some(name),
-                            detail: Some(cap_detail(content.to_string())),
+                            detail: Some(cap_detail(cleaned_body.to_string())),
                             ok: !is_err,
                         });
-                    } else if !content.trim().is_empty() {
+                    } else if let Some(AgentEvent::AwaitingInput(ai)) = turn
+                        .events
+                        .iter_mut()
+                        .rev()
+                        .find(|ev| matches!(ev, AgentEvent::AwaitingInput(a) if a.answered.is_none()))
+                    {
+                        // Result of `ask_question` / `ask_permission`: record as the resolved answer
+                        // receipt on `AwaitingInput` instead of dumping `Created At: ... A1: ...` as prose!
+                        let answer = Self::clean_question_answer_text(content);
+                        ai.answered = Some(if answer.is_empty() {
+                            "Answered".to_string()
+                        } else {
+                            answer
+                        });
+                    } else if !cleaned_body.trim().is_empty() {
                         turn.events.push(AgentEvent::Assistant {
-                            text: content.to_string(),
+                            text: cleaned_body.to_string(),
                         });
                     }
                     *current_turn = Some(turn);
@@ -3005,6 +3172,72 @@ mod tests {
         assert_eq!(bg[0].label, "Gateway test suite");
         assert_eq!(bg[0].state, SubagentState::Completed);
         assert!(bg[0].settled_at.unwrap() > bg[0].started_at.unwrap());
+
+        let _ = std::fs::remove_file(&p);
+    }
+
+    #[test]
+    fn antigravity_multi_ask_question_receipts_and_thinking_durations() {
+        let q1 = r#"[{"question":"Xác nhận cơ chế brew?","options":["(Recommended) Chốt luôn brew","Dùng nix"],"is_multi_select":false}]"#;
+        let q2 = r#"[{"question":"Quyết định 8 — Xử lý nhóm wrapper?","options":["(Recommended) Gom luôn vào gear-config","Tách riêng md2pdf","Giữ tất cả riêng biệt"],"is_multi_select":false}]"#;
+        let p = write_jsonl(
+            "agy-multi-ask",
+            &[
+                r#"{"type":"USER_INPUT","created_at":"2026-11-25T13:52:00Z","content":"tiếp tục"}"#,
+                &format!(
+                    r#"{{"type":"PLANNER_RESPONSE","created_at":"2026-11-25T13:52:10Z","content":"Chốt Mức 1 nhé?","tool_calls":[{{"name":"ask_question","args":{{"questions":{}}}}}]}}"#,
+                    serde_json::to_string(q1).unwrap()
+                ),
+                r#"{"type":"GENERIC","created_at":"2026-11-25T13:53:20Z","content":"Created At: 2026-11-25T20:53:01+07:00\nCompleted At: 2026-11-25T20:53:21+07:00\nCreated At: 2026-11-25T20:53:01+07:00\nCompleted At: 2026-11-25T20:53:20+07:00\nA1: (Recommended) Chốt luôn brew"}"#,
+                r#"{"type":"PLANNER_RESPONSE","created_at":"2026-11-25T13:53:21Z","thinking":"I'm thinking through how to approach this.","tool_calls":[{"name":"read_file","args":{"Path":"\"/tmp/md2pdf.sh\""}},{"name":"read_file","args":{"Path":"\"/tmp/docker-compose.yml\""}}]}"#,
+                r#"{"type":"GENERIC","created_at":"2026-11-25T13:53:36Z","content":"Created At: 2026-11-25T20:53:36+07:00\nCompleted At: 2026-11-25T20:53:36+07:00\nShowing lines 1-34"}"#,
+                r#"{"type":"GENERIC","created_at":"2026-11-25T13:53:36Z","content":"Created At: 2026-11-25T20:53:36+07:00\nCompleted At: 2026-11-25T20:53:36+07:00\nShowing lines 1-38"}"#,
+                &format!(
+                    r#"{{"type":"PLANNER_RESPONSE","created_at":"2026-11-25T13:54:14Z","thinking":"Detailed wrapper synthesis.","content":"Mình vừa mở code bên trong.","tool_calls":[{{"name":"ask_question","args":{{"questions":{}}}}}]}}"#,
+                    serde_json::to_string(q2).unwrap()
+                ),
+            ],
+        );
+
+        let turns = TranscriptReader::read_recent_turns(&p, "surf-agy-q", 10).unwrap();
+        assert_eq!(turns.len(), 2);
+        let ast = &turns[1];
+
+        // No raw `Created At:` or `A1:` leaked into Assistant prose events.
+        for ev in &ast.events {
+            if let AgentEvent::Assistant { text } = ev {
+                assert!(!text.contains("Created At:"));
+                assert!(!text.contains("A1:"));
+            }
+        }
+
+        // First Thinking block lasted 15s (13:53:21Z -> 13:53:36Z).
+        let thinkings: Vec<Option<u64>> = ast
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::Thinking { duration_secs, .. } => Some(*duration_secs),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(thinkings.first().copied().flatten(), Some(15));
+
+        // Exactly two AwaitingInput events: first settled with clean answer, second still open!
+        let asks: Vec<&crate::protocol::event::AwaitingInput> = ast
+            .events
+            .iter()
+            .filter_map(|e| match e {
+                AgentEvent::AwaitingInput(a) => Some(a),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asks.len(), 2);
+        assert_eq!(
+            asks[0].answered.as_deref(),
+            Some("(Recommended) Chốt luôn brew")
+        );
+        assert!(asks[1].answered.is_none());
+        assert_eq!(asks[1].options.as_ref().unwrap().len(), 3);
 
         let _ = std::fs::remove_file(&p);
     }

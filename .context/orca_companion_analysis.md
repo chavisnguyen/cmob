@@ -278,3 +278,16 @@ Chat shows one collapsible card per turn (existing `MobileNativeChatSubagentGrou
     - Antigravity (`agy`): Coalesces parallel `invoke_subagent` calls per turn, handles `manage_subagents`/`manage_task` kills, and tracks background `run_command` tasks (`Tool is running as a background task with task id: .../task-XXXX` settled by `SYSTEM_MESSAGE` from `sender=.../task-XXXX`).
     - OpenCode: Maps `task` / `subagent` tool parts in `opencode_store.rs` into `AgentEvent::Subagents`.
   - **Auto-Compaction Divider:** Converts Claude `compact_boundary` / `isCompactSummary` (`"This session is being continued from a previous conversation..."`) into a centered `"Context compacted"` separator (`ref/orca/src/shared/native-chat/native-chat-notice.ts:15`).
+  - **Completed Checklist Retirement (`repos/cmux-client/src/components/chat/taskList.ts`):** Hides a 100%-completed `DockedTaskListStrip` once a newer assistant turn has progressed without issuing further task tool calls, preventing stale `3/3` banners from lingering across later turns.
+
+## Orca 1:1 Interactive Question Card, Tool Sentences, Reasoning & Prose Polish (2026-11-25)
+- **Interactive Question Card (`MobileNativeChatPromptCard.tsx` + `MobileNativeChatAwaitingInputRow.tsx`):**
+  - Modeled after `ref/orca/mobile/src/session/native-chat/MobileNativeChatPromptCard.tsx:161-265` and `MobileNativeChatAwaitingInputRow.tsx:17-57`.
+  - Unanswered `ask_question` / `AskUserQuestion` renders as a docked interactive card above the composer (supporting single-tap selection, multi-select checkboxes, collapsible 1-line `PromptStrip`, and `Write-in / Other…` free-text input) while the inline transcript row shows `Asking a question` (pending) or `Asked a question` + `↳ <selected answer>` receipt when answered.
+  - Fixes multi-question turns (`findLastIndex` scan in `OrcaChatView.tsx`) and overrides Antigravity's sticky `PreInvocation`/`running` hook state via `antigravity_record_is_awaiting_input` (`repos/cmux-gateway/src/scanner/hook_store.rs`).
+- **Natural Tool Run Sentences & Reasoning Duration (`MobileNativeChatToolRun.tsx`, `MobileNativeChatReasoningRow.tsx`):**
+  - Ports Orca's `nativeChatToolRunSentence` (`ref/orca/src/shared/native-chat/tool-run-sentence.ts:52-94`) to display concise human-readable summaries (`Read 2 files (md2pdf.sh, docker-compose.yml)`, `Edited server.rs`, command summary) with no noisy green `Done` badges (only showing a red `Failed` badge when `ok === false`).
+  - Removes `(N chars)` from reasoning headers (`ref/orca/mobile/src/session/native-chat/MobileNativeChatReasoningRow.tsx:26-44`), computing `Thinking.duration_secs` from step timestamps in `repos/cmux-gateway/src/scanner/transcript.rs` (`Thought for 15s`).
+- **Markdown Math & `file://` Code Reference Chips (`NativeChatProse.tsx`):**
+  - Preserves `file://` URLs through `react-markdown` `urlTransform` (`ref/orca/src/renderer/src/components/native-chat/markdown/NativeChatMarkdown.tsx:59`) and renders clickable/styled `<FileCode2 />` chips.
+  - Converts inline/display LaTeX symbols (`$\rightarrow$` → `→`, `$\Rightarrow$` → `⇒`, `\frac{a}{b}`, Greek letters, etc.) outside fenced/inline code spans while keeping shell variables (`$PATH`) and currency (`$10`) untouched.

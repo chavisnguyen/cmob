@@ -15,6 +15,7 @@ import {
 import { RPC_EVENTS, RPC_METHODS, type SurfaceNode, type WorkspaceNode } from "../protocol/rpc";
 import type { AgentTurn, AgentLifecycleState, StartupDialogInfo } from "../protocol/event";
 import { OrcaChatView } from "../components/chat/OrcaChatView";
+import type { QuestionAnswerPayload } from "../components/chat/MobileNativeChatPromptCard";
 import { RawTerminalView } from "../components/terminal/RawTerminalView";
 import { SurfaceSwitchSheet } from "../components/surface/SurfaceSwitchSheet";
 import { displaySurfaceTitle } from "../components/surface/surfaceTitle";
@@ -641,6 +642,34 @@ export function SurfaceDetailView({
     await loadSessionTurns();
   };
 
+  const handleAnswerQuestion = async (payload: QuestionAnswerPayload) => {
+    setIsWorking(true);
+    setLifecycleState("working");
+    setActivityText("Thinking…");
+    try {
+      await wsClient.call(
+        RPC_METHODS.CHAT_ANSWER_QUESTION,
+        {
+          surface_id: surface.id || surface.ref,
+          agent_kind: surface.agent?.agent_kind || "agent",
+          indices: payload.indices,
+          ...(payload.other ? { other: payload.other } : {}),
+          option_count: payload.optionCount,
+          multi_select: payload.multiSelect,
+        },
+        { timeoutMs: 20_000 },
+      );
+    } catch (err) {
+      setIsWorking(false);
+      setLifecycleState("waiting");
+      setActivityText(null);
+      throw err;
+    }
+    setTimeout(() => {
+      void loadSessionTurns();
+    }, 450);
+  };
+
   const handleApprove = async () => {
     // The gateway picks the approval key per agent and requires an explicit kind; never guess one.
     const agentKind = surface.agent?.agent_kind;
@@ -975,6 +1004,7 @@ export function SurfaceDetailView({
             agentKind={surface.agent?.agent_kind || "agent"}
             startupDialog={snapshotConfirmed ? startupDialog : null}
             onAnswerDialog={handleAnswerDialog}
+            onAnswerQuestion={handleAnswerQuestion}
             onOpenTerminal={() => setViewMode("terminal")}
             hasMoreHistory={hasMoreHistory}
             isLoadingOlder={loadingOlder}

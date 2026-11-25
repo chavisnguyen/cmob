@@ -317,6 +317,8 @@ fn tool_event(part: &serde_json::Value, turn: &mut AgentTurn) {
                 options,
                 default_choice: None,
                 multi_select: None,
+                questions: None,
+                answered: None,
             }));
             return;
         }
@@ -376,7 +378,10 @@ fn assistant_events(data: &serde_json::Value, turn: &mut AgentTurn) {
         match part.get("type").and_then(|t| t.as_str()).unwrap_or("") {
             "reasoning" => {
                 if let Some(text) = part.get("text").and_then(|t| t.as_str()).filter(|t| !t.trim().is_empty()) {
-                    turn.events.push(AgentEvent::Thinking { text: text.to_string() });
+                    turn.events.push(AgentEvent::Thinking {
+                        text: text.to_string(),
+                        duration_secs: None,
+                    });
                 }
             }
             "text" => {

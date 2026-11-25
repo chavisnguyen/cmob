@@ -340,6 +340,56 @@ impl DualTransportCmuxBridge {
         Ok(picked.label.clone())
     }
 
+    /// Answers an active interactive TUI question menu (`ask_question` / `AskUserQuestion`) on screen.
+    ///
+    /// Navigates from the currently highlighted `>`/`›`/`❯` numbered row to the selected option (or the
+    /// trailing `Write-in...` / `Type something` row for free-text `other` replies) using real terminal
+    /// keys, falling back to `submit_prompt` when no numbered picker is visible on screen.
+    pub async fn answer_question(
+        &self,
+        surface_id: &str,
+        agent_kind: &str,
+        indices: &[usize],
+        other: Option<&str>,
+        option_count: usize,
+        multi_select: bool,
+    ) -> Result<(), CmuxBridgeError> {
+        let screen = self.capture_pane(Some(surface_id), 45, false).await.ok();
+        let steps = plan_question_answer_steps(
+            screen.as_deref(),
+            agent_kind,
+            indices,
+            other,
+            option_count,
+            multi_select,
+        );
+        match steps {
+            QuestionAnswerPlan::TuiSteps(actions) => {
+                for action in actions {
+                    match action {
+                        QuestionStep::Key(k) => {
+                            self.send_key(Some(surface_id), k).await?;
+                            tokio::time::sleep(Duration::from_millis(45)).await;
+                        }
+                        QuestionStep::Text(t) => {
+                            self.send_text(Some(surface_id), &t).await?;
+                            tokio::time::sleep(Duration::from_millis(45)).await;
+                        }
+                        QuestionStep::Paste(t) => {
+                            self.paste_text(Some(surface_id), &t).await?;
+                            tokio::time::sleep(profile_for(agent_kind).submit_delay(&t)).await;
+                        }
+                    }
+                }
+                Ok(())
+            }
+            QuestionAnswerPlan::PromptFallback(text) => {
+                self.submit_prompt(Some(surface_id), &text, agent_kind, true)
+                    .await
+            }
+        }
+    }
+
     /// Refuses when the surface screen shows an agent startup dialog. If the screen cannot be read the
     /// send proceeds (cmux itself is the source of truth for everything else).
     pub async fn ensure_no_startup_dialog(&self, surface_id: Option<&str>) -> Result<(), CmuxBridgeError> {
@@ -587,6 +637,199 @@ impl DualTransportCmuxBridge {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum QuestionStep {
+    Key(&'static str),
+    Text(String),
+    Paste(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum QuestionAnswerPlan {
+    TuiSteps(Vec<QuestionStep>),
+    PromptFallback(String),
+}
+
+struct ParsedMenu {
+    row_count: usize,
+    cursor_index: usize,
+    write_in_index: Option<usize>,
+}
+
+/// Detect numbered question menu rows (`> 1. Option A`, `  2. Option B`, `  4. Write-in...`)
+/// near the bottom of a terminal screen capture.
+fn detect_numbered_question_menu(screen: &str) -> Option<ParsedMenu> {
+    let lines: Vec<&str> = screen.lines().collect();
+    let start = lines.len().saturating_sub(36);
+    let tail = &lines[start..];
+
+    // Anchor after the last horizontal rule or `Question` header if present so earlier prose
+    // numbered lists (`1. **brew services**...`) are never mistaken for the picker!
+    let anchor = tail
+        .iter()
+        .rposition(|l| {
+            let t = l.trim();
+            t.starts_with("Question ")
+                || (t.chars().count() >= 12 && t.chars().all(|c| matches!(c, '─' | '━' | '-')))
+        })
+        .unwrap_or(0);
+
+    let mut rows: Vec<(usize, bool, String)> = Vec::new();
+    for line in &tail[anchor..] {
+        let t = line.trim();
+        let (has_cursor, rest) = match t.chars().next() {
+            Some('>' | '\u{203a}' | '\u{276f}') => {
+                let c = t.chars().next().unwrap();
+                (true, t[c.len_utf8()..].trim_start())
+            }
+            _ => (false, t),
+        };
+        let digits = rest.chars().take_while(|c| c.is_ascii_digit()).count();
+        if digits == 0 || digits > 2 {
+            continue;
+        }
+        let Ok(num) = rest[..digits].parse::<usize>() else {
+            continue;
+        };
+        let Some(label) = rest[digits..].strip_prefix('.').map(str::trim) else {
+            continue;
+        };
+        if label.is_empty() || num == 0 {
+            continue;
+        }
+        // Sequential 1-based menu items
+        if num == rows.len() + 1 {
+            rows.push((num - 1, has_cursor, label.to_lowercase()));
+        } else if num == 1 {
+            // Restart if a fresh `1.` block began lower down
+            rows.clear();
+            rows.push((0, has_cursor, label.to_lowercase()));
+        }
+    }
+
+    if rows.len() < 2 {
+        return None;
+    }
+
+    let cursor_index = rows.iter().find(|r| r.1).map(|r| r.0).unwrap_or(0);
+    let write_in_index = rows
+        .iter()
+        .find(|r| {
+            r.2.starts_with("write-in")
+                || r.2.starts_with("type something")
+                || r.2.starts_with("other")
+        })
+        .map(|r| r.0);
+
+    Some(ParsedMenu {
+        row_count: rows.len(),
+        cursor_index,
+        write_in_index,
+    })
+}
+
+fn push_cursor_moves(steps: &mut Vec<QuestionStep>, from: usize, to: usize) {
+    if to > from {
+        for _ in 0..(to - from) {
+            steps.push(QuestionStep::Key("down"));
+        }
+    } else if from > to {
+        for _ in 0..(from - to) {
+            steps.push(QuestionStep::Key("up"));
+        }
+    }
+}
+
+pub(crate) fn plan_question_answer_steps(
+    screen: Option<&str>,
+    agent_kind: &str,
+    indices: &[usize],
+    other: Option<&str>,
+    option_count: usize,
+    multi_select: bool,
+) -> QuestionAnswerPlan {
+    let other_clean = other.map(str::trim).filter(|s| !s.is_empty());
+    let kind = crate::cmux::agents::spec_for(agent_kind)
+        .map(|s| s.kind)
+        .unwrap_or(agent_kind);
+
+    if let Some(menu) = screen.and_then(detect_numbered_question_menu) {
+        let mut steps = Vec::new();
+        let mut cur = menu.cursor_index;
+
+        if multi_select {
+            if kind == "claude" {
+                for &idx in indices {
+                    steps.push(QuestionStep::Text((idx + 1).to_string()));
+                }
+                if let Some(text) = other_clean {
+                    let write_row = menu.write_in_index.unwrap_or(option_count) + 1;
+                    steps.push(QuestionStep::Text(write_row.to_string()));
+                    steps.push(QuestionStep::Paste(text.to_string()));
+                    steps.push(QuestionStep::Key("enter"));
+                }
+                steps.push(QuestionStep::Key("right"));
+                steps.push(QuestionStep::Key("enter"));
+                return QuestionAnswerPlan::TuiSteps(steps);
+            }
+            for &idx in indices {
+                if idx < menu.row_count {
+                    push_cursor_moves(&mut steps, cur, idx);
+                    cur = idx;
+                    steps.push(QuestionStep::Key("space"));
+                }
+            }
+            if let Some(text) = other_clean {
+                let target = menu
+                    .write_in_index
+                    .unwrap_or_else(|| option_count.min(menu.row_count.saturating_sub(1)));
+                push_cursor_moves(&mut steps, cur, target);
+                steps.push(QuestionStep::Key("enter"));
+                steps.push(QuestionStep::Paste(text.to_string()));
+                steps.push(QuestionStep::Key("enter"));
+                return QuestionAnswerPlan::TuiSteps(steps);
+            }
+            steps.push(QuestionStep::Key("enter"));
+            return QuestionAnswerPlan::TuiSteps(steps);
+        }
+
+        // Single-select with custom `other` / `Write-in...` text
+        if let Some(text) = other_clean {
+            let target = menu
+                .write_in_index
+                .unwrap_or_else(|| option_count.min(menu.row_count.saturating_sub(1)));
+            push_cursor_moves(&mut steps, cur, target);
+            if kind == "codex" {
+                steps.push(QuestionStep::Key("tab"));
+            } else {
+                steps.push(QuestionStep::Key("enter"));
+            }
+            steps.push(QuestionStep::Paste(text.to_string()));
+            steps.push(QuestionStep::Key("enter"));
+            return QuestionAnswerPlan::TuiSteps(steps);
+        }
+
+        // Single-select option pick
+        if let Some(&target) = indices.first()
+            && target < menu.row_count
+        {
+            push_cursor_moves(&mut steps, cur, target);
+            steps.push(QuestionStep::Key("enter"));
+            return QuestionAnswerPlan::TuiSteps(steps);
+        }
+    }
+
+    // Fallback when no TUI menu is active on screen (e.g. non-TUI question or free-text prompt)
+    let fallback = if let Some(text) = other_clean {
+        text.to_string()
+    } else if let Some(&idx) = indices.first() {
+        (idx + 1).to_string()
+    } else {
+        String::new()
+    };
+    QuestionAnswerPlan::PromptFallback(fallback)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -602,5 +845,64 @@ mod tests {
         // Points to /usr/bin/false or nonexistent command
         let bridge = DualTransportCmuxBridge::with_cli_path("nonexistent_cmux_binary_test");
         assert!(!bridge.ping().await);
+    }
+
+    #[test]
+    fn plan_question_answer_steps_navigates_antigravity_tui_menu() {
+        let screen = "\
+1. Không lo bị trói chết khi cần khoá cứng version 3rd-party
+2. Giữ gọn repo
+
+? Quyết định 8 — Xử lý nhóm tool mỏng / wrapper:
+
+Question
+──────────────────────────────────────────────────────────────────────
+
+Question 1/1: Quyết định 8 — Xử lý nhóm tool mỏng / wrapper:
+
+> 1. (Recommended) Gom luôn vào gear-config
+  2. Gom slack-mcp và aistudioproxy, tách riêng md2pdf
+  3. Giữ tất cả làm các repo Git riêng biệt hết
+  4. Write-in...
+
+  ↑/↓ Navigate · enter Select · esc Skip · ctrl+r Review
+esc to cancel
+";
+
+        // Picking option 0 (already highlighted at `> 1.`) presses Enter immediately.
+        assert_eq!(
+            plan_question_answer_steps(Some(screen), "agy", &[0], None, 3, false),
+            QuestionAnswerPlan::TuiSteps(vec![QuestionStep::Key("enter")])
+        );
+
+        // Picking option 2 (`3. Giữ tất cả...`) moves down twice and presses Enter.
+        assert_eq!(
+            plan_question_answer_steps(Some(screen), "agy", &[2], None, 3, false),
+            QuestionAnswerPlan::TuiSteps(vec![
+                QuestionStep::Key("down"),
+                QuestionStep::Key("down"),
+                QuestionStep::Key("enter"),
+            ])
+        );
+
+        // Submitting custom `Write-in...` text moves down 3 rows to `4. Write-in...`, opens it, pastes, and confirms.
+        assert_eq!(
+            plan_question_answer_steps(
+                Some(screen),
+                "antigravity",
+                &[],
+                Some("Tách riêng slack-mcp"),
+                3,
+                false,
+            ),
+            QuestionAnswerPlan::TuiSteps(vec![
+                QuestionStep::Key("down"),
+                QuestionStep::Key("down"),
+                QuestionStep::Key("down"),
+                QuestionStep::Key("enter"),
+                QuestionStep::Paste("Tách riêng slack-mcp".to_string()),
+                QuestionStep::Key("enter"),
+            ])
+        );
     }
 }

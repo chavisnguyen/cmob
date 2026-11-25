@@ -29,7 +29,7 @@ use crate::notifications::{
 use crate::protocol::{
     AuthError, AuthOk, AuthRequest, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
     PairingOffer, METHOD_CHAT_APPROVE, METHOD_CHAT_INTERRUPT, METHOD_CHAT_READ_SESSION,
-    METHOD_CHAT_ANSWER_DIALOG, METHOD_CHAT_SEND, METHOD_CHAT_SESSIONS, METHOD_CHAT_SUBSCRIBE, METHOD_CHAT_UNSUBSCRIBE, METHOD_CLIENT_VIEWING, METHOD_HOST_STATUS, METHOD_PUSH_HISTORY,
+    METHOD_CHAT_ANSWER_DIALOG, METHOD_CHAT_ANSWER_QUESTION, METHOD_CHAT_SEND, METHOD_CHAT_SESSIONS, METHOD_CHAT_SUBSCRIBE, METHOD_CHAT_UNSUBSCRIBE, METHOD_CLIENT_VIEWING, METHOD_HOST_STATUS, METHOD_PUSH_HISTORY,
     METHOD_AGENT_OPTIONS, METHOD_CHAT_FORK, METHOD_CHAT_SET_OPTION, METHOD_DEVICE_LIST, METHOD_DEVICE_REVOKE, METHOD_GIT_DIFF, METHOD_UPLOAD_IMAGE, METHOD_GIT_STATUS, METHOD_PUSH_PREFERENCES, METHOD_PUSH_REGISTER, METHOD_PUSH_TEST, METHOD_PUSH_VAPID_KEY, METHOD_SURFACE_CLOSE, METHOD_SURFACE_GET,
     METHOD_SURFACE_NEW, METHOD_SURFACE_RENAME, METHOD_TERMINAL_INPUT, METHOD_TERMINAL_PASTE,
     METHOD_TERMINAL_READ, METHOD_TERMINAL_REPLAY, METHOD_TERMINAL_SCROLL, METHOD_TERMINAL_SEND,
@@ -2410,6 +2410,64 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
                 _ => JsonRpcResponse::error(
                     Some(req.id.clone()),
                     JsonRpcError::invalid_params("surface_id, fingerprint and choice are required"),
+                ),
+            }
+        }
+        METHOD_CHAT_ANSWER_QUESTION => {
+            let surface = req.params.get("surface_id").and_then(|v| v.as_str()).unwrap_or("");
+            if surface.is_empty() {
+                return JsonRpcResponse::error(
+                    Some(req.id.clone()),
+                    JsonRpcError::invalid_params("surface_id is required"),
+                );
+            }
+            let agent_kind = req
+                .params
+                .get("agent_kind")
+                .and_then(|v| v.as_str())
+                .unwrap_or("agent");
+            let indices: Vec<usize> = req
+                .params
+                .get("indices")
+                .and_then(|v| v.as_array())
+                .map(|arr| {
+                    arr.iter()
+                        .filter_map(|x| x.as_u64().map(|n| n as usize))
+                        .collect()
+                })
+                .unwrap_or_default();
+            let other = req.params.get("other").and_then(|v| v.as_str());
+            let option_count = req
+                .params
+                .get("option_count")
+                .and_then(|v| v.as_u64())
+                .unwrap_or(0) as usize;
+            let multi_select = req
+                .params
+                .get("multi_select")
+                .and_then(|v| v.as_bool())
+                .unwrap_or(false);
+
+            if indices.is_empty() && other.map(str::trim).unwrap_or("").is_empty() {
+                return JsonRpcResponse::error(
+                    Some(req.id.clone()),
+                    JsonRpcError::invalid_params("indices or other is required"),
+                );
+            }
+
+            match state
+                .cmux_bridge
+                .answer_question(surface, agent_kind, &indices, other, option_count, multi_select)
+                .await
+            {
+                Ok(()) => JsonRpcResponse::result(
+                    req.id.clone(),
+                    serde_json::json!({ "status": "answered" }),
+                )
+                .unwrap(),
+                Err(e) => JsonRpcResponse::error(
+                    Some(req.id.clone()),
+                    JsonRpcError::internal_error(e.to_string()),
                 ),
             }
         }

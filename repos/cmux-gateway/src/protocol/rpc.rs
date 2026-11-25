@@ -16,6 +16,7 @@ pub const CODE_BACKEND_UNAVAILABLE: i32 = -32000;
 pub const METHOD_CHAT_SESSIONS: &str = "mobile.chat.sessions";
 pub const METHOD_CHAT_READ_SESSION: &str = "mobile.chat.readSession";
 pub const METHOD_CHAT_ANSWER_DIALOG: &str = "mobile.chat.answerDialog";
+pub const METHOD_CHAT_ANSWER_QUESTION: &str = "mobile.chat.answerQuestion";
 pub const METHOD_CHAT_SUBSCRIBE: &str = "mobile.chat.subscribe";
 pub const METHOD_CHAT_UNSUBSCRIBE: &str = "mobile.chat.unsubscribe";
 pub const METHOD_CHAT_SEND: &str = "mobile.chat.send";

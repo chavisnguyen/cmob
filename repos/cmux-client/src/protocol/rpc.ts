@@ -19,6 +19,7 @@ export const RPC_METHODS = {
   CHAT_APPROVE: "mobile.chat.approve",
   CHAT_INTERRUPT: "mobile.chat.interrupt",
   CHAT_ANSWER_DIALOG: "mobile.chat.answerDialog",
+  CHAT_ANSWER_QUESTION: "mobile.chat.answerQuestion",
   HOST_STATUS: "mobile.host.status",
   WORKSPACE_LIST: "mobile.workspace.list",
   WORKSPACE_TREE: "mobile.workspace.tree",

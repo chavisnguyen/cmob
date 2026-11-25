@@ -162,4 +162,80 @@ describe("virtualized components SSR compatibility", () => {
     expect(legacyHtml).toContain("Context compacted");
     expect(legacyHtml).not.toContain("SYSTEM MESSAGE");
   });
+
+  it("renders docked question prompt card for the latest unanswered question in a multi-question turn", () => {
+    const turns: AgentTurn[] = [
+      {
+        id: "u-1",
+        surface_id: "surf-agy",
+        role: "user",
+        events: [{ kind: "user", text: "tiếp tục" }],
+      },
+      {
+        id: "a-1",
+        surface_id: "surf-agy",
+        role: "assistant",
+        events: [
+          {
+            kind: "awaiting-input",
+            input_kind: "question",
+            prompt: "Xác nhận cơ chế cài đặt brew?",
+            options: ["(Recommended) Chốt luôn brew", "Dùng nix"],
+            answered: "(Recommended) Chốt luôn brew",
+          },
+          {
+            kind: "thinking",
+            text: "Checking wrapper scripts",
+            duration_secs: 15,
+          },
+          {
+            kind: "awaiting-input",
+            input_kind: "question",
+            prompt: "Quyết định 8 — Xử lý nhóm tool mỏng / wrapper?",
+            options: [
+              "(Recommended) Gom luôn vào gear-config",
+              "Tách riêng md2pdf",
+              "Giữ tất cả riêng biệt",
+            ],
+          },
+        ],
+      },
+    ];
+
+    const html = renderToStaticMarkup(
+      <OrcaChatView
+        turns={turns}
+        agentKind="antigravity"
+        isWorking={true}
+        lifecycleState="working"
+        onSend={async () => {}}
+        onApprove={async () => {}}
+        onAnswerQuestion={async () => {}}
+        onInterrupt={async () => {}}
+      />,
+    );
+
+    // Docked question card renders above composer with all 3 options + Write-in, while Thinking... is suppressed
+    expect(html).toContain('data-testid="docked-prompt-card"');
+    expect(html).toContain("(Recommended) Gom luôn vào gear-config");
+    expect(html).toContain("Write-in / Other…");
+    expect(html).not.toContain("Thinking...");
+
+    // Inline ChatTurnRow renders compact receipt for Q1, Thought for 15s, and pending indicator for Q2
+    const activeAsk = turns[1].events[2];
+    const rowHtml = renderToStaticMarkup(
+      <ChatTurnRow
+        turn={turns[1]}
+        isLastTurn={true}
+        isWorking={false}
+        activeAwaiting={activeAsk.kind === "awaiting-input" ? activeAsk : null}
+        onSubmitAwaiting={async () => {}}
+      />,
+    );
+    expect(rowHtml).toContain("Asked a question");
+    expect(rowHtml).toContain("(Recommended) Chốt luôn brew");
+    expect(rowHtml).toContain("Asking a question");
+    expect(rowHtml).toContain("Thought for 15s");
+    expect(rowHtml).not.toContain("chars)");
+  });
 });

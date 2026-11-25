@@ -268,3 +268,11 @@ Client: composer is a `<textarea>` (Enter = newline, only the arrow sends); sent
   - Added additive `AgentEvent::BackgroundTasks { tasks: Vec<BackgroundTaskEntry> }` (`{ kind: "background-tasks", tasks }`) where each `BackgroundTaskEntry` carries `{ id, kind: "agent" | "command" | "workflow" | "monitor" | "unknown", label, state, summary?, tokens?, started_at?, settled_at? }`.
   - Populated `started_at` and `settled_at` (epoch ms) on both `SubagentEntry` and `BackgroundTaskEntry` from transcript RFC3339 timestamps (`timestamp` / `created_at`) and provider `usage.duration_ms` / `totalDurationMs` so mobile clients render isolated 1s live elapsed timers (`LiveElapsedText`).
   - Claude compaction boundaries (`subtype: "compact_boundary"`, `isCompactSummary: true`) emit deduplicated `AgentTurn { role: "system", events: [{ kind: "status", text: "Context compacted" }] }`.
+
+## `mobile.chat.answerQuestion`, Question Receipts & Thinking Duration (2026-11-25)
+- `mobile.chat.answerQuestion` (`repos/cmux-gateway/src/protocol/rpc.rs`, `repos/cmux-gateway/src/cmux/bridge.rs::answer_question`, `repos/cmux-gateway/src/server.rs`, `repos/cmux-client/src/protocol/rpc.ts`):
+  - Params: `{ surface_id: string, agent_kind?: string, indices?: number[], other?: string, option_count?: number, multi_select?: boolean }`.
+  - Captures the terminal pane (`capture_pane(surface_id, 45)`), locates the live numbered question menu below `Question` / `────` / `? ` headers (`detect_numbered_question_menu`), and navigates from the highlighted cursor row (`>`/`›`/`❯`) via `up`/`down` + `enter` (or `space` + `enter` / digit toggles for multi-select, and `Write-in...` / `Other` row + `paste` + `enter` for custom answers), falling back to `submit_prompt` when no TUI menu is active.
+- `AwaitingInput` & `AgentEvent::Thinking` extensions (`repos/cmux-gateway/src/protocol/event.rs`, `repos/cmux-client/src/protocol/event.ts`):
+  - `AwaitingInput` adds optional `questions?: AskQuestionItem[]` (`{ question, options, multi_select }`) and `answered?: string` (populated from Antigravity `GENERIC` `A1: ...` tool results with `Created At:`/`Completed At:` headers stripped, and from Claude `AskUserQuestion` `tool_result` blocks).
+  - `AgentEvent::Thinking` adds optional `duration_secs?: number` computed from step timestamp deltas in `TranscriptReader`.

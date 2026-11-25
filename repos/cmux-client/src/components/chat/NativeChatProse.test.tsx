@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import { normalizeChatMarkdownMath } from "./chatMarkdownMath";
 import { NativeChatProse } from "./NativeChatProse";
 
 const html = (md: string) => renderToStaticMarkup(<NativeChatProse content={md} />);
@@ -41,5 +42,20 @@ describe("NativeChatProse", () => {
     expect(out).not.toContain("javascript:");
     expect(out).not.toContain("<img");
     expect(out).toContain('href="https://e.com/a.png"');
+  });
+
+  it("converts inline LaTeX math symbols outside code spans and renders file:// links as code chips", () => {
+    const raw =
+      "Giữ làm repo độc lập $\\rightarrow$ `Formula/` + CI. Không động vào `$\\rightarrow$` hay `$PATH` hay $10. Xem [md2pdf/md2pdf.sh](file:///Users/chavis/Documents/personal/md2pdf/md2pdf.sh#L1-L34).";
+    expect(normalizeChatMarkdownMath(raw)).toContain("repo độc lập → `Formula/`");
+    expect(normalizeChatMarkdownMath(raw)).toContain("`$\\rightarrow$`");
+    expect(normalizeChatMarkdownMath(raw)).toContain("`$PATH`");
+    expect(normalizeChatMarkdownMath(raw)).toContain("$10");
+
+    const out = html(raw);
+    expect(out).toContain("repo độc lập →");
+    expect(out).toContain("$\\rightarrow$");
+    expect(out).toContain('title="/Users/chavis/Documents/personal/md2pdf/md2pdf.sh#L1-L34"');
+    expect(out).toContain("md2pdf/md2pdf.sh");
   });
 });

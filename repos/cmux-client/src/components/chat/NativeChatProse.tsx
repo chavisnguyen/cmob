@@ -1,20 +1,44 @@
-import { Children, isValidElement, memo, useState, type ReactElement, type ReactNode } from "react";
+import {
+  Children,
+  isValidElement,
+  memo,
+  useMemo,
+  useState,
+  type ReactElement,
+  type ReactNode,
+} from "react";
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
-import { Check, Copy } from "lucide-react";
+import { Check, Copy, FileCode2 } from "lucide-react";
+import { chatUrlTransform, normalizeChatMarkdownMath } from "./chatMarkdownMath";
 
 interface NativeChatProseProps {
   content: string;
+  /** Tighter spacing for inline prompt/receipt cards. */
+  compact?: boolean;
 }
 
 const REMARK_PLUGINS = [remarkGfm];
 
 /** Agent output rendered as GitHub-flavoured markdown. Raw HTML is never interpreted (react-markdown default). */
-export const NativeChatProse = memo(function NativeChatProse({ content }: NativeChatProseProps) {
+export const NativeChatProse = memo(function NativeChatProse({
+  content,
+  compact = false,
+}: NativeChatProseProps) {
+  const normalized = useMemo(() => normalizeChatMarkdownMath(content), [content]);
+
   return (
-    <div className="space-y-2.5 text-[14.5px] text-fg-soft leading-[1.6] break-words [overflow-wrap:anywhere] min-w-0 max-w-full">
-      <ReactMarkdown remarkPlugins={REMARK_PLUGINS} components={COMPONENTS}>
-        {content}
+    <div
+      className={`${
+        compact ? "space-y-1 text-[13px] leading-snug" : "space-y-2.5 text-[14.5px] leading-[1.6]"
+      } text-fg-soft break-words [overflow-wrap:anywhere] min-w-0 max-w-full`}
+    >
+      <ReactMarkdown
+        remarkPlugins={REMARK_PLUGINS}
+        urlTransform={chatUrlTransform}
+        components={COMPONENTS}
+      >
+        {normalized}
       </ReactMarkdown>
     </div>
   );
@@ -77,7 +101,6 @@ const heading = (level: 2 | 3 | 4 | 5 | 6, cls: string) =>
   };
 
 const COMPONENTS: Components = {
-  // Fenced code: react-markdown renders <pre><code class="language-x">…</code></pre>.
   pre({ children }) {
     const child = Children.toArray(children)[0];
     const props = isValidElement(child)
@@ -87,7 +110,6 @@ const COMPONENTS: Components = {
     return <CodeBlock code={textOf(props.children).replace(/\n$/, "")} lang={lang} />;
   },
   code({ children, className }) {
-    // Inline code only: block code is consumed by `pre` above and never reaches here.
     return (
       <code
         className={`px-1.5 py-0.5 rounded bg-raised text-accent-soft font-mono text-[12px] break-all [overflow-wrap:anywhere] ${className ?? ""}`}
@@ -119,8 +141,19 @@ const COMPONENTS: Components = {
   ),
   hr: () => <hr className="border-white/10 my-1" />,
   a: ({ href, children }) => {
-    const safe = typeof href === "string" && /^https?:\/\//i.test(href);
-    return safe ? (
+    if (href && href.startsWith("file://")) {
+      const cleanPath = decodeURIComponent(href.replace(/^file:\/\//, ""));
+      return (
+        <span
+          title={cleanPath}
+          className="inline-flex items-center gap-1 px-1.5 py-0.2 rounded bg-accent/12 border border-accent/25 text-accent-soft font-mono text-[12px] align-baseline break-all"
+        >
+          <FileCode2 className="w-3 h-3 shrink-0 inline" />
+          <span>{children}</span>
+        </span>
+      );
+    }
+    return (
       <a
         href={href}
         target="_blank"
@@ -129,39 +162,30 @@ const COMPONENTS: Components = {
       >
         {children}
       </a>
-    ) : (
-      <span>{children}</span>
     );
   },
-  // Remote images would be fetched (and could track) just by reading a chat message: show a link instead.
-  img: ({ src, alt }) => {
-    const safe = typeof src === "string" && /^https?:\/\//i.test(src);
-    return safe ? (
+  table: ({ children }) => (
+    <div className="my-2 overflow-x-auto rounded-lg border border-line max-w-full">
+      <table className="w-full text-left text-[13px] border-collapse">{children}</table>
+    </div>
+  ),
+  thead: ({ children }) => (
+    <thead className="bg-surface text-white text-[12px] border-b border-line">{children}</thead>
+  ),
+  tr: ({ children }) => <tr className="border-b border-line last:border-b-0">{children}</tr>,
+  th: ({ children }) => <th className="px-2.5 py-1.5 font-semibold">{children}</th>,
+  td: ({ children }) => <td className="px-2.5 py-1.5 align-top">{children}</td>,
+  img: ({ src, alt }) =>
+    src && /^https?:\/\//i.test(src) ? (
       <a
         href={src}
         target="_blank"
         rel="noopener noreferrer"
         className="text-accent-soft underline underline-offset-2 break-all"
       >
-        {alt || "image"}
+        {alt || src}
       </a>
     ) : (
-      <span>{alt || "image"}</span>
-    );
-  },
-  table: ({ children }) => (
-    <div className="overflow-x-auto rounded-lg border border-white/10 max-w-full">
-      <table className="text-[13px] border-collapse min-w-full">{children}</table>
-    </div>
-  ),
-  thead: ({ children }) => <thead className="bg-white/[0.05]">{children}</thead>,
-  tr: ({ children }) => (
-    <tr className="border-t border-white/10 first:border-t-0 align-top">{children}</tr>
-  ),
-  th: ({ children }) => (
-    <th className="px-2.5 py-1.5 text-left font-semibold text-white whitespace-nowrap">
-      {children}
-    </th>
-  ),
-  td: ({ children }) => <td className="px-2.5 py-1.5 min-w-[5rem]">{children}</td>,
+      <span className="text-muted italic">[image{alt ? `: ${alt}` : ""}]</span>
+    ),
 };

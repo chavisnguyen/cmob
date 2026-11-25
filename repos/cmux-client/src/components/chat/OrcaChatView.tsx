@@ -24,6 +24,10 @@ import { MobileNativeChatToolRun, type ToolCallItem } from "./MobileNativeChatTo
 import { MobileNativeChatSubagentGroup } from "./MobileNativeChatSubagentGroup";
 import { MobileNativeChatBackgroundTasksCard } from "./MobileNativeChatBackgroundTasksCard";
 import { MobileNativeChatComposerTray } from "./MobileNativeChatComposerTray";
+import {
+  MobileNativeChatPromptCard,
+  type QuestionAnswerPayload,
+} from "./MobileNativeChatPromptCard";
 import { MobileNativeChatAwaitingInputRow } from "./MobileNativeChatAwaitingInputRow";
 import { deriveConversationTasks } from "./taskList";
 import { NativeChatJumpToLatest } from "./NativeChatJumpToLatest";
@@ -61,6 +65,8 @@ interface OrcaChatViewProps {
   /** A startup dialog (folder trust, update...) the agent is waiting on. */
   startupDialog?: StartupDialogInfo | null;
   onAnswerDialog?: (choice: number) => Promise<void>;
+  /** Answers a structured `ask_question` / `AskUserQuestion` prompt via TUI selector keys. */
+  onAnswerQuestion?: (payload: QuestionAnswerPayload) => Promise<void>;
   onOpenTerminal?: () => void;
   /** Gateway reports older turns beyond what was fetched. */
   hasMoreHistory?: boolean;
@@ -110,6 +116,7 @@ export function OrcaChatView({
   onLoadOlder,
   startupDialog = null,
   onAnswerDialog,
+  onAnswerQuestion,
   onOpenTerminal,
   isDesktop = false,
 }: OrcaChatViewProps) {
@@ -151,28 +158,51 @@ export function OrcaChatView({
   }, [isStopping, onInterrupt]);
 
   // Check if there is an active awaiting-input in the latest turn.
-  // Solves Zombie Approval Card: Never resurrect old answered questions from historical turns.
+  // Uses the LAST `awaiting-input` in `lastTurn` because agents like Antigravity append multiple
+  // question-answer cycles inside a single assistant turn without a `USER_INPUT` boundary.
   const latestAwaiting = useMemo(() => {
     if (turns.length === 0) return null;
     const lastTurn = turns[turns.length - 1];
-    // If the latest turn is from user or a system boundary, agent hasn't asked a fresh question yet
     if (lastTurn.role === "user" || lastTurn.role === "system") return null;
 
-    // Find if there is an awaiting-input event in the latest turn
-    const askIndex = lastTurn.events.findIndex((ev) => ev.kind === "awaiting-input");
+    let askIndex = -1;
+    for (let i = lastTurn.events.length - 1; i >= 0; i -= 1) {
+      if (lastTurn.events[i].kind === "awaiting-input") {
+        askIndex = i;
+        break;
+      }
+    }
     if (askIndex === -1) return null;
 
-    // If the agent continued speaking or finished after the awaiting-input in that turn, it's settled
-    const subsequentDoneOrText = lastTurn.events
-      .slice(askIndex + 1)
-      .some((ev) => ev.kind === "done" || (ev.kind === "assistant" && ev.text.trim().length > 0));
-    if (subsequentDoneOrText) return null;
+    const askEv = lastTurn.events[askIndex] as Extract<AgentEvent, { kind: "awaiting-input" }>;
+    if (askEv.answered && askEv.answered.trim().length > 0) {
+      return null;
+    }
 
-    // If lifecycle is known and not waiting, or if isWorking is true, not awaiting input
+    // If the agent continued speaking, ran tools, or finished after this prompt, it is already settled.
+    const subsequentActivity = lastTurn.events
+      .slice(askIndex + 1)
+      .some(
+        (ev) =>
+          ev.kind === "done" ||
+          ev.kind === "tool-start" ||
+          (ev.kind === "thinking" && ev.text.trim().length > 0) ||
+          (ev.kind === "assistant" && ev.text.trim().length > 0),
+      );
+    if (subsequentActivity) return null;
+
+    const isStructuredQuestion =
+      askEv.input_kind === "question" || Boolean(askEv.options && askEv.options.length > 0);
+    if (isStructuredQuestion) {
+      // Trust the unanswered tail question even if a hook still reports `working` (e.g. agy `PreInvocation`).
+      if (lifecycleState === "done" || lifecycleState === "idle") return null;
+      return askEv;
+    }
+
     if (lifecycleState && lifecycleState !== "waiting") return null;
     if (isWorking) return null;
 
-    return lastTurn.events[askIndex] as AwaitingInput;
+    return askEv;
   }, [turns, isWorking, lifecycleState]);
 
   const effectiveAwaiting = useMemo(
@@ -187,9 +217,12 @@ export function OrcaChatView({
     [latestAwaiting, lifecycleState, isWorking, startupDialog, awaitingPrompt],
   );
 
+  // Never show `Thinking…` or the red Stop state while blocked on a question/approval/dialog.
+  const effectivelyWorking = Boolean(isWorking) && !effectiveAwaiting && !startupDialog;
+
   const conversationTasks = useMemo(
-    () => deriveConversationTasks(turns, Boolean(isWorking)),
-    [turns, isWorking],
+    () => deriveConversationTasks(turns, effectivelyWorking),
+    [turns, effectivelyWorking],
   );
 
   const hasEarlier = Boolean(hasMoreHistory && onLoadOlder);
@@ -428,11 +461,20 @@ export function OrcaChatView({
     scrollToTail("instant");
   }, [scrollToTail]);
 
-  const handleSubmitAwaiting = useCallback(
-    async (resp: string) => {
-      await onSend(resp);
+  const handleAnswerQuestionPayload = useCallback(
+    async (payload: QuestionAnswerPayload) => {
+      setSendError(null);
+      try {
+        if (onAnswerQuestion) {
+          await onAnswerQuestion(payload);
+        } else {
+          await onSend(payload.displayText);
+        }
+      } catch (err) {
+        setSendError(err instanceof Error ? err.message : "Could not submit your answer.");
+      }
     },
-    [onSend],
+    [onAnswerQuestion, onSend],
   );
 
   const virtualItems = turns.length > 0 ? virtualizer.getVirtualItems() : [];
@@ -565,9 +607,8 @@ export function OrcaChatView({
                           <ChatTurnRow
                             turn={turn}
                             isLastTurn={isLastTurn}
-                            isWorking={isLastTurn && isWorking}
+                            isWorking={isLastTurn && effectivelyWorking}
                             activeAwaiting={isLastTurn ? latestAwaiting : null}
-                            onSubmitAwaiting={handleSubmitAwaiting}
                           />
                         </div>
                       </div>
@@ -584,7 +625,7 @@ export function OrcaChatView({
             )}
 
             {/* Orca Live Activity Line (Instant feedback while agent is thinking/working) */}
-            {(isWorking || isSubmitting) && (
+            {(effectivelyWorking || isSubmitting) && (
               <div className="w-full flex justify-start pt-2 my-0.5 pl-1 min-w-0 max-w-full">
                 <NativeChatTurnActivityLine activityText={activityText} />
               </div>
@@ -604,9 +645,18 @@ export function OrcaChatView({
         } bg-bg border-t border-white/[0.08] min-w-0 max-w-full`}
       >
         <div className="max-w-4xl mx-auto w-full space-y-1.5">
-          {/* Orca-style Contextual Approval Card */}
+          {/* Orca-style Docked Question Card vs 1-Tap Tool Permission Card */}
           {effectiveAwaiting &&
-            (!effectiveAwaiting.options || effectiveAwaiting.options.length === 0) && (
+          (effectiveAwaiting.input_kind === "question" ||
+            Boolean(effectiveAwaiting.options && effectiveAwaiting.options.length > 0)) ? (
+            <MobileNativeChatPromptCard
+              key={effectiveAwaiting.prompt}
+              awaiting={effectiveAwaiting}
+              onAnswer={handleAnswerQuestionPayload}
+              onCancel={handleInterrupt}
+            />
+          ) : (
+            effectiveAwaiting && (
               <div className="rounded-xl bg-emerald-950/30 border border-emerald-500/25 px-3 py-2.5 space-y-2">
                 <div className="flex items-start gap-2 min-w-0">
                   <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
@@ -635,7 +685,8 @@ export function OrcaChatView({
                   </button>
                 </div>
               </div>
-            )}
+            )
+          )}
 
           {startupDialog && (
             <div
@@ -690,8 +741,8 @@ export function OrcaChatView({
             ref={composerHandleRef}
             agentKind={agentKind}
             surfaceId={surfaceId}
-            isWorking={isWorking}
-            lifecycleState={lifecycleState}
+            isWorking={effectivelyWorking}
+            lifecycleState={effectiveAwaiting ? "waiting" : lifecycleState}
             needsAnswer={needsAnswer}
             usage={usage}
             isDesktop={isDesktop}
@@ -716,13 +767,12 @@ export const ChatTurnRow = memo(function ChatTurnRow({
   isLastTurn,
   isWorking,
   activeAwaiting,
-  onSubmitAwaiting,
 }: {
   turn: AgentTurn;
   isLastTurn: boolean;
   isWorking: boolean;
   activeAwaiting: AwaitingInput | null;
-  onSubmitAwaiting: (text: string) => Promise<void>;
+  onSubmitAwaiting?: (text: string) => Promise<void>;
 }) {
   const dividerLabel = resolveSystemDividerLabel(turn);
   if (dividerLabel !== null) {
@@ -761,13 +811,7 @@ export const ChatTurnRow = memo(function ChatTurnRow({
         </div>
       ) : (
         <div className="w-full max-w-full min-w-0 space-y-1.5">
-          {renderAssistantTurnEvents(
-            turn.events,
-            isLastTurn,
-            isWorking,
-            activeAwaiting,
-            onSubmitAwaiting,
-          )}
+          {renderAssistantTurnEvents(turn.events, isLastTurn, isWorking, activeAwaiting)}
         </div>
       )}
     </div>
@@ -787,7 +831,6 @@ function renderAssistantTurnEvents(
   isLastTurn: boolean,
   isWorking: boolean,
   latestAwaiting: AwaitingInput | null,
-  onSubmitAwaiting: (text: string) => Promise<void>,
 ) {
   const renderedElements: React.ReactNode[] = [];
   let pendingTools: ToolCallItem[] = [];
@@ -854,6 +897,7 @@ function renderAssistantTurnEvents(
           key={`th-${idx}`}
           id={`reasoning-${idx}`}
           text={ev.text}
+          durationSeconds={ev.duration_secs}
           live={isWorking && isLastTurn && idx === events.length - 1}
         />,
       );
@@ -880,32 +924,8 @@ function renderAssistantTurnEvents(
 
     if (ev.kind === "awaiting-input") {
       const isActive = isLastTurn && latestAwaiting === ev;
-      if (!isActive) {
-        renderedElements.push(
-          <div
-            key={`ask-${idx}`}
-            className="p-2.5 my-1.5 rounded-xl bg-surface border border-line text-xs text-muted flex items-center justify-between gap-2"
-          >
-            <div className="flex items-center gap-2 min-w-0">
-              <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />
-              <span className="truncate font-medium text-fg-soft">
-                {ev.prompt || "User input requested"}
-              </span>
-            </div>
-            <span className="text-[10px] text-emerald-400/80 uppercase tracking-wider font-semibold shrink-0">
-              Answered
-            </span>
-          </div>,
-        );
-        return;
-      }
-
       renderedElements.push(
-        <MobileNativeChatAwaitingInputRow
-          key={`ask-${idx}`}
-          awaiting={ev}
-          onSubmit={onSubmitAwaiting}
-        />,
+        <MobileNativeChatAwaitingInputRow key={`ask-${idx}`} awaiting={ev} pending={isActive} />,
       );
       return;
     }

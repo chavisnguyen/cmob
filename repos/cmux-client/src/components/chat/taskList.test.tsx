@@ -5,6 +5,7 @@ import { MobileNativeChatBackgroundTasksCard } from "./MobileNativeChatBackgroun
 import { MobileNativeChatComposerTray } from "./MobileNativeChatComposerTray";
 import { MobileNativeChatToolRun } from "./MobileNativeChatToolRun";
 import { deriveConversationTasks, parseSnapshotTaskList } from "./taskList";
+import { deriveToolRunSentence } from "./toolRunSentence";
 
 describe("multi-agent taskList & background work normalization", () => {
   it("parses Claude TodoWrite, OpenCode todowrite, Codex update_plan, and Antigravity update_steps", () => {
@@ -218,5 +219,69 @@ describe("multi-agent taskList & background work normalization", () => {
       />,
     );
     expect(toolRunHtml).toContain("Step B (1/2)");
+  });
+
+  it("formats Orca natural tool sentences and retires 100%-completed task lists on newer turns", () => {
+    const sentence = deriveToolRunSentence(
+      [
+        {
+          id: "r-1",
+          name: "read_file",
+          inputDetail: JSON.stringify({ Path: "/Users/chavis/md2pdf/md2pdf.sh" }),
+          ok: true,
+          isEnd: true,
+        },
+        {
+          id: "r-2",
+          name: "read_file",
+          inputDetail: JSON.stringify({ Path: "/Users/chavis/slack-mcp/docker-compose.yml" }),
+          ok: true,
+          isEnd: true,
+        },
+      ],
+      false,
+    );
+    expect(sentence).toBe("Read 2 files (md2pdf.sh, docker-compose.yml)");
+
+    const completedThenMovedOn: AgentTurn[] = [
+      {
+        id: "t-done-tasks",
+        surface_id: "s-1",
+        role: "assistant",
+        events: [
+          {
+            kind: "tool-start",
+            tool_id: "steps-1",
+            name: "update_steps",
+            detail: JSON.stringify({
+              steps: JSON.stringify([
+                { status: "done", title: "Step 1" },
+                { status: "done", title: "Step 2" },
+                { status: "done", title: "Step 3" },
+              ]),
+            }),
+          },
+          { kind: "tool-end", tool_id: "steps-1", detail: "OK", ok: true },
+        ],
+      },
+      {
+        id: "t-user-next",
+        surface_id: "s-1",
+        role: "user",
+        events: [{ kind: "user", text: "tiếp tục quyết định 8" }],
+      },
+      {
+        id: "t-ast-next",
+        surface_id: "s-1",
+        role: "assistant",
+        events: [{ kind: "assistant", text: "Bạn chọn phương án nào?" }],
+      },
+    ];
+
+    // On the turn that completed 3/3, it stays visible; once a later assistant turn moves on, it retires.
+    expect(
+      deriveConversationTasks(completedThenMovedOn.slice(0, 1), false).dockedTaskList,
+    ).not.toBeNull();
+    expect(deriveConversationTasks(completedThenMovedOn, true).dockedTaskList).toBeNull();
   });
 });

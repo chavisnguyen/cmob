@@ -113,6 +113,24 @@ pub fn antigravity_record_is_final_reply(r: &serde_json::Value) -> bool {
         && r.get("tool_calls").map_or(true, |t| t.is_null() || t.as_array().is_some_and(|a| a.is_empty()))
 }
 
+/// True when the last Antigravity JSONL record is a `PLANNER_RESPONSE` waiting on `ask_question` /
+/// `ask_permission` (verified live: cmux keeps `hookEventName: "PreInvocation"` and `runtimeStatus:
+/// "running"` while `agy`'s TUI question menu blocks for user selection).
+pub fn antigravity_record_is_awaiting_input(r: &serde_json::Value) -> bool {
+    r.get("type").and_then(|t| t.as_str()) == Some("PLANNER_RESPONSE")
+        && r.get("status").and_then(|t| t.as_str()) == Some("DONE")
+        && r.get("tool_calls")
+            .and_then(|t| t.as_array())
+            .is_some_and(|calls| {
+                calls.iter().any(|tc| {
+                    matches!(
+                        tc.get("name").and_then(|n| n.as_str()),
+                        Some("ask_question" | "ask_permission" | "AskUserQuestion" | "ask_user_question")
+                    )
+                })
+            })
+}
+
 /// Codex subagent rollouts (`thread_source: "subagent"`) carry their parent in `session_meta.payload`
 /// (`parent_thread_id`, also `source.subagent.thread_spawn.parent_thread_id`). Verified on
 /// ~/.codex/sessions/2026/11/14/rollout-*-01a1d922-7cdb-*.jsonl (parent `01a1d910-...`, source `cli`).
@@ -448,7 +466,7 @@ impl HookSessionRecord {
         use crate::scanner::turn_marks::{cached_claude_mark, cached_codex_mark, TurnMark};
         let kind = crate::cmux::agents::spec_for(self.resolved_agent_kind()).map(|s| s.kind)?;
         if kind == "antigravity" {
-            return self.transcript_shows_finished_reply().then_some(AgentLifecycleState::Done);
+            return self.antigravity_transcript_state();
         }
         let (path, updated) = (self.transcript_path.as_deref()?, self.updated_at?);
         let mark = match kind {
@@ -477,29 +495,33 @@ impl HookSessionRecord {
         }
     }
 
-    /// True when the transcript is newer than the last hook event and its last record is a
-    /// completed final reply. Antigravity only; Claude and Codex are decoded in `turn_marks`
-    /// (Orca src/main/native-chat/transcript-turn-lifecycle.ts).
-    fn transcript_shows_finished_reply(&self) -> bool {
-        if self.resolved_agent_kind() != "antigravity" {
-            return false;
+    /// Antigravity transcript-derived lifecycle override:
+    /// - Last record calls `ask_question` / `ask_permission` (unanswered) => `Waiting`
+    /// - Last record is a completed `PLANNER_RESPONSE` with no `tool_calls` newer than hook => `Done`
+    fn antigravity_transcript_state(&self) -> Option<AgentLifecycleState> {
+        let kind = crate::cmux::agents::spec_for(self.resolved_agent_kind()).map(|s| s.kind)?;
+        if kind != "antigravity" {
+            return None;
         }
-        let (Some(path), Some(updated)) = (self.transcript_path.as_deref(), self.updated_at) else {
-            return false;
-        };
-        let Some(mtime) = fs::metadata(path)
+        let path = self.transcript_path.as_deref()?;
+        let mtime = fs::metadata(path)
             .and_then(|m| m.modified())
             .ok()
             .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
-            .map(|d| d.as_secs_f64())
-        else {
-            return false;
-        };
-        // A new prompt fires the hook before its USER_INPUT reaches the transcript: trust the hook.
-        if mtime < updated {
-            return false;
+            .map(|d| d.as_secs_f64())?;
+        let last = last_jsonl_record(path)?;
+        if self.updated_at.is_none_or(|updated| mtime >= updated - 2.0)
+            && antigravity_record_is_awaiting_input(&last)
+        {
+            return Some(AgentLifecycleState::Waiting);
         }
-        last_jsonl_record(path).is_some_and(|r| antigravity_record_is_final_reply(&r))
+        if let Some(updated) = self.updated_at
+            && mtime >= updated
+            && antigravity_record_is_final_reply(&last)
+        {
+            return Some(AgentLifecycleState::Done);
+        }
+        None
     }
 
     /// Check if this session is currently active/running.
@@ -1163,6 +1185,53 @@ mod tests {
         );
 
         unsafe { std::env::remove_var("OPENCODE_DB") };
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn antigravity_ask_question_overrides_working_hook_to_waiting() {
+        let dir = std::env::temp_dir().join(format!("cmux-agy-ask-lc-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let t = dir.join("transcript.jsonl");
+        fs::write(
+            &t,
+            concat!(
+                r#"{"type":"USER_INPUT","status":"DONE","content":"tiếp"}"#,
+                "\n",
+                r#"{"type":"PLANNER_RESPONSE","status":"DONE","content":"Bạn chọn hướng nào?","tool_calls":[{"name":"ask_question","args":{"questions":"[{\"question\":\"Chọn hướng?\"}]"}}]}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+        let path = t.to_string_lossy().into_owned();
+
+        // When hook_event_name stays `PreInvocation` (`running`) from the start of the turn,
+        // an unanswered `ask_question` written in the transcript forces `Waiting`.
+        let rec = working_record(unix_now() - 10.0, Some(path.clone()));
+        assert_eq!(rec.resolved_lifecycle(), AgentLifecycleState::Working);
+        assert_eq!(rec.live_lifecycle(), AgentLifecycleState::Waiting);
+        assert!(!rec.is_running());
+
+        // If a brand-new `PreInvocation` fires after the user cancelled/re-prompted before the transcript
+        // flushes (`updated_at > mtime + 2s`), do not get stuck on the older question.
+        let fresh_prompt = working_record(unix_now() + 5.0, Some(path.clone()));
+        assert_eq!(fresh_prompt.live_lifecycle(), AgentLifecycleState::Working);
+
+        // Once the user answers (`GENERIC` record appended), session resumes `Working`.
+        fs::write(
+            &t,
+            concat!(
+                r#"{"type":"USER_INPUT","status":"DONE","content":"tiếp"}"#,
+                "\n",
+                r#"{"type":"PLANNER_RESPONSE","status":"DONE","tool_calls":[{"name":"ask_question","args":{}}]}"#,
+                "\n",
+                r#"{"type":"GENERIC","status":"DONE","content":"A1: Phương án 1"}"#,
+                "\n"
+            ),
+        )
+        .unwrap();
+        assert_eq!(rec.live_lifecycle(), AgentLifecycleState::Working);
+
         let _ = fs::remove_dir_all(dir);
     }
 }

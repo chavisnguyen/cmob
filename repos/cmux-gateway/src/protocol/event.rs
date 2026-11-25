@@ -82,6 +82,16 @@ pub struct BackgroundTaskEntry {
     pub settled_at: Option<u64>,
 }
 
+/// One structured question inside a multi-question `AwaitingInput` prompt.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AskQuestionItem {
+    pub question: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub options: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub multi_select: Option<bool>,
+}
+
 /// Awaiting user feedback or permission for a tool execution.
 /// Source: ref/orca/src/shared/native-chat/native-chat-types.ts & ref/cmux/agent-chat/types.ts
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -94,6 +104,11 @@ pub struct AwaitingInput {
     pub default_choice: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub multi_select: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub questions: Option<Vec<AskQuestionItem>>,
+    /// Populated once the transcript records the user's answer (Orca `ResolutionReceipt`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub answered: Option<String>,
 }
 
 /// Unified Agent Event enum.
@@ -107,6 +122,8 @@ pub enum AgentEvent {
     },
     Thinking {
         text: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        duration_secs: Option<u64>,
     },
     ToolStart {
         tool_id: String,
@@ -200,6 +217,7 @@ mod tests {
             },
             AgentEvent::Thinking {
                 text: "look at the test first".to_string(),
+                duration_secs: None,
             },
             AgentEvent::ToolStart {
                 tool_id: "t1".to_string(),
@@ -272,7 +290,13 @@ mod tests {
         let events: Vec<AgentEvent> = serde_json::from_str(golden_json).expect("deserialize golden fixture");
         assert_eq!(events.len(), 13);
         assert_eq!(events[0], AgentEvent::User { text: "fix the flaky test".to_string() });
-        assert_eq!(events[1], AgentEvent::Thinking { text: "look at the test first".to_string() });
+        assert_eq!(
+            events[1],
+            AgentEvent::Thinking {
+                text: "look at the test first".to_string(),
+                duration_secs: None,
+            }
+        );
         assert_eq!(events[3], AgentEvent::ToolEnd {
             tool_id: "t1".to_string(),
             name: None,
