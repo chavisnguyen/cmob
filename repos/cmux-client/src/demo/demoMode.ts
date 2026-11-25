@@ -229,6 +229,96 @@ export async function handleDemoRpc<T = unknown>(
       } as T;
     }
 
+    case RPC_METHODS.USAGE_GET: {
+      const now = Date.now();
+      return {
+        updated_at: now,
+        providers: [
+          {
+            provider: "antigravity",
+            display_name: "Antigravity",
+            status: "ok",
+            session: {
+              used_percent: 21,
+              window_minutes: 300,
+              resets_at: now + 4 * 3600_000 + 53 * 60_000,
+            },
+            weekly: {
+              used_percent: 6,
+              window_minutes: 10080,
+              resets_at: now + 6 * 86400_000 + 18 * 3600_000,
+            },
+            buckets: [
+              {
+                id: "gemini-5h",
+                name: "Gemini Models · Five Hour Limit Remaining",
+                group: "Gemini Models",
+                group_description: "Gemini 4 Hydrogen, Gemini 3.8 Flash",
+                window_name: "Five Hour Limit Remaining",
+                used_percent: 21,
+                window_minutes: 300,
+                resets_at: now + 4 * 3600_000 + 53 * 60_000,
+              },
+              {
+                id: "gemini-weekly",
+                name: "Gemini Models · Weekly Limit Remaining",
+                group: "Gemini Models",
+                group_description: "Gemini 4 Hydrogen, Gemini 3.8 Flash",
+                window_name: "Weekly Limit Remaining",
+                used_percent: 6,
+                window_minutes: 10080,
+                resets_at: now + 6 * 86400_000 + 18 * 3600_000,
+              },
+              {
+                id: "3p-5h",
+                name: "Claude and GPT models · Five Hour Limit Remaining",
+                group: "Claude and GPT models",
+                group_description: "Claude Sonnet 4.6, Claude Opus 4.6, GPT-OSS 120B",
+                window_name: "Five Hour Limit Remaining",
+                used_percent: 12,
+                window_minutes: 300,
+                resets_at: now + 3 * 3600_000 + 10 * 60_000,
+              },
+            ],
+            updated_at: now,
+          },
+          {
+            provider: "claude",
+            display_name: "Claude Code",
+            status: "ok",
+            session: {
+              used_percent: 64,
+              window_minutes: 300,
+              resets_at: now + 2 * 3600_000 + 15 * 60_000,
+            },
+            weekly: {
+              used_percent: 38,
+              window_minutes: 10080,
+              resets_at: now + 4 * 86400_000 + 5 * 3600_000,
+            },
+            updated_at: now,
+          },
+          {
+            provider: "codex",
+            display_name: "Codex",
+            status: "ok",
+            plan_type: "plus",
+            session: {
+              used_percent: 14,
+              window_minutes: 300,
+              resets_at: now + 4 * 3600_000 + 20 * 60_000,
+            },
+            weekly: {
+              used_percent: 82,
+              window_minutes: 10080,
+              resets_at: now + 1 * 86400_000 + 11 * 3600_000,
+            },
+            updated_at: now,
+          },
+        ],
+      } as T;
+    }
+
     default:
       return {} as T;
   }

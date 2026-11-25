@@ -938,7 +938,7 @@ The implementation was inspected against `architecture.md: Section 5.1` and `ref
 **Audit Date:** 2026-11-12T19:30:00+07:00  
 **Auditor:** Autonomous Verification Engine  
 **Target Environments:** macOS Host, Google Chrome (Extension Profile: `chrome-profile`), cmux-gateway release daemon on port `8088`.  
-**Automation Tool:** `1craft-browseruse` MCP Server (`call_mcp_tool` via `tabs_create_mcp`, `read_page`, `computer`, `javascript_tool`).
+**Automation Tool:** `klik` MCP Server (`call_mcp_tool` via `tabs_create_mcp`, `read_page`, `computer`, `javascript_tool`).
 
 ---
 
@@ -1009,7 +1009,7 @@ Validate the live, running cmux-mobile companion application rendered in an auth
 | Scope | Method | Evidence / Commit | Verdict |
 |---|---|---|---|
 | **Reconnection Loop Fix** | React Hook ref decoupling (`App.tsx`, `wsClient.ts`) | Commit `27304e8` | **PASS** (Zero loop churn, clean reconnect) |
-| **PWA Live Rendering** | `1craft-browseruse` in real Chrome | Tab `tab-42` (`chrome-profile`) | **PASS** (100% visual and interactive fidelity) |
+| **PWA Live Rendering** | `klik` in real Chrome | Tab `tab-42` (`chrome-profile`) | **PASS** (100% visual and interactive fidelity) |
 | **3-Level Navigation** | AXTree & DOM Click traversal | Level 1 $\to$ Level 2 $\to$ Level 3 | **PASS** (All 5 workspaces and surfaces interactive) |
 | **Orca Chat Timeline** | Real Antigravity & Claude sessions | Full transcript, accordions, tool cards | **PASS** (Rendered correctly with 0 console errors) |
 | **GitHub Actions CI** | Push to `main` (`27304e8`) | Run `43218452807` (`success` in 1m32s) | **PASS** (Full build and offline tests green) |
@@ -1054,7 +1054,7 @@ Direct unpack of Orca app bundle revealed the true architecture of Orca's mobile
 6. **`NativeChatProse.tsx`**:
    - Markdown prose rendering with code blocks and one-tap Copy buttons.
 
-### 13.2 Empirical Verification via `1craft-browseruse`
+### 13.2 Empirical Verification via `klik`
 - Verified live on Chrome via CDP tab `tab-1` (`chrome-profile`):
   - Navigated to `http://127.0.0.1:8088/#token=test_token_123`.
   - Traversed Level 1 (Workspaces) $\to$ Level 2 (Surfaces) $\to$ Level 3 (Adaptive Chat UI).
@@ -1105,7 +1105,7 @@ Direct unpack of Orca app bundle revealed the true architecture of Orca's mobile
   - `MobileNativeChatReasoningRow`: Returns `null` if `!text || !text.trim()`.
   - `renderAssistantTurnEvents`: Skips empty thinking and delta events without flushing pending tools, grouping all consecutive tools into a single compact sentence row (`Ran X commands • Done`).
 
-### 14.5 Live Verification via MCP `1craft-browseruse`
+### 14.5 Live Verification via MCP `klik`
 * Verified on Chrome tab `tab-2` (profile `chrome-profile`, port 9222):
   1. Chat opened directly at the very bottom (`scrollTop: 4367, distanceToBottom: 16px`).
   2. Empty 0-char thoughts completely removed.

@@ -585,6 +585,15 @@ impl HookStoreIndex {
                     record.transcript_path = Some(resolve_codex_top_level_rollout(&path));
                 }
             }
+            // OpenCode's hook file carries no transcript path; its conversation lives in SQLite and is
+            // referenced as `<db>#<session id>` (`scanner::opencode_store`).
+            if record.agent_kind.as_deref() == Some("opencode")
+                && record.transcript_path.is_none()
+                && record.session_id.starts_with("ses_")
+            {
+                record.transcript_path =
+                    crate::scanner::opencode_store::resolve_transcript_path(&record.session_id);
+            }
             if record.is_subagent_session() {
                 record.is_subagent = true;
             }
@@ -986,6 +995,58 @@ mod tests {
         rec.runtime_status = Some("needsInput".into());
         assert_eq!(rec.resolved_lifecycle(), AgentLifecycleState::Waiting);
         assert_eq!(rec.live_lifecycle(), AgentLifecycleState::Done);
+        let _ = fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn test_scan_dir_resolves_opencode_transcript_path() {
+        let dir = std::env::temp_dir().join(format!("cmux-oc-hook-{}", std::process::id()));
+        let _ = fs::create_dir_all(&dir);
+        let hook_file = dir.join("opencode-hook-sessions.json");
+        let fake_db = dir.join("opencode.db");
+
+        // Set up fake SQLite DB with ses_test123
+        let schema = "CREATE TABLE session_v2 (id text PRIMARY KEY);";
+        let insert = "INSERT INTO session_v2 VALUES ('ses_test123');";
+        let setup = std::process::Command::new("sqlite3")
+            .arg(&fake_db)
+            .arg(schema)
+            .arg(insert)
+            .output()
+            .unwrap();
+        assert!(setup.status.success());
+
+        // Override OPENCODE_DB
+        unsafe { std::env::set_var("OPENCODE_DB", &fake_db) };
+
+        let json = r#"{
+            "activeSessionsBySurface": {
+                "surf-oc-1": { "sessionId": "ses_test123", "updatedAt": 1794480000.0 }
+            },
+            "sessions": {
+                "ses_test123": {
+                    "sessionId": "ses_test123",
+                    "surfaceId": "surf-oc-1",
+                    "workspaceId": "ws-oc-1",
+                    "cwd": "/tmp",
+                    "agentLifecycle": "running",
+                    "runtimeStatus": "running",
+                    "updatedAt": 1794480000.0
+                }
+            }
+        }"#;
+        fs::write(&hook_file, json).unwrap();
+
+        let index = HookStoreIndex::scan_dir(&dir);
+
+        let rec = index.sessions_by_id.get("ses_test123").expect("found ses_test123");
+        assert_eq!(rec.agent_kind.as_deref(), Some("opencode"));
+        assert_eq!(
+            rec.transcript_path.as_deref(),
+            Some(format!("{}#ses_test123", fake_db.to_string_lossy()).as_str())
+        );
+
+        unsafe { std::env::remove_var("OPENCODE_DB") };
         let _ = fs::remove_dir_all(dir);
     }
 }

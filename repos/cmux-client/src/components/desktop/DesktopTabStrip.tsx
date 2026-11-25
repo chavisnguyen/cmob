@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import {
   FileText,
   GitBranch,
@@ -25,6 +26,7 @@ interface DesktopTabStripProps {
   onCloseSurface: (surface: SurfaceNode) => void;
   onOpenChanges: () => void;
   onRefresh: () => void;
+  usageWidget?: ReactNode;
 }
 
 export function DesktopTabStrip({
@@ -39,6 +41,7 @@ export function DesktopTabStrip({
   onCloseSurface,
   onOpenChanges,
   onRefresh,
+  usageWidget,
 }: DesktopTabStripProps) {
   const activeKey = activeSurface?.id || activeSurface?.ref || "";
 
@@ -132,30 +135,33 @@ export function DesktopTabStrip({
         )}
       </div>
 
-      {workspace && (
-        <div className="flex items-center gap-1.5 shrink-0">
-          <button
-            type="button"
-            onClick={onOpenChanges}
-            className="h-8 px-2.5 rounded-lg bg-raised hover:bg-line text-fg-soft text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors"
-            title="Git changes"
-          >
-            <GitBranch className="w-3.5 h-3.5" />
-            <span>Changes</span>
-          </button>
+      <div className="flex items-center gap-1.5 shrink-0">
+        {usageWidget}
+        {workspace && (
+          <>
+            <button
+              type="button"
+              onClick={onOpenChanges}
+              className="h-8 px-2.5 rounded-lg bg-raised hover:bg-line text-fg-soft text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors"
+              title="Git changes"
+            >
+              <GitBranch className="w-3.5 h-3.5" />
+              <span>Changes</span>
+            </button>
 
-          <button
-            type="button"
-            onClick={onRefresh}
-            disabled={loading}
-            className="w-8 h-8 rounded-lg hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
-            title="Refresh workspace"
-            aria-label="Refresh workspace"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
-          </button>
-        </div>
-      )}
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={loading}
+              className="w-8 h-8 rounded-lg hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
+              title="Refresh workspace"
+              aria-label="Refresh workspace"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }

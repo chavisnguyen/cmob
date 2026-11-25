@@ -359,7 +359,7 @@ cmux capture-pane [--workspace <id|ref|index>] [--surface <id|ref|index>] [--win
   ╭───────────────────────────────────────────────────────────────╮╭───────────────────────────────────────────────────────────────╮
   │ MCP Servers                                                   ││ Core Tools                                                    │
   │                                                         calls ││                                                         calls │
-  │ ██████████ 1craft-browseruse                               21 ││ ██████████ run_command                                   1447 │
+  │ ██████████ klik                               21 ││ ██████████ run_command                                   1447 │
   │ ██░░░░░░░░ composio-project-a                               4 ││ ██████░░░░ read_file                                      885 │
   ```
   *The output preserves exact terminal grid layout, ANSI box characters, and whitespace.*

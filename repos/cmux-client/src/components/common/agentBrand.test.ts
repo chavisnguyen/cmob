@@ -10,10 +10,12 @@ describe("agentBrand", () => {
     expect(agentBrand("agys")).toBe("antigravity");
     expect(agentBrand("kiro")).toBe("kiro");
     expect(agentBrand("kiro-cli")).toBe("kiro");
+    expect(agentBrand("opencode")).toBe("opencode");
+    expect(agentBrand("opencode2")).toBe("opencode");
   });
 
   it("returns null for unknown agents so the neutral glyph is used", () => {
-    expect(agentBrand("opencode")).toBeNull();
+    expect(agentBrand("unknown_agent")).toBeNull();
     expect(agentBrand(undefined)).toBeNull();
     expect(agentBrand("")).toBeNull();
   });
@@ -21,6 +23,7 @@ describe("agentBrand", () => {
   it("has display names", () => {
     expect(agentDisplayName("antigravity")).toBe("Antigravity");
     expect(agentDisplayName("codex")).toBe("Codex");
+    expect(agentDisplayName("opencode")).toBe("OpenCode");
     expect(agentDisplayName("something")).toBe("something");
     expect(agentDisplayName(undefined)).toBe("Agent");
   });

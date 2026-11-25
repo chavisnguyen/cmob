@@ -90,7 +90,7 @@ This document defines the actionable milestones, implementation phases, and test
   - **Verified cmux Literal Text Injection:** Replaced faulty `cmux send-key` with `cmux send [--surface=<id>] --force -- <text>\n` (`cmux send --help`), allowing bidirectional mobile chat prompts to deliver cleanly to cmux agents.
   - **Immediate Live Feedback (`NativeChatTurnActivityLine`):** Implemented Orca parity activity line (`ref/orca/src/renderer/src/components/native-chat/messages/reasoning/NativeChatTurnActivityLine.tsx:1-85`) rendering immediate spinner and status ("Thinking…", "Working…") when `isWorking` or `isSubmitting` is active, wired directly to gateway `mobile.chat.readSession` (`is_working`, `last_event`, `last_subtitle`).
   - **Orca Sleek Scrollbars:** Added `data-orca-scrollbars="sleek"` and custom CSS scrollbar rules from Orca mobile web bundle to `index.html`.
-  - **Live Verification via MCP:** Verified via MCP `1craft-browseruse` on real Chrome (CDP port 9222, profile `chrome-profile`).
+  - **Live Verification via MCP:** Verified via MCP `klik` on real Chrome (CDP port 9222, profile `chrome-profile`).
 
 ---
 

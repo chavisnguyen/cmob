@@ -49,6 +49,7 @@ export const RPC_METHODS = {
   TERMINAL_SUBSCRIBE: "mobile.terminal.subscribe",
   TERMINAL_UNSUBSCRIBE: "mobile.terminal.unsubscribe",
   CLIENT_VIEWING: "mobile.client.viewing",
+  USAGE_GET: "mobile.usage.get",
 } as const;
 
 /** Server-push event names (frames carry `event` + `data`, no `id`). */
@@ -77,6 +78,40 @@ export interface NotificationAlertPayload {
 export interface NotificationDismissPayload {
   surface_id: string;
   tags: string[];
+}
+
+export interface UsageWindow {
+  used_percent: number;
+  window_minutes: number;
+  resets_at?: number;
+}
+
+export interface UsageBucket {
+  id: string;
+  name: string;
+  group: string;
+  group_description?: string;
+  window_name?: string;
+  used_percent: number;
+  window_minutes: number;
+  resets_at?: number;
+}
+
+export interface ProviderUsage {
+  provider: string;
+  display_name: string;
+  status: "ok" | "unavailable" | "error";
+  plan_type?: string;
+  session?: UsageWindow;
+  weekly?: UsageWindow;
+  buckets?: UsageBucket[];
+  error?: string;
+  updated_at: number;
+}
+
+export interface UsageSnapshot {
+  providers: ProviderUsage[];
+  updated_at: number;
 }
 
 export type RpcMethod = (typeof RPC_METHODS)[keyof typeof RPC_METHODS];

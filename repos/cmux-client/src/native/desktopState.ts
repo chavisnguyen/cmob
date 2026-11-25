@@ -96,7 +96,7 @@ export function computeIsViewingSurface({
   isDesktop,
   activeView,
 }: {
-  mainTab: "workspaces" | "devices";
+  mainTab: "workspaces" | "usage" | "devices";
   selectedSurface: SurfaceNode | null;
   isDesktop: boolean;
   activeView: AppView;

@@ -476,6 +476,12 @@ impl TranscriptReader {
         surface_id: &str,
         max_turns: usize,
     ) -> Result<(Vec<AgentTurn>, usize), std::io::Error> {
+        // SQLite-backed agents (OpenCode) are referenced as `<db path>#<session id>`; there is no file
+        // to open. See `scanner::opencode_store`.
+        if let Some((db, session_id)) = crate::scanner::opencode_store::parse_pseudo_path(transcript_path) {
+            return crate::scanner::opencode_store::read_recent_turns_page(&db, &session_id, surface_id, max_turns)
+                .map_err(std::io::Error::other);
+        }
         if !transcript_path.exists() {
             return Ok((Vec::new(), 0));
         }

@@ -33,7 +33,7 @@ use crate::protocol::{
     METHOD_SURFACE_NEW, METHOD_SURFACE_RENAME, METHOD_TERMINAL_INPUT, METHOD_TERMINAL_PASTE,
     METHOD_TERMINAL_READ, METHOD_TERMINAL_REPLAY, METHOD_TERMINAL_SCROLL, METHOD_TERMINAL_SEND,
     METHOD_TERMINAL_SUBSCRIBE, METHOD_TERMINAL_UNSUBSCRIBE, METHOD_TERMINAL_VIEWPORT,
-    METHOD_WORKSPACE_LIST,
+    METHOD_USAGE_GET, METHOD_WORKSPACE_LIST,
     METHOD_WORKSPACE_TREE, WS_CLOSE_AUTH_FAILED,
 };
 use crate::pairing_store::{ct_eq, DeviceRegistry};
@@ -67,6 +67,8 @@ pub struct AppState {
     pub clients: ClientRegistry,
     /// Live notification alert/dismiss broadcast channel for connected desktop & mobile clients.
     pub notif_tx: tokio::sync::broadcast::Sender<NotificationBroadcast>,
+    /// Cached real-time quota & rate-limit probe service for Antigravity, Claude, and Codex.
+    pub usage_service: crate::usage::UsageService,
 }
 
 /// One authenticated, currently open WebSocket session.
@@ -160,6 +162,7 @@ impl AppState {
             conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_WS_CONNECTIONS)),
             clients: ClientRegistry::default(),
             notif_tx: tokio::sync::broadcast::channel(128).0,
+            usage_service: crate::usage::UsageService::new(),
         }
     }
 
@@ -1537,6 +1540,20 @@ async fn resolve_session(state: &AppState, surface_id: &str, session_id: &str) -
             res.lifecycle = AgentLifecycleState::Idle;
         }
     }
+    // OpenCode's hook record has no transcript, so the running-tool activity line comes from the
+    // session database. A `Waiting` hook event (permission prompt) is not represented there, so it wins.
+    if res.agent_kind == "opencode" && res.lifecycle != AgentLifecycleState::Waiting {
+        if let Some(status) = res
+            .transcript_path
+            .as_deref()
+            .and_then(|p| crate::scanner::opencode_store::status_for_path(std::path::Path::new(p)))
+        {
+            res.lifecycle = status.lifecycle;
+            if res.lifecycle == AgentLifecycleState::Working {
+                res.last_subtitle = status.last_subtitle;
+            }
+        }
+    }
     Some(res)
 }
 
@@ -1993,6 +2010,11 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
                 }),
             )
             .unwrap()
+        }
+        METHOD_USAGE_GET => {
+            let refresh = req.params.get("refresh").and_then(|v| v.as_bool()).unwrap_or(false);
+            let snap = state.usage_service.get_snapshot(refresh).await;
+            JsonRpcResponse::result_value(req.id.clone(), serde_json::to_value(snap).unwrap())
         }
         METHOD_CHAT_SEND => {
             let text = req.params.get("text").and_then(|v| v.as_str()).unwrap_or("");

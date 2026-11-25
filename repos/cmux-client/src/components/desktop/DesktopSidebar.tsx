@@ -6,6 +6,7 @@ import {
   ChevronRight,
   FileText,
   FolderGit2,
+  Gauge,
   GitBranch,
   Globe,
   KeyRound,
@@ -33,12 +34,13 @@ interface DesktopSidebarProps {
   workspaces: WorkspaceNode[];
   selectedWorkspace: WorkspaceNode | null;
   selectedSurface: SurfaceNode | null;
-  mainTab: "workspaces" | "devices";
+  mainTab: "workspaces" | "usage" | "devices";
   loading: boolean;
   notifPermission: NotificationPermission;
   onOpenHostSwitcher: () => void;
   onToggleNotifications: () => void;
   onOpenPair: () => void;
+  onOpenUsage: () => void;
   onOpenDevices: () => void;
   onOpenToken: () => void;
   onForceReload: () => void;
@@ -64,6 +66,7 @@ export function DesktopSidebar({
   onOpenHostSwitcher,
   onToggleNotifications,
   onOpenPair,
+  onOpenUsage,
   onOpenDevices,
   onOpenToken,
   onForceReload,
@@ -400,8 +403,23 @@ export function DesktopSidebar({
         })}
       </div>
 
-      {/* Bottom Hosts & Devices Trigger */}
-      <div className="p-2 border-t border-line shrink-0">
+      {/* Bottom Usage & Devices Navigation */}
+      <div className="p-2 border-t border-line shrink-0 space-y-1">
+        <button
+          type="button"
+          onClick={onOpenUsage}
+          className={`w-full h-9 px-2.5 rounded-xl flex items-center justify-between text-[12.5px] font-medium transition-colors ${
+            mainTab === "usage"
+              ? "bg-raised text-fg"
+              : "text-muted hover:bg-white/[0.04] hover:text-fg"
+          }`}
+        >
+          <span className="flex items-center gap-2">
+            <Gauge className="w-3.5 h-3.5" />
+            <span>Model Usage</span>
+          </span>
+        </button>
+
         <button
           type="button"
           onClick={onOpenDevices}

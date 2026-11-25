@@ -8,6 +8,7 @@ pub mod push;
 pub mod scanner;
 pub mod server;
 pub mod uploads;
+pub mod usage;
 
 mod cli;
 

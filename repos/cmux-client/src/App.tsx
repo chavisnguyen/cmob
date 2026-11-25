@@ -23,6 +23,8 @@ import {
   Bell,
   ChevronDown,
   BellRing,
+  FolderGit2,
+  Gauge,
   KeyRound,
   MoreHorizontal,
   Plus,
@@ -77,6 +79,9 @@ import { RenameSurfaceModal } from "./components/surface/RenameSurfaceModal";
 import { CloseSurfaceDialog } from "./components/surface/CloseSurfaceDialog";
 import { ChangesPanel } from "./components/git/ChangesPanel";
 import { PairingConfirmModal } from "./components/hosts/PairingConfirmModal";
+import { UsageView } from "./components/usage/UsageView";
+import { DesktopUsageWidget } from "./components/usage/DesktopUsageWidget";
+import { useUsageSnapshot } from "./components/usage/useUsageSnapshot";
 import { useHosts } from "./hosts/useHosts";
 import type { SavedHost } from "./hosts/hostStore";
 import { isDemoMode } from "./demo/demoData";
@@ -93,7 +98,7 @@ export function App() {
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
   const [workspaces, setWorkspaces] = useState<WorkspaceNode[]>([]);
   const [loading, setLoading] = useState(false);
-  const [mainTab, setMainTab] = useState<"workspaces" | "devices">("workspaces");
+  const [mainTab, setMainTab] = useState<"workspaces" | "usage" | "devices">("workspaces");
   const [showHostSheet, setShowHostSheet] = useState(false);
   const [activeView, setActiveView] = useState<"workspaces" | "surfaces" | "detail">("workspaces");
   const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceNode | null>(null);
@@ -144,6 +149,13 @@ export function App() {
     selectedSurface,
     isDesktop,
     activeView,
+  });
+
+  const usageState = useUsageSnapshot({
+    enabled: isDesktop || mainTab === "usage",
+    connState,
+    hostKey: activeHostId || activeHost?.endpoint || "",
+    pollMs: mainTab === "usage" ? 30_000 : 60_000,
   });
 
   useEffect(() => {
@@ -769,6 +781,7 @@ export function App() {
                   <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
                     {[
                       { label: "Pair new device", icon: Plus, run: () => setShowPairModal(true) },
+                      { label: "Model usage", icon: Gauge, run: () => setMainTab("usage") },
                       { label: "Hosts & devices", icon: Server, run: () => setMainTab("devices") },
                       { label: "Auth token", icon: KeyRound, run: () => setShowTokenModal(true) },
                       { label: "Reload app", icon: RefreshCw, run: handleForceReload },
@@ -825,6 +838,7 @@ export function App() {
                 onOpenHostSwitcher={() => setShowHostSheet(true)}
                 onToggleNotifications={handleToggleNotifications}
                 onOpenPair={() => setShowPairModal(true)}
+                onOpenUsage={() => setMainTab("usage")}
                 onOpenDevices={() => setMainTab("devices")}
                 onOpenToken={() => setShowTokenModal(true)}
                 onForceReload={handleForceReload}
@@ -858,6 +872,19 @@ export function App() {
                   if (selectedWorkspace) setChangesWs(selectedWorkspace);
                 }}
                 onRefresh={() => void fetchWorkspaces()}
+                usageWidget={
+                  <DesktopUsageWidget
+                    hostName={activeHost?.name ?? "No computer"}
+                    connState={connState}
+                    snapshot={usageState.snapshot}
+                    loading={usageState.loading}
+                    refreshing={usageState.refreshing}
+                    error={usageState.error}
+                    unsupported={usageState.unsupported}
+                    now={usageState.now}
+                    onRefresh={() => void usageState.refresh()}
+                  />
+                }
               />
 
               {connState === "error" && wsClient.getLastErrorMessage() && (
@@ -874,7 +901,19 @@ export function App() {
               )}
 
               <div className="flex-1 min-h-0 overflow-hidden">
-                {mainTab === "devices" ? (
+                {mainTab === "usage" ? (
+                  <UsageView
+                    hostName={activeHost?.name ?? "No computer"}
+                    connState={connState}
+                    snapshot={usageState.snapshot}
+                    loading={usageState.loading}
+                    refreshing={usageState.refreshing}
+                    error={usageState.error}
+                    unsupported={usageState.unsupported}
+                    now={usageState.now}
+                    onRefresh={() => void usageState.refresh()}
+                  />
+                ) : mainTab === "devices" ? (
                   <DeviceListView
                     hosts={hosts}
                     activeHostId={activeHostId}
@@ -947,64 +986,113 @@ export function App() {
             </div>
           </>
         ) : (
-          <div className="flex-1 min-w-0 h-full overflow-hidden">
-            {mainTab === "workspaces" && (
-              <>
-                {activeView === "workspaces" && (
-                  <WorkspaceListView
-                    workspaces={workspaces}
-                    loading={loading}
-                    onRefresh={fetchWorkspaces}
-                    onSelectWorkspace={handleSelectWorkspace}
-                    hostsCount={hosts.length}
-                    connState={connState}
-                    onPairHost={() => setShowPairModal(true)}
-                  />
-                )}
+          <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {mainTab === "workspaces" && (
+                <>
+                  {activeView === "workspaces" && (
+                    <WorkspaceListView
+                      workspaces={workspaces}
+                      loading={loading}
+                      onRefresh={fetchWorkspaces}
+                      onSelectWorkspace={handleSelectWorkspace}
+                      hostsCount={hosts.length}
+                      connState={connState}
+                      onPairHost={() => setShowPairModal(true)}
+                    />
+                  )}
 
-                {activeView === "surfaces" && selectedWorkspace && (
-                  <SurfaceListView
-                    workspace={selectedWorkspace}
-                    onBack={handleBackToWorkspaces}
-                    onSelectSurface={handleSelectSurface}
-                    onCreateSurface={handleCreateSurface}
-                    onRenameSurface={handleRenameSurface}
-                    onCloseSurface={handleCloseSurface}
-                    onRefresh={fetchWorkspaces}
-                  />
-                )}
+                  {activeView === "surfaces" && selectedWorkspace && (
+                    <SurfaceListView
+                      workspace={selectedWorkspace}
+                      onBack={handleBackToWorkspaces}
+                      onSelectSurface={handleSelectSurface}
+                      onCreateSurface={handleCreateSurface}
+                      onRenameSurface={handleRenameSurface}
+                      onCloseSurface={handleCloseSurface}
+                      onRefresh={fetchWorkspaces}
+                    />
+                  )}
 
-                {activeView === "detail" && selectedWorkspace && selectedSurface && (
-                  <SurfaceDetailView
-                    // Per-surface state (pending sends, working flag, history paging) must not leak between tabs.
-                    key={selectedSurface.id || selectedSurface.ref}
-                    surface={selectedSurface}
-                    workspace={selectedWorkspace}
-                    onBack={handleBackToSurfaces}
-                    allSurfaces={selectedWorkspace.surfaces}
-                    onSelectSurface={handleSelectSurface}
-                    onCreateSurface={handleCreateSurface}
-                    onRenameSurface={handleRenameSurface}
-                    onCloseSurface={handleCloseSurface}
-                    onRefresh={fetchWorkspaces}
-                  />
-                )}
-              </>
-            )}
+                  {activeView === "detail" && selectedWorkspace && selectedSurface && (
+                    <SurfaceDetailView
+                      // Per-surface state (pending sends, working flag, history paging) must not leak between tabs.
+                      key={selectedSurface.id || selectedSurface.ref}
+                      surface={selectedSurface}
+                      workspace={selectedWorkspace}
+                      onBack={handleBackToSurfaces}
+                      allSurfaces={selectedWorkspace.surfaces}
+                      onSelectSurface={handleSelectSurface}
+                      onCreateSurface={handleCreateSurface}
+                      onRenameSurface={handleRenameSurface}
+                      onCloseSurface={handleCloseSurface}
+                      onRefresh={fetchWorkspaces}
+                    />
+                  )}
+                </>
+              )}
 
-            {mainTab === "devices" && (
-              <DeviceListView
-                hosts={hosts}
-                activeHostId={activeHostId}
-                connState={connState}
-                onSelectHost={(h) => {
-                  handleSwitchHost(h);
-                  setMainTab("workspaces");
-                }}
-                onRemoveHost={handleRemoveHost}
-                onRenameHost={renameHost}
-                onBack={() => setMainTab("workspaces")}
-              />
+              {mainTab === "usage" && (
+                <UsageView
+                  hostName={activeHost?.name ?? "No computer"}
+                  connState={connState}
+                  snapshot={usageState.snapshot}
+                  loading={usageState.loading}
+                  refreshing={usageState.refreshing}
+                  error={usageState.error}
+                  unsupported={usageState.unsupported}
+                  now={usageState.now}
+                  onRefresh={() => void usageState.refresh()}
+                />
+              )}
+
+              {mainTab === "devices" && (
+                <DeviceListView
+                  hosts={hosts}
+                  activeHostId={activeHostId}
+                  connState={connState}
+                  hideBack
+                  onSelectHost={(h) => {
+                    handleSwitchHost(h);
+                    setMainTab("workspaces");
+                  }}
+                  onRemoveHost={handleRemoveHost}
+                  onRenameHost={renameHost}
+                  onBack={() => setMainTab("workspaces")}
+                />
+              )}
+            </div>
+
+            {(mainTab !== "workspaces" || activeView === "workspaces") && (
+              <nav
+                aria-label="Primary mobile tabs"
+                className="shrink-0 grid grid-cols-3 bg-surface border-t border-line pt-1.5 pb-[max(env(safe-area-inset-bottom,0px),8px)] select-none"
+              >
+                {[
+                  { id: "workspaces" as const, label: "Workspaces", icon: FolderGit2 },
+                  { id: "usage" as const, label: "Usage", icon: Gauge },
+                  { id: "devices" as const, label: "Devices", icon: Server },
+                ].map(({ id, label, icon: Icon }) => {
+                  const selected = mainTab === id;
+                  return (
+                    <button
+                      key={id}
+                      type="button"
+                      onClick={() => {
+                        haptic("light");
+                        setMainTab(id);
+                      }}
+                      aria-current={selected ? "page" : undefined}
+                      className={`flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
+                        selected ? "text-fg" : "text-muted hover:text-fg-soft"
+                      }`}
+                    >
+                      <Icon className={`w-5 h-5 ${selected ? "text-accent-soft" : ""}`} />
+                      <span className="text-[11px] font-medium">{label}</span>
+                    </button>
+                  );
+                })}
+              </nav>
             )}
           </div>
         )}
