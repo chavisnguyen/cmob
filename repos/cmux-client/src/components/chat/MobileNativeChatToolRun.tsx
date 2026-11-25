@@ -9,12 +9,16 @@ import {
   ChevronDown,
   ChevronUp,
   Cpu,
+  ListChecks,
 } from "lucide-react";
 import { MobileNativeChatDiffCard } from "./MobileNativeChatDiffCard";
+import { TaskChecklistRows } from "./MobileNativeChatComposerTray";
+import { describeTaskToolCall, isTaskListToolName } from "./taskList";
 
 export interface ToolCallItem {
   id: string;
   name: string;
+  inputDetail?: string;
   detail?: string;
   ok?: boolean;
   isEnd?: boolean;
@@ -82,6 +86,7 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
           {tools.map((t, idx) => {
             const isEdit = isFileEditTool(t.name);
             const editDetails = isEdit ? parseEditDetails(t.detail) : null;
+            const taskInfo = describeTaskToolCall(t.name, t.inputDetail ?? t.detail);
 
             return (
               <div key={`${t.id}-${idx}`} className="space-y-1 py-0.5">
@@ -90,7 +95,7 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
                       <span className="font-medium text-fg-soft text-[11px] truncate">
-                        {t.name}
+                        {taskInfo ? taskInfo.headline : t.name}
                       </span>
                       {t.isEnd && (
                         <span
@@ -104,10 +109,18 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
                         </span>
                       )}
                     </div>
-                    {t.detail && !editDetails && (
-                      <p className="mt-0.5 text-muted text-[10px] whitespace-pre-wrap break-all max-h-32 overflow-y-auto scrollbar-thin">
-                        {t.detail}
-                      </p>
+                    {taskInfo?.list && taskInfo.list.tasks.length > 0 ? (
+                      <div className="mt-1 font-sans">
+                        <TaskChecklistRows tasks={taskInfo.list.tasks} />
+                      </div>
+                    ) : (
+                      !taskInfo &&
+                      t.detail &&
+                      !editDetails && (
+                        <p className="mt-0.5 text-muted text-[10px] whitespace-pre-wrap break-all max-h-32 overflow-y-auto scrollbar-thin">
+                          {t.detail}
+                        </p>
+                      )
                     )}
                   </div>
                 </div>
@@ -131,6 +144,9 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
 });
 
 function getToolCategoryIcon(name: string) {
+  if (isTaskListToolName(name)) {
+    return <ListChecks className="w-3.5 h-3.5 text-accent-soft" />;
+  }
   const lower = name.toLowerCase();
   if (lower.includes("read") || lower.includes("view")) {
     return <FileText className="w-3.5 h-3.5 text-accent-soft" />;
@@ -180,6 +196,18 @@ function parseEditDetails(detail?: string): {
 
 function deriveToolRunSentence(tools: ToolCallItem[], live: boolean): string {
   if (tools.length === 0) return "";
+  if (tools.length === 1) {
+    const taskInfo = describeTaskToolCall(tools[0].name, tools[0].inputDetail ?? tools[0].detail);
+    if (taskInfo) return taskInfo.headline;
+  }
+  const lastTaskTool = [...tools].reverse().find((t) => isTaskListToolName(t.name));
+  if (lastTaskTool && tools.every((t) => isTaskListToolName(t.name))) {
+    const info = describeTaskToolCall(
+      lastTaskTool.name,
+      lastTaskTool.inputDetail ?? lastTaskTool.detail,
+    );
+    if (info) return info.headline;
+  }
   const first = tools[0].name;
   const count = tools.length;
   const verb = live ? "Running" : "Ran";

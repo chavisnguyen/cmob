@@ -3,8 +3,12 @@ import { describe, expect, it } from "vite-plus/test";
 import type { AgentTurn } from "../../protocol/event";
 import { ChangesPanel } from "../git/ChangesPanel";
 import { MobileNativeChatDiffCard } from "./MobileNativeChatDiffCard";
-import { OrcaChatView } from "./OrcaChatView";
-import { createProgrammaticScrollMarks, estimateTurnHeight } from "./chatVirtual";
+import { ChatTurnRow, OrcaChatView } from "./OrcaChatView";
+import {
+  createProgrammaticScrollMarks,
+  estimateTurnHeight,
+  resolveSystemDividerLabel,
+} from "./chatVirtual";
 
 function makeTurn(index: number): AgentTurn {
   if (index % 2 === 0) {
@@ -107,5 +111,55 @@ describe("virtualized components SSR compatibility", () => {
 
     expect(diffHtml).toContain("src/app.ts");
     expect(changesHtml).toContain("workspace");
+  });
+
+  it("detects system and legacy compaction turns for centered divider rendering", () => {
+    const sysTurn: AgentTurn = {
+      id: "sys-1",
+      surface_id: "surf-1",
+      role: "system",
+      events: [{ kind: "status", text: "Context compacted" }],
+    };
+    const legacyCompactTurn: AgentTurn = {
+      id: "u-compact",
+      surface_id: "surf-1",
+      role: "user",
+      events: [
+        {
+          kind: "user",
+          text: "This session is being continued from a previous conversation that ran out of context.",
+        },
+      ],
+    };
+
+    expect(resolveSystemDividerLabel(sysTurn)).toBe("Context compacted");
+    expect(resolveSystemDividerLabel(legacyCompactTurn)).toBe("Context compacted");
+    expect(estimateTurnHeight(sysTurn)).toBe(36);
+    expect(estimateTurnHeight(legacyCompactTurn)).toBe(36);
+
+    const sysHtml = renderToStaticMarkup(
+      <ChatTurnRow
+        turn={sysTurn}
+        isLastTurn={false}
+        isWorking={false}
+        activeAwaiting={null}
+        onSubmitAwaiting={async () => {}}
+      />,
+    );
+    const legacyHtml = renderToStaticMarkup(
+      <ChatTurnRow
+        turn={legacyCompactTurn}
+        isLastTurn={false}
+        isWorking={false}
+        activeAwaiting={null}
+        onSubmitAwaiting={async () => {}}
+      />,
+    );
+
+    expect(sysHtml).toContain('role="separator"');
+    expect(sysHtml).toContain("Context compacted");
+    expect(legacyHtml).toContain('role="separator"');
+    expect(legacyHtml).toContain("Context compacted");
+    expect(legacyHtml).not.toContain("SYSTEM MESSAGE");
   });
 });

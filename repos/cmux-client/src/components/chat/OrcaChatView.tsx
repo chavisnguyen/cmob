@@ -22,7 +22,10 @@ import { NativeChatProse } from "./NativeChatProse";
 import { MobileNativeChatReasoningRow } from "./MobileNativeChatReasoningRow";
 import { MobileNativeChatToolRun, type ToolCallItem } from "./MobileNativeChatToolRun";
 import { MobileNativeChatSubagentGroup } from "./MobileNativeChatSubagentGroup";
+import { MobileNativeChatBackgroundTasksCard } from "./MobileNativeChatBackgroundTasksCard";
+import { MobileNativeChatComposerTray } from "./MobileNativeChatComposerTray";
 import { MobileNativeChatAwaitingInputRow } from "./MobileNativeChatAwaitingInputRow";
+import { deriveConversationTasks } from "./taskList";
 import { NativeChatJumpToLatest } from "./NativeChatJumpToLatest";
 import { CollapsibleText } from "./CollapsibleText";
 import { NativeChatTurnActivityLine } from "./NativeChatTurnActivityLine";
@@ -31,7 +34,12 @@ import { agentDisplayName } from "../common/agentBrand";
 import { resolveEffectiveAwaiting } from "./chatQueue";
 import { latestUsage } from "./usageSummary";
 import { ChatComposer, type ChatComposerHandle } from "./ChatComposer";
-import { TURN_LIST_GAP_PX, createProgrammaticScrollMarks, estimateTurnHeight } from "./chatVirtual";
+import {
+  TURN_LIST_GAP_PX,
+  createProgrammaticScrollMarks,
+  estimateTurnHeight,
+  resolveSystemDividerLabel,
+} from "./chatVirtual";
 
 interface OrcaChatViewProps {
   turns: AgentTurn[];
@@ -147,8 +155,8 @@ export function OrcaChatView({
   const latestAwaiting = useMemo(() => {
     if (turns.length === 0) return null;
     const lastTurn = turns[turns.length - 1];
-    // If the latest turn is from user, agent is either processing or hasn't responded yet
-    if (lastTurn.role === "user") return null;
+    // If the latest turn is from user or a system boundary, agent hasn't asked a fresh question yet
+    if (lastTurn.role === "user" || lastTurn.role === "system") return null;
 
     // Find if there is an awaiting-input event in the latest turn
     const askIndex = lastTurn.events.findIndex((ev) => ev.kind === "awaiting-input");
@@ -177,6 +185,11 @@ export function OrcaChatView({
         awaitingPrompt,
       }),
     [latestAwaiting, lifecycleState, isWorking, startupDialog, awaitingPrompt],
+  );
+
+  const conversationTasks = useMemo(
+    () => deriveConversationTasks(turns, Boolean(isWorking)),
+    [turns, isWorking],
   );
 
   const hasEarlier = Boolean(hasMoreHistory && onLoadOlder);
@@ -667,6 +680,12 @@ export function OrcaChatView({
             </div>
           )}
 
+          <MobileNativeChatComposerTray
+            taskList={conversationTasks.dockedTaskList}
+            backgroundWork={conversationTasks.backgroundWork}
+            scopeKey={surfaceId ?? "default"}
+          />
+
           <ChatComposer
             ref={composerHandleRef}
             agentKind={agentKind}
@@ -692,7 +711,7 @@ export function OrcaChatView({
   );
 }
 
-const ChatTurnRow = memo(function ChatTurnRow({
+export const ChatTurnRow = memo(function ChatTurnRow({
   turn,
   isLastTurn,
   isWorking,
@@ -705,6 +724,23 @@ const ChatTurnRow = memo(function ChatTurnRow({
   activeAwaiting: AwaitingInput | null;
   onSubmitAwaiting: (text: string) => Promise<void>;
 }) {
+  const dividerLabel = resolveSystemDividerLabel(turn);
+  if (dividerLabel !== null) {
+    return (
+      <div
+        role="separator"
+        aria-label={dividerLabel}
+        className="flex items-center gap-3 w-full py-2 my-0.5 select-none"
+      >
+        <div className="h-px flex-1 bg-white/[0.08]" />
+        <span className="text-[11px] font-medium tracking-wide text-dim shrink-0">
+          {dividerLabel}
+        </span>
+        <div className="h-px flex-1 bg-white/[0.08]" />
+      </div>
+    );
+  }
+
   const isUser = turn.role === "user";
 
   return (
@@ -775,6 +811,7 @@ function renderAssistantTurnEvents(
       pendingTools.push({
         id: ev.tool_id,
         name: ev.name,
+        inputDetail: ev.detail,
         detail: ev.detail,
         isEnd: false,
       });
@@ -830,6 +867,13 @@ function renderAssistantTurnEvents(
           groupId={ev.group_id}
           agents={ev.agents}
         />,
+      );
+      return;
+    }
+
+    if (ev.kind === "background-tasks") {
+      renderedElements.push(
+        <MobileNativeChatBackgroundTasksCard key={`bg-${idx}`} tasks={ev.tasks} />,
       );
       return;
     }

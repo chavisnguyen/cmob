@@ -6,7 +6,8 @@ use std::sync::{LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 
 use crate::protocol::event::{
-    AgentEvent, AgentRole, AgentTurn, AwaitingInput, SubagentEntry, SubagentState,
+    AgentEvent, AgentRole, AgentTurn, AwaitingInput, BackgroundTaskEntry, BackgroundTaskKind,
+    SubagentEntry, SubagentState,
 };
 
 /// Multi-Agent Transcript Reader
@@ -622,12 +623,15 @@ fn read_tail_window(
         }
 
         // When starting mid-file (`cursor > 0`), drop any leading partial assistant events that
-        // preceded the first complete `User` turn in our window so the boundary turn is whole.
+        // preceded the first complete `User` or `System` boundary turn in our window.
         if cursor > 0 {
-            if let Some(first_user_idx) = turns.iter().position(|t| t.role == AgentRole::User) {
-                if first_user_idx > 0 {
-                    turns.drain(0..first_user_idx);
-                    turn_offsets.drain(0..first_user_idx);
+            if let Some(first_boundary_idx) = turns
+                .iter()
+                .position(|t| matches!(t.role, AgentRole::User | AgentRole::System))
+            {
+                if first_boundary_idx > 0 {
+                    turns.drain(0..first_boundary_idx);
+                    turn_offsets.drain(0..first_boundary_idx);
                 }
             }
         }
@@ -1281,15 +1285,283 @@ impl TranscriptReader {
         None
     }
 
+    fn push_system_divider(
+        label: &str,
+        surface_id: &str,
+        current_turn: &mut Option<AgentTurn>,
+        turns: &mut Vec<AgentTurn>,
+    ) {
+        if let Some(t) = current_turn.take() {
+            turns.push(t);
+        }
+        let already_last = turns.last().is_some_and(|t| {
+            t.role == AgentRole::System
+                && matches!(t.events.first(), Some(AgentEvent::Status { text }) if text == label)
+        });
+        if already_last {
+            return;
+        }
+        let mut turn = AgentTurn::new(
+            format!("turn-{}", turns.len() + 1),
+            surface_id,
+            AgentRole::System,
+        );
+        turn.events.push(AgentEvent::Status {
+            text: label.to_string(),
+        });
+        turns.push(turn);
+    }
+
+    fn record_timestamp_ms(val: &serde_json::Value) -> Option<u64> {
+        for key in ["timestamp", "created_at"] {
+            let Some(v) = val.get(key) else { continue };
+            if let Some(s) = v.as_str() {
+                if let Some(secs) = crate::scanner::turn_marks::parse_rfc3339_secs(s) {
+                    return Some((secs * 1000.0) as u64);
+                }
+            } else if let Some(n) = v.as_u64() {
+                return Some(if n > 10_000_000_000 { n } else { n * 1000 });
+            } else if let Some(f) = v.as_f64()
+                && f.is_finite()
+                && f >= 0.0
+            {
+                return Some(if f > 10_000_000_000.0 {
+                    f as u64
+                } else {
+                    (f * 1000.0) as u64
+                });
+            }
+        }
+        None
+    }
+
+    fn push_subagent_to_turn(turn: &mut AgentTurn, group_id: &str, entry: SubagentEntry) {
+        for ev in turn.events.iter_mut() {
+            if let AgentEvent::Subagents {
+                group_id: gid,
+                agents,
+            } = ev
+                && gid == group_id
+            {
+                if let Some(existing) = agents.iter_mut().find(|a| a.id == entry.id) {
+                    if !entry.label.is_empty() && entry.label != "Subagent" {
+                        existing.label = entry.label;
+                    }
+                    existing.state = entry.state;
+                    existing.tokens = entry.tokens.or(existing.tokens);
+                    existing.started_at = existing.started_at.or(entry.started_at);
+                    existing.settled_at = entry.settled_at.or(existing.settled_at);
+                } else {
+                    agents.push(entry);
+                }
+                return;
+            }
+        }
+        turn.events.push(AgentEvent::Subagents {
+            group_id: group_id.to_string(),
+            agents: vec![entry],
+        });
+    }
+
+    fn mutate_subagent_by_ids(
+        turns: &mut [AgentTurn],
+        current_turn: &mut Option<AgentTurn>,
+        ids: &[&str],
+        mut f: impl FnMut(&mut SubagentEntry),
+    ) -> bool {
+        let matches_id = |candidate: &str| ids.iter().any(|k| !k.is_empty() && *k == candidate);
+        if let Some(t) = current_turn.as_mut() {
+            for ev in t.events.iter_mut().rev() {
+                if let AgentEvent::Subagents { agents, .. } = ev {
+                    for a in agents.iter_mut() {
+                        if matches_id(&a.id) {
+                            f(a);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        for t in turns.iter_mut().rev() {
+            for ev in t.events.iter_mut().rev() {
+                if let AgentEvent::Subagents { agents, .. } = ev {
+                    for a in agents.iter_mut() {
+                        if matches_id(&a.id) {
+                            f(a);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    fn push_bg_task_to_turn(turn: &mut AgentTurn, entry: BackgroundTaskEntry) {
+        for ev in turn.events.iter_mut() {
+            if let AgentEvent::BackgroundTasks { tasks } = ev {
+                if let Some(existing) = tasks.iter_mut().find(|t| t.id == entry.id) {
+                    if !entry.label.is_empty() {
+                        existing.label = entry.label;
+                    }
+                    existing.state = entry.state;
+                    existing.summary = entry.summary.or_else(|| existing.summary.take());
+                    existing.tokens = entry.tokens.or(existing.tokens);
+                    existing.started_at = existing.started_at.or(entry.started_at);
+                    existing.settled_at = entry.settled_at.or(existing.settled_at);
+                } else {
+                    tasks.push(entry);
+                }
+                return;
+            }
+        }
+        turn.events.push(AgentEvent::BackgroundTasks { tasks: vec![entry] });
+    }
+
+    fn mutate_bg_task_by_ids(
+        turns: &mut [AgentTurn],
+        current_turn: &mut Option<AgentTurn>,
+        ids: &[&str],
+        mut f: impl FnMut(&mut BackgroundTaskEntry),
+    ) -> bool {
+        let matches_id = |candidate: &str| {
+            ids.iter().any(|k| {
+                !k.is_empty()
+                    && (*k == candidate
+                        || k.ends_with(&format!("/{candidate}"))
+                        || candidate.ends_with(&format!("/{k}")))
+            })
+        };
+        if let Some(t) = current_turn.as_mut() {
+            for ev in t.events.iter_mut().rev() {
+                if let AgentEvent::BackgroundTasks { tasks } = ev {
+                    for item in tasks.iter_mut() {
+                        if matches_id(&item.id) {
+                            f(item);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        for t in turns.iter_mut().rev() {
+            for ev in t.events.iter_mut().rev() {
+                if let AgentEvent::BackgroundTasks { tasks } = ev {
+                    for item in tasks.iter_mut() {
+                        if matches_id(&item.id) {
+                            f(item);
+                            return true;
+                        }
+                    }
+                }
+            }
+        }
+        false
+    }
+
+    /// Classify Claude's `task_type` / `subagent_type` matching Orca
+    /// (`ref/orca/src/shared/claude-background-task-kind.ts` & `claude-subagent-task-frames.ts`).
+    fn classify_claude_task_kind(val: &serde_json::Value) -> BackgroundTaskKind {
+        match val.get("task_type").and_then(|t| t.as_str()) {
+            Some("local_agent" | "local_subagent" | "subagent" | "teammate") => {
+                BackgroundTaskKind::Agent
+            }
+            Some("local_bash" | "shell" | "background_shell") => BackgroundTaskKind::Command,
+            Some("local_workflow") => BackgroundTaskKind::Workflow,
+            Some("monitor") => BackgroundTaskKind::Monitor,
+            Some(_) => BackgroundTaskKind::Unknown,
+            None if val
+                .get("subagent_type")
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| !s.trim().is_empty()) =>
+            {
+                BackgroundTaskKind::Agent
+            }
+            None => BackgroundTaskKind::Unknown,
+        }
+    }
+
+    fn claude_status_to_state(status: Option<&str>) -> Option<SubagentState> {
+        match status {
+            Some("completed") => Some(SubagentState::Completed),
+            Some("failed" | "error") => Some(SubagentState::Failed),
+            Some("killed" | "stopped") => Some(SubagentState::Stopped),
+            Some("pending" | "running" | "paused") => Some(SubagentState::Working),
+            _ => None,
+        }
+    }
+
+    /// Parse `<task-notification>` XML user rows emitted by Claude Code when background tasks finish
+    /// (`ref/orca/src/shared/claude-task-notification-text.ts:7-20`).
+    fn parse_claude_task_notification_xml(text: &str) -> Option<(String, Option<String>, Option<String>)> {
+        let trimmed = text.trim_start();
+        if !trimmed.starts_with("<task-notification>") {
+            return None;
+        }
+        fn xml_tag<'a>(src: &'a str, tag: &str) -> Option<&'a str> {
+            let open = format!("<{tag}>");
+            let close = format!("</{tag}>");
+            let start = src.find(&open)? + open.len();
+            let end = src[start..].find(&close)?;
+            let val = src[start..start + end].trim();
+            (!val.is_empty()).then_some(val)
+        }
+        let task_id = xml_tag(trimmed, "task-id")?.to_string();
+        let summary_at = trimmed.find("<summary>");
+        let header_slice = summary_at.map_or(trimmed, |idx| &trimmed[..idx]);
+        let status = xml_tag(header_slice, "status").map(str::to_string);
+        let summary = xml_tag(trimmed, "summary").map(str::to_string);
+        Some((task_id, status, summary))
+    }
+
     fn parse_claude_line(
         val: serde_json::Value,
         surface_id: &str,
         current_turn: &mut Option<AgentTurn>,
         turns: &mut Vec<AgentTurn>,
     ) {
+        // Skip sidechain child frames (`isSidechain: true` or non-empty `parent_tool_use_id`),
+        // which belong to a subagent's internal execution rather than the parent conversation.
+        if val.get("isSidechain").and_then(|b| b.as_bool()) == Some(true)
+            || val
+                .get("parent_tool_use_id")
+                .or_else(|| val.get("parentToolUseID"))
+                .and_then(|s| s.as_str())
+                .is_some_and(|s| !s.trim().is_empty())
+        {
+            return;
+        }
+
+        let ts_ms = Self::record_timestamp_ms(&val);
         let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
         match msg_type {
             "user" => {
+                // Structured metadata attached by Claude on tool_result rows (`toolUseResult` / `tool_use_result`).
+                let tool_meta = val.get("toolUseResult").or_else(|| val.get("tool_use_result"));
+                let meta_agent_id = tool_meta
+                    .and_then(|m| m.get("agentId"))
+                    .and_then(|s| s.as_str());
+                let meta_bg_id = tool_meta
+                    .and_then(|m| m.get("backgroundTaskId"))
+                    .and_then(|s| s.as_str());
+                let meta_status = tool_meta
+                    .and_then(|m| m.get("status"))
+                    .and_then(|s| s.as_str());
+                let meta_is_async = tool_meta
+                    .and_then(|m| m.get("isAsync"))
+                    .and_then(|b| b.as_bool())
+                    == Some(true)
+                    || meta_status == Some("async_launched");
+                let meta_tokens = tool_meta
+                    .and_then(|m| {
+                        m.get("totalTokens")
+                            .or_else(|| m.pointer("/usage/total_tokens"))
+                    })
+                    .and_then(|v| v.as_u64());
+                let meta_duration_ms = tool_meta
+                    .and_then(|m| m.get("totalDurationMs"))
+                    .and_then(|v| v.as_u64());
+
                 // Claude records tool results as `user` lines whose content blocks are
                 // `{"type":"tool_result","tool_use_id":..,"content":<string|[{type:text,text}]>,"is_error":bool}`
                 // (tests/fixtures/claude_transcript.jsonl). They belong to the assistant turn that issued the
@@ -1323,6 +1595,57 @@ impl TranscriptReader {
                             }
                             .map(cap_detail);
                             let ok = !block.get("is_error").and_then(|e| e.as_bool()).unwrap_or(false);
+
+                            // Rebind background Bash `tool_use_id` -> `backgroundTaskId` when launched asynchronously.
+                            if let Some(bg_id) = meta_bg_id {
+                                Self::mutate_bg_task_by_ids(
+                                    turns,
+                                    current_turn,
+                                    &[tool_id.as_str(), bg_id],
+                                    |item| {
+                                        item.id = bg_id.to_string();
+                                    },
+                                );
+                            }
+
+                            // Update Claude `Agent` / `Task` subagent entry if this result answers one.
+                            let lookup_ids: Vec<&str> = match meta_agent_id {
+                                Some(aid) => vec![tool_id.as_str(), aid],
+                                None => vec![tool_id.as_str()],
+                            };
+                            let matched_subagent = Self::mutate_subagent_by_ids(
+                                turns,
+                                current_turn,
+                                &lookup_ids,
+                                |agent| {
+                                    if let Some(aid) = meta_agent_id {
+                                        agent.id = aid.to_string();
+                                    }
+                                    if meta_tokens.is_some() {
+                                        agent.tokens = meta_tokens;
+                                    }
+                                    if !meta_is_async {
+                                        agent.state = if !ok {
+                                            SubagentState::Failed
+                                        } else {
+                                            Self::claude_status_to_state(meta_status)
+                                                .unwrap_or(SubagentState::Completed)
+                                        };
+                                        if agent.settled_at.is_none() {
+                                            agent.settled_at = ts_ms.or_else(|| {
+                                                agent
+                                                    .started_at
+                                                    .zip(meta_duration_ms)
+                                                    .map(|(s, d)| s + d)
+                                            });
+                                        }
+                                    }
+                                },
+                            );
+                            if matched_subagent {
+                                continue;
+                            }
+
                             // Normally the result belongs to the open assistant turn. If a user text line
                             // already closed that turn, find the finished turn that issued the call.
                             let issued_here = |t: &AgentTurn| {
@@ -1346,10 +1669,6 @@ impl TranscriptReader {
                     return;
                 }
 
-                if let Some(t) = current_turn.take() {
-                    turns.push(t);
-                }
-
                 let mut text = String::new();
                 if let Some(msg) = val.get("message") {
                     if let Some(c) = msg.get("content").and_then(|c| c.as_str()) {
@@ -1366,14 +1685,218 @@ impl TranscriptReader {
                     }
                 }
 
+                // Settle background subagents/commands from `<task-notification>` XML user turns.
+                if let Some((task_id, status, summary)) = Self::parse_claude_task_notification_xml(&text) {
+                    let next_state = Self::claude_status_to_state(status.as_deref())
+                        .unwrap_or(SubagentState::Completed);
+                    if !Self::mutate_subagent_by_ids(turns, current_turn, &[task_id.as_str()], |a| {
+                        a.state = next_state;
+                        a.settled_at = ts_ms.or(a.settled_at);
+                    }) {
+                        Self::mutate_bg_task_by_ids(turns, current_turn, &[task_id.as_str()], |t| {
+                            t.state = next_state;
+                            if summary.is_some() {
+                                t.summary = summary.clone();
+                            }
+                            t.settled_at = ts_ms.or(t.settled_at);
+                        });
+                    }
+                    return;
+                }
+
+                let is_compact_summary = val
+                    .get("isCompactSummary")
+                    .and_then(|b| b.as_bool())
+                    == Some(true)
+                    || text
+                        .trim_start()
+                        .starts_with("This session is being continued from a previous conversation");
+                if is_compact_summary {
+                    Self::push_system_divider("Context compacted", surface_id, current_turn, turns);
+                    return;
+                }
+
+                // Skip Claude harness-injected meta/synthetic rows (Orca `isClaudeInjectedUserMessage`).
+                let is_injected_meta = val.get("isMeta").and_then(|b| b.as_bool()) == Some(true)
+                    || val.get("isSynthetic").and_then(|b| b.as_bool()) == Some(true)
+                    || val.pointer("/origin/kind").and_then(|k| k.as_str()) == Some("task-notification");
+                if is_injected_meta {
+                    return;
+                }
+
+                if let Some(t) = current_turn.take() {
+                    turns.push(t);
+                }
+
                 if !text.is_empty() {
                     let mut turn = AgentTurn::new(
                         format!("turn-{}", turns.len() + 1),
                         surface_id,
                         AgentRole::User,
                     );
+                    turn.timestamp = ts_ms;
                     turn.events.push(AgentEvent::User { text });
                     turns.push(turn);
+                }
+            }
+            "system" => {
+                let subtype = val.get("subtype").and_then(|s| s.as_str()).unwrap_or("");
+                if subtype == "compact_boundary" {
+                    Self::push_system_divider("Context compacted", surface_id, current_turn, turns);
+                    return;
+                }
+                if matches!(
+                    subtype,
+                    "task_started" | "task_progress" | "task_updated" | "task_notification"
+                ) {
+                    if val.get("ambient").and_then(|b| b.as_bool()) == Some(true)
+                        || val.get("skip_transcript").and_then(|b| b.as_bool()) == Some(true)
+                        || val.get("owned_by_subagent").and_then(|b| b.as_bool()) == Some(true)
+                    {
+                        return;
+                    }
+                    let Some(task_id) = val.get("task_id").and_then(|s| s.as_str()) else {
+                        return;
+                    };
+                    let tool_use_id = val
+                        .get("tool_use_id")
+                        .or_else(|| val.pointer("/patch/tool_use_id"))
+                        .and_then(|s| s.as_str());
+                    let lookup_ids: Vec<&str> = match tool_use_id {
+                        Some(tu) => vec![task_id, tu],
+                        None => vec![task_id],
+                    };
+                    let kind = Self::classify_claude_task_kind(&val);
+                    let tokens = val.pointer("/usage/total_tokens").and_then(|v| v.as_u64());
+                    let duration_ms = val.pointer("/usage/duration_ms").and_then(|v| v.as_u64());
+                    let end_time = val
+                        .pointer("/patch/end_time")
+                        .and_then(|v| v.as_u64())
+                        .or(ts_ms);
+                    let status_str = val
+                        .pointer("/patch/status")
+                        .or_else(|| val.get("status"))
+                        .and_then(|s| s.as_str());
+                    let next_state = if subtype == "task_notification" {
+                        Some(
+                            Self::claude_status_to_state(status_str)
+                                .unwrap_or(SubagentState::Completed),
+                        )
+                    } else {
+                        Self::claude_status_to_state(status_str)
+                    };
+                    let label = val
+                        .pointer("/patch/description")
+                        .or_else(|| val.get("description"))
+                        .or_else(|| val.get("name"))
+                        .or_else(|| val.get("subagent_type"))
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+                    let summary = val
+                        .get("summary")
+                        .or_else(|| val.get("error"))
+                        .or_else(|| val.pointer("/patch/error"))
+                        .and_then(|s| s.as_str())
+                        .map(|s| s.trim().to_string())
+                        .filter(|s| !s.is_empty());
+
+                    let is_terminal = matches!(
+                        next_state,
+                        Some(
+                            SubagentState::Completed
+                                | SubagentState::Failed
+                                | SubagentState::Stopped
+                        )
+                    );
+
+                    // Revise existing subagent or background task in place first.
+                    if Self::mutate_subagent_by_ids(turns, current_turn, &lookup_ids, |a| {
+                        a.id = task_id.to_string();
+                        if subtype != "task_progress"
+                            && let Some(ref l) = label
+                        {
+                            a.label = l.clone();
+                        }
+                        if let Some(st) = next_state {
+                            a.state = st;
+                        }
+                        if tokens.is_some() {
+                            a.tokens = tokens;
+                        }
+                        a.started_at = a.started_at.or(ts_ms);
+                        if is_terminal {
+                            a.settled_at = end_time
+                                .or_else(|| a.started_at.zip(duration_ms).map(|(s, d)| s + d))
+                                .or(a.settled_at);
+                        }
+                    }) {
+                        return;
+                    }
+
+                    if Self::mutate_bg_task_by_ids(turns, current_turn, &lookup_ids, |t| {
+                        t.id = task_id.to_string();
+                        if subtype != "task_progress"
+                            && let Some(ref l) = label
+                        {
+                            t.label = l.clone();
+                        }
+                        if kind != BackgroundTaskKind::Unknown {
+                            t.kind = kind;
+                        }
+                        if let Some(st) = next_state {
+                            t.state = st;
+                        }
+                        if summary.is_some() {
+                            t.summary = summary.clone();
+                        }
+                        if tokens.is_some() {
+                            t.tokens = tokens;
+                        }
+                        t.started_at = t.started_at.or(ts_ms);
+                        if is_terminal {
+                            t.settled_at = end_time
+                                .or_else(|| t.started_at.zip(duration_ms).map(|(s, d)| s + d))
+                                .or(t.settled_at);
+                        }
+                    }) {
+                        return;
+                    }
+
+                    // Otherwise open a new entry when `task_started` announces an agent or background job.
+                    if subtype == "task_started" {
+                        let turn = assistant_turn(surface_id, current_turn, turns);
+                        if kind == BackgroundTaskKind::Agent {
+                            Self::push_subagent_to_turn(
+                                turn,
+                                "claude-subagents",
+                                SubagentEntry {
+                                    id: task_id.to_string(),
+                                    label: label.unwrap_or_else(|| "Subagent".to_string()),
+                                    state: next_state.unwrap_or(SubagentState::Working),
+                                    tokens,
+                                    started_at: ts_ms,
+                                    settled_at: None,
+                                },
+                            );
+                        } else if val.get("is_backgrounded").and_then(|b| b.as_bool()) == Some(true)
+                            || matches!(kind, BackgroundTaskKind::Monitor | BackgroundTaskKind::Workflow)
+                        {
+                            Self::push_bg_task_to_turn(
+                                turn,
+                                BackgroundTaskEntry {
+                                    id: task_id.to_string(),
+                                    kind,
+                                    label: label.unwrap_or_else(|| "Background task".to_string()),
+                                    state: next_state.unwrap_or(SubagentState::Working),
+                                    summary,
+                                    tokens,
+                                    started_at: ts_ms,
+                                    settled_at: None,
+                                },
+                            );
+                        }
+                    }
                 }
             }
             "assistant" => {
@@ -1384,6 +1907,9 @@ impl TranscriptReader {
                         AgentRole::Assistant,
                     )
                 });
+                if turn.timestamp.is_none() {
+                    turn.timestamp = ts_ms;
+                }
 
                 if let Some(msg) = val.get("message") {
                     if let Some(content) = msg.get("content").and_then(|c| c.as_array()) {
@@ -1407,11 +1933,80 @@ impl TranscriptReader {
                                 "tool_use" => {
                                     let tool_id = block.get("id").and_then(|i| i.as_str()).unwrap_or("tool").to_string();
                                     let name = block.get("name").and_then(|n| n.as_str()).unwrap_or("tool").to_string();
-                                    let detail = block.get("input").map(|inp| cap_detail(inp.to_string()));
-                                    
-                                    if let Some(ask_ev) = Self::parse_ask_event(&name, block.get("input")) {
+                                    let inp = block.get("input");
+                                    let detail = inp.map(|i| cap_detail(i.to_string()));
+
+                                    if let Some(ask_ev) = Self::parse_ask_event(&name, inp) {
                                         turn.events.push(ask_ev);
+                                    } else if matches!(name.as_str(), "Agent" | "Task") {
+                                        let desc = inp
+                                            .and_then(|i| i.get("description"))
+                                            .and_then(|s| s.as_str())
+                                            .map(str::trim)
+                                            .filter(|s| !s.is_empty());
+                                        let sub_type = inp
+                                            .and_then(|i| {
+                                                i.get("subagent_type").or_else(|| i.get("agent_type"))
+                                            })
+                                            .and_then(|s| s.as_str())
+                                            .map(str::trim)
+                                            .filter(|s| !s.is_empty());
+                                        let label = match (desc, sub_type) {
+                                            (Some(d), Some(st)) if st != "general-purpose" => {
+                                                format!("{d} ({st})")
+                                            }
+                                            (Some(d), _) => d.to_string(),
+                                            (None, Some(st)) => st.to_string(),
+                                            _ => "Subagent".to_string(),
+                                        };
+                                        Self::push_subagent_to_turn(
+                                            &mut turn,
+                                            "claude-subagents",
+                                            SubagentEntry {
+                                                id: tool_id,
+                                                label,
+                                                state: SubagentState::Working,
+                                                tokens: None,
+                                                started_at: ts_ms,
+                                                settled_at: None,
+                                            },
+                                        );
                                     } else {
+                                        if name == "Bash"
+                                            && inp
+                                                .and_then(|i| i.get("run_in_background"))
+                                                .and_then(|b| b.as_bool())
+                                                == Some(true)
+                                        {
+                                            let bg_label = inp
+                                                .and_then(|i| i.get("description"))
+                                                .and_then(|s| s.as_str())
+                                                .map(str::trim)
+                                                .filter(|s| !s.is_empty())
+                                                .or_else(|| {
+                                                    inp.and_then(|i| i.get("command"))
+                                                        .and_then(|s| s.as_str())
+                                                        .map(str::trim)
+                                                        .filter(|s| !s.is_empty())
+                                                })
+                                                .unwrap_or("Background shell")
+                                                .chars()
+                                                .take(120)
+                                                .collect::<String>();
+                                            Self::push_bg_task_to_turn(
+                                                &mut turn,
+                                                BackgroundTaskEntry {
+                                                    id: tool_id.clone(),
+                                                    kind: BackgroundTaskKind::Command,
+                                                    label: bg_label,
+                                                    state: SubagentState::Working,
+                                                    summary: None,
+                                                    tokens: None,
+                                                    started_at: ts_ms,
+                                                    settled_at: None,
+                                                },
+                                            );
+                                        }
                                         turn.events.push(AgentEvent::ToolStart {
                                             tool_id,
                                             name,
@@ -1492,12 +2087,26 @@ impl TranscriptReader {
         (id.len() == 36).then(|| id.to_string())
     }
 
+    /// Unquote JSON-stringified argument strings that Antigravity writes in `tool_calls[].args`
+    /// (e.g. `"\"Client lint, test, and build\""` -> `"Client lint, test, and build"`).
+    fn clean_agy_arg_str(raw: &str) -> String {
+        let trimmed = raw.trim();
+        if trimmed.starts_with('"')
+            && trimmed.ends_with('"')
+            && let Ok(unquoted) = serde_json::from_str::<String>(trimmed)
+        {
+            return unquoted;
+        }
+        trimmed.to_string()
+    }
+
     fn parse_antigravity_line(
         val: serde_json::Value,
         surface_id: &str,
         current_turn: &mut Option<AgentTurn>,
         turns: &mut Vec<AgentTurn>,
     ) {
+        let ts_ms = Self::record_timestamp_ms(&val);
         let msg_type = val.get("type").and_then(|t| t.as_str()).unwrap_or("");
         match msg_type {
             "USER_INPUT" => {
@@ -1522,6 +2131,7 @@ impl TranscriptReader {
                         surface_id,
                         AgentRole::User,
                     );
+                    turn.timestamp = ts_ms;
                     turn.events.push(AgentEvent::User {
                         text: cleaned,
                     });
@@ -1536,6 +2146,9 @@ impl TranscriptReader {
                         AgentRole::Assistant,
                     )
                 });
+                if turn.timestamp.is_none() {
+                    turn.timestamp = ts_ms;
+                }
 
                 if let Some(thinking) = val.get("thinking").and_then(|t| t.as_str()) {
                     if !thinking.trim().is_empty() {
@@ -1566,21 +2179,102 @@ impl TranscriptReader {
                             let role = args
                                 .and_then(|a| a.get("Role"))
                                 .and_then(|r| r.as_str())
-                                .unwrap_or("Subagent");
+                                .map(Self::clean_agy_arg_str)
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| "Subagent".to_string());
                             let type_name = args
                                 .and_then(|a| a.get("TypeName"))
                                 .and_then(|t| t.as_str())
-                                .unwrap_or("subagent");
-                            turn.events.push(AgentEvent::Subagents {
-                                group_id: format!("{}-group", type_name),
-                                agents: vec![SubagentEntry {
-                                    id: format!("{}-{}", type_name, turn.events.len()),
-                                    label: role.to_string(),
+                                .map(Self::clean_agy_arg_str)
+                                .filter(|s| !s.is_empty())
+                                .unwrap_or_else(|| "subagent".to_string());
+                            let group_id = format!("agy-subagents-{}", turn.id);
+                            let entry_id = format!("{}-{}", type_name, turn.events.len());
+                            Self::push_subagent_to_turn(
+                                &mut turn,
+                                &group_id,
+                                SubagentEntry {
+                                    id: entry_id,
+                                    label: role,
                                     state: SubagentState::Working,
                                     tokens: None,
-                                    started_at: None,
+                                    started_at: ts_ms,
                                     settled_at: None,
-                                }],
+                                },
+                            );
+                        } else if name == "manage_subagents" {
+                            let action = args
+                                .and_then(|a| a.get("Action"))
+                                .and_then(|s| s.as_str())
+                                .map(Self::clean_agy_arg_str)
+                                .unwrap_or_default();
+                            if action == "kill_all" {
+                                for t in turns.iter_mut().chain(std::iter::once(&mut turn)) {
+                                    for ev in t.events.iter_mut() {
+                                        if let AgentEvent::Subagents { agents, .. } = ev {
+                                            for a in agents.iter_mut() {
+                                                if a.state == SubagentState::Working {
+                                                    a.state = SubagentState::Stopped;
+                                                    a.settled_at = ts_ms.or(a.settled_at);
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            } else if action == "kill"
+                                && let Some(raw_ids) = args.and_then(|a| a.get("ConversationIds"))
+                            {
+                                let parsed_ids: Vec<String> = if let Some(arr) = raw_ids.as_array() {
+                                    arr.iter()
+                                        .filter_map(|v| v.as_str().map(Self::clean_agy_arg_str))
+                                        .collect()
+                                } else if let Some(s) = raw_ids.as_str() {
+                                    serde_json::from_str::<Vec<String>>(s).unwrap_or_default()
+                                } else {
+                                    Vec::new()
+                                };
+                                for cid in &parsed_ids {
+                                    let mut cur = Some(turn);
+                                    Self::mutate_subagent_by_ids(
+                                        turns,
+                                        &mut cur,
+                                        &[cid.as_str()],
+                                        |a| {
+                                            a.state = SubagentState::Stopped;
+                                            a.settled_at = ts_ms.or(a.settled_at);
+                                        },
+                                    );
+                                    turn = cur.unwrap();
+                                }
+                            }
+                            turn.events.push(AgentEvent::ToolStart {
+                                tool_id: format!("{}-call-{}", name, turn.events.len()),
+                                name,
+                                detail,
+                            });
+                        } else if name == "manage_task" {
+                            let action = args
+                                .and_then(|a| a.get("Action"))
+                                .and_then(|s| s.as_str())
+                                .map(Self::clean_agy_arg_str)
+                                .unwrap_or_default();
+                            if action == "kill"
+                                && let Some(tid) = args
+                                    .and_then(|a| a.get("TaskId"))
+                                    .and_then(|s| s.as_str())
+                                    .map(Self::clean_agy_arg_str)
+                            {
+                                let mut cur = Some(turn);
+                                Self::mutate_bg_task_by_ids(turns, &mut cur, &[tid.as_str()], |t| {
+                                    t.state = SubagentState::Stopped;
+                                    t.settled_at = ts_ms.or(t.settled_at);
+                                });
+                                turn = cur.unwrap();
+                            }
+                            turn.events.push(AgentEvent::ToolStart {
+                                tool_id: format!("{}-call-{}", name, turn.events.len()),
+                                name,
+                                detail,
                             });
                         } else {
                             turn.events.push(AgentEvent::ToolStart {
@@ -1595,24 +2289,37 @@ impl TranscriptReader {
                 *current_turn = Some(turn);
             }
             "SYSTEM_MESSAGE" => {
-                // A subagent reports back as `... sender=<child conversation id> ...`: it is done.
-                if let Some(sender) = val
-                    .get("content")
-                    .and_then(|c| c.as_str())
-                    .and_then(crate::scanner::hook_store::parse_system_message_sender)
-                {
-                    let mut mark = |ev: &mut AgentEvent| {
-                        if let AgentEvent::Subagents { agents, .. } = ev {
-                            for a in agents.iter_mut().filter(|a| a.id == sender) {
-                                a.state = SubagentState::Completed;
-                            }
-                        }
-                    };
-                    for ev in turns.iter_mut().flat_map(|t| t.events.iter_mut()) {
-                        mark(ev);
-                    }
-                    if let Some(t) = current_turn.as_mut() {
-                        t.events.iter_mut().for_each(&mut mark);
+                let content = val.get("content").and_then(|c| c.as_str()).unwrap_or("");
+                // A subagent (`sender=<uuid>`) or background task (`sender=<conv>/task-XXXX`) reports back.
+                let sender = content.find("sender=").and_then(|idx| {
+                    let raw: String = content[idx + "sender=".len()..]
+                        .chars()
+                        .take_while(|c| !c.is_whitespace())
+                        .collect();
+                    (!raw.is_empty()).then_some(raw)
+                });
+                if let Some(sender) = sender {
+                    let failed = content
+                        .find("Command exited with code ")
+                        .map(|idx| {
+                            let after = &content[idx + "Command exited with code ".len()..];
+                            let code: String =
+                                after.chars().take_while(|c| c.is_ascii_digit()).collect();
+                            !code.is_empty() && code != "0"
+                        })
+                        .unwrap_or(false);
+                    if !Self::mutate_subagent_by_ids(turns, current_turn, &[sender.as_str()], |a| {
+                        a.state = SubagentState::Completed;
+                        a.settled_at = ts_ms.or(a.settled_at);
+                    }) {
+                        Self::mutate_bg_task_by_ids(turns, current_turn, &[sender.as_str()], |t| {
+                            t.state = if failed {
+                                SubagentState::Failed
+                            } else {
+                                SubagentState::Completed
+                            };
+                            t.settled_at = ts_ms.or(t.settled_at);
+                        });
                     }
                 }
             }
@@ -1625,7 +2332,10 @@ impl TranscriptReader {
                             if let Some(t) = current_turn.as_mut() {
                                 for ev in t.events.iter_mut().rev() {
                                     if let AgentEvent::Subagents { agents, .. } = ev {
-                                        if let Some(a) = agents.iter_mut().find(|a| !a.id.contains('-') || a.id.len() != 36) {
+                                        if let Some(a) = agents
+                                            .iter_mut()
+                                            .find(|a| !a.id.contains('-') || a.id.len() != 36)
+                                        {
                                             a.id = child_id.clone();
                                             break;
                                         }
@@ -1635,6 +2345,7 @@ impl TranscriptReader {
                         }
                         return;
                     }
+
                     let mut turn = current_turn.take().unwrap_or_else(|| {
                         AgentTurn::new(
                             format!("turn-{}", turns.len() + 1),
@@ -1645,8 +2356,7 @@ impl TranscriptReader {
 
                     // Check if there is an unclosed ToolStart in this turn
                     let open_tool = turn.events.iter().rev().find_map(|ev| {
-                        if let AgentEvent::ToolStart { tool_id, name, .. } = ev {
-                            // Check if a matching ToolEnd already exists
+                        if let AgentEvent::ToolStart { tool_id, name, detail } = ev {
                             let is_closed = turn.events.iter().any(|other| {
                                 if let AgentEvent::ToolEnd { tool_id: end_id, .. } = other {
                                     end_id == tool_id
@@ -1655,13 +2365,64 @@ impl TranscriptReader {
                                 }
                             });
                             if !is_closed {
-                                return Some((tool_id.clone(), name.clone()));
+                                return Some((tool_id.clone(), name.clone(), detail.clone()));
                             }
                         }
                         None
                     });
 
-                    if let Some((tool_id, name)) = open_tool {
+                    // Antigravity background command launch:
+                    // `"Tool is running as a background task with task id: <conv>/task-XXXX"`
+                    if let Some(marker_idx) =
+                        content.find("Tool is running as a background task with task id:")
+                    {
+                        let after =
+                            &content[marker_idx + "Tool is running as a background task with task id:".len()..];
+                        let task_id = after
+                            .lines()
+                            .next()
+                            .map(str::trim)
+                            .unwrap_or("")
+                            .to_string();
+                        if !task_id.is_empty() {
+                            let desc_from_output = content
+                                .lines()
+                                .find_map(|l| l.strip_prefix("Task Description:").map(str::trim))
+                                .filter(|s| !s.is_empty())
+                                .map(str::to_string);
+                            let desc_from_tool = open_tool
+                                .as_ref()
+                                .and_then(|(_, _, d)| d.as_deref())
+                                .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
+                                .and_then(|v| {
+                                    v.get("toolSummary")
+                                        .or_else(|| v.get("CommandLine"))
+                                        .and_then(|s| s.as_str())
+                                        .map(Self::clean_agy_arg_str)
+                                });
+                            let bg_label = desc_from_tool
+                                .or(desc_from_output)
+                                .unwrap_or_else(|| "Background command".to_string())
+                                .chars()
+                                .take(120)
+                                .collect::<String>();
+                            Self::push_bg_task_to_turn(
+                                &mut turn,
+                                BackgroundTaskEntry {
+                                    id: task_id,
+                                    kind: BackgroundTaskKind::Command,
+                                    label: bg_label,
+                                    state: SubagentState::Working,
+                                    summary: None,
+                                    tokens: None,
+                                    started_at: ts_ms,
+                                    settled_at: None,
+                                },
+                            );
+                        }
+                    }
+
+                    if let Some((tool_id, name, _)) = open_tool {
                         let is_err = val.get("status").and_then(|s| s.as_str()).is_some_and(|s| s == "ERROR");
                         turn.events.push(AgentEvent::ToolEnd {
                             tool_id,
@@ -2091,5 +2852,160 @@ mod tests {
         ));
 
         let _ = std::fs::remove_file(&path);
+    }
+
+    #[test]
+    fn claude_compact_summary_and_meta_lines_become_system_divider() {
+        let lines = [
+            r#"{"type":"user","message":{"role":"user","content":"hello"}}"#,
+            r#"{"type":"assistant","message":{"content":[{"type":"text","text":"world"}]}}"#,
+            r#"{"type":"system","subtype":"compact_boundary"}"#,
+            r#"{"type":"user","isCompactSummary":true,"message":{"role":"user","content":"This session is being continued from a previous conversation that ran out of context. Summary..."}}"#,
+            r#"{"type":"user","isMeta":true,"message":{"role":"user","content":"<local-command-caveat>ignore</local-command-caveat>"}}"#,
+            r#"{"type":"user","message":{"role":"user","content":"after compact"}}"#,
+        ];
+        let mut cur = None;
+        let mut turns = Vec::new();
+        for l in lines {
+            Self_parse(serde_json::from_str(l).unwrap(), &mut cur, &mut turns);
+        }
+        if let Some(t) = cur.take() {
+            turns.push(t);
+        }
+        // user("hello"), assistant("world"), ONE deduplicated System("Context compacted"), user("after compact")
+        assert_eq!(turns.len(), 4);
+        assert_eq!(turns[2].role, AgentRole::System);
+        assert_eq!(
+            turns[2].events,
+            vec![AgentEvent::Status {
+                text: "Context compacted".to_string()
+            }]
+        );
+        assert_eq!(turns[3].role, AgentRole::User);
+    }
+
+    #[test]
+    fn claude_subagents_and_background_tasks_lifecycle() {
+        let lines = [
+            r#"{"type":"user","timestamp":"2026-11-25T10:00:00.000Z","message":{"role":"user","content":"audit and start dev server"}}"#,
+            r#"{"type":"assistant","timestamp":"2026-11-25T10:00:02.000Z","message":{"content":[{"type":"tool_use","id":"toolu_agent_1","name":"Agent","input":{"description":"Audit auth module","subagent_type":"Explore","run_in_background":true}},{"type":"tool_use","id":"toolu_bash_1","name":"Bash","input":{"command":"pnpm dev","description":"Start dev server","run_in_background":true}}]}}"#,
+            r#"{"type":"system","subtype":"task_started","timestamp":"2026-11-25T10:00:02.100Z","task_id":"agent_abc","tool_use_id":"toolu_agent_1","description":"Audit auth module","subagent_type":"Explore","task_type":"local_agent","is_backgrounded":true}"#,
+            r#"{"type":"user","parent_tool_use_id":"toolu_agent_1","message":{"role":"user","content":"internal child prompt should be skipped"}}"#,
+            r#"{"type":"system","subtype":"task_progress","timestamp":"2026-11-25T10:00:05.000Z","task_id":"agent_abc","tool_use_id":"toolu_agent_1","usage":{"total_tokens":14200,"duration_ms":3000}}"#,
+            r#"{"type":"user","timestamp":"2026-11-25T10:00:03.000Z","toolUseResult":{"backgroundTaskId":"bg_srv_1"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_bash_1","content":"Running in background"}]}}"#,
+            r#"{"type":"system","subtype":"task_notification","timestamp":"2026-11-25T10:00:09.000Z","task_id":"agent_abc","tool_use_id":"toolu_agent_1","status":"completed","usage":{"total_tokens":18500,"duration_ms":7000}}"#,
+        ];
+
+        let mut cur = None;
+        let mut turns = Vec::new();
+        for l in lines {
+            Self_parse(serde_json::from_str(l).unwrap(), &mut cur, &mut turns);
+        }
+
+        // Sidechain user row did NOT close the assistant turn or add a user bubble.
+        assert_eq!(turns.len(), 1);
+        let ast = cur.as_ref().expect("open assistant turn");
+
+        let subagents = ast
+            .events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::Subagents { agents, .. } => Some(agents),
+                _ => None,
+            })
+            .expect("claude subagent card");
+        assert_eq!(subagents.len(), 1);
+        assert_eq!(subagents[0].id, "agent_abc");
+        assert_eq!(subagents[0].state, SubagentState::Completed);
+        assert_eq!(subagents[0].tokens, Some(18500));
+        assert!(subagents[0].started_at.is_some());
+        assert!(subagents[0].settled_at.is_some());
+
+        let bg_tasks = ast
+            .events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::BackgroundTasks { tasks } => Some(tasks),
+                _ => None,
+            })
+            .expect("claude background task");
+        assert_eq!(bg_tasks.len(), 1);
+        assert_eq!(bg_tasks[0].id, "bg_srv_1");
+        assert_eq!(bg_tasks[0].state, SubagentState::Working);
+
+        // Settle background shell via `<task-notification>` XML user turn.
+        let xml_notif = r#"{"type":"user","timestamp":"2026-11-25T10:00:15.000Z","message":{"role":"user","content":"<task-notification>\n<task-id>bg_srv_1</task-id>\n<status>completed</status>\n<summary>Server exited cleanly</summary>\n</task-notification>"}}"#;
+        Self_parse(serde_json::from_str(xml_notif).unwrap(), &mut cur, &mut turns);
+
+        let ast = cur.as_ref().expect("assistant turn stays open");
+        let bg_tasks = ast
+            .events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::BackgroundTasks { tasks } => Some(tasks),
+                _ => None,
+            })
+            .unwrap();
+        assert_eq!(bg_tasks[0].state, SubagentState::Completed);
+        assert_eq!(bg_tasks[0].summary.as_deref(), Some("Server exited cleanly"));
+    }
+
+    #[test]
+    fn antigravity_background_command_and_parallel_subagents() {
+        let c1 = "11111111-2222-3333-4444-555555555555";
+        let c2 = "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee";
+        let p = write_jsonl(
+            "agy-bg-sub",
+            &[
+                r#"{"type":"USER_INPUT","created_at":"2026-11-25T10:00:00Z","content":"run checks and audit"}"#,
+                r#"{"type":"PLANNER_RESPONSE","created_at":"2026-11-25T10:00:01Z","tool_calls":[{"name":"invoke_subagent","args":{"Role":"\"Protocol Auditor\"","TypeName":"\"research\""}},{"name":"invoke_subagent","args":{"Role":"\"UI Verifier\"","TypeName":"\"research\""}},{"name":"run_command","args":{"CommandLine":"\"cargo test --all\"","toolSummary":"\"Gateway test suite\""}}]}"#,
+                &format!(
+                    r#"{{"type":"GENERIC","created_at":"2026-11-25T10:00:02Z","content":"Created the following subagent: {{\"conversationId\": \"{c1}\"}}"}}"#
+                ),
+                &format!(
+                    r#"{{"type":"GENERIC","created_at":"2026-11-25T10:00:02Z","content":"Created the following subagent: {{\"conversationId\": \"{c2}\"}}"}}"#
+                ),
+                r#"{"type":"GENERIC","status":"RUNNING","created_at":"2026-11-25T10:00:03Z","content":"Tool is running as a background task with task id: conv-9/task-1620\nTask Description: cargo test --all"}"#,
+                r#"{"type":"SYSTEM_MESSAGE","created_at":"2026-11-25T10:00:12Z","content":"[Message] timestamp=2026-11-25T10:00:12Z sender=conv-9/task-1620 priority=HIGH content=Task finished:\nCommand exited with code 0."}"#,
+                &format!(
+                    r#"{{"type":"SYSTEM_MESSAGE","created_at":"2026-11-25T10:00:14Z","content":"[Message] timestamp=2026-11-25T10:00:14Z sender={c1} priority=HIGH content=done"}}"#
+                ),
+            ],
+        );
+
+        let turns = TranscriptReader::read_recent_turns(&p, "surf-agy", 10).unwrap();
+        assert_eq!(turns.len(), 2);
+        let ast = &turns[1];
+
+        let subagents = ast
+            .events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::Subagents { agents, .. } => Some(agents),
+                _ => None,
+            })
+            .expect("coalesced agy subagents card");
+        assert_eq!(subagents.len(), 2);
+        assert_eq!(subagents[0].id, c1);
+        assert_eq!(subagents[0].label, "Protocol Auditor");
+        assert_eq!(subagents[0].state, SubagentState::Completed);
+        assert_eq!(subagents[1].id, c2);
+        assert_eq!(subagents[1].label, "UI Verifier");
+        assert_eq!(subagents[1].state, SubagentState::Working);
+
+        let bg = ast
+            .events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::BackgroundTasks { tasks } => Some(tasks),
+                _ => None,
+            })
+            .expect("agy background command");
+        assert_eq!(bg.len(), 1);
+        assert_eq!(bg[0].label, "Gateway test suite");
+        assert_eq!(bg[0].state, SubagentState::Completed);
+        assert!(bg[0].settled_at.unwrap() > bg[0].started_at.unwrap());
+
+        let _ = std::fs::remove_file(&p);
     }
 }

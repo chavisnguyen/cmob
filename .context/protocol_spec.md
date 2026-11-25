@@ -262,3 +262,9 @@ Client: composer is a `<textarea>` (Enter = newline, only the arrow sends); sent
 - `mobile.notification.dismiss` (`repos/cmux-gateway/src/server.rs:327-343,983`, `repos/cmux-client/src/protocol/rpc.ts`):
   - Server-push event payload: `{ surface_id, tags }`
   - Emitted when a surface returns to `Working` or `Idle`, or when a startup dialog clears; instructs the client and Service Worker (`cmux.notification.dismiss`) to close open notifications matching `tags`.
+
+## `AgentEvent::BackgroundTasks` & System Boundaries (2026-11-25)
+- `repos/cmux-gateway/src/protocol/event.rs` & `repos/cmux-client/src/protocol/event.ts`:
+  - Added additive `AgentEvent::BackgroundTasks { tasks: Vec<BackgroundTaskEntry> }` (`{ kind: "background-tasks", tasks }`) where each `BackgroundTaskEntry` carries `{ id, kind: "agent" | "command" | "workflow" | "monitor" | "unknown", label, state, summary?, tokens?, started_at?, settled_at? }`.
+  - Populated `started_at` and `settled_at` (epoch ms) on both `SubagentEntry` and `BackgroundTaskEntry` from transcript RFC3339 timestamps (`timestamp` / `created_at`) and provider `usage.duration_ms` / `totalDurationMs` so mobile clients render isolated 1s live elapsed timers (`LiveElapsedText`).
+  - Claude compaction boundaries (`subtype: "compact_boundary"`, `isCompactSummary: true`) emit deduplicated `AgentTurn { role: "system", events: [{ kind: "status", text: "Context compacted" }] }`.

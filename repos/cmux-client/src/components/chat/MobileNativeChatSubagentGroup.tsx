@@ -7,8 +7,10 @@ import {
   XCircle,
   Clock,
   AlertCircle,
+  StopCircle,
 } from "lucide-react";
 import type { SubagentEntry, SubagentState } from "../../protocol/event";
+import { LiveElapsedText } from "./MobileNativeChatComposerTray";
 
 interface MobileNativeChatSubagentGroupProps {
   groupId: string;
@@ -23,18 +25,39 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
 
   if (agents.length === 0) return null;
 
-  // Derive group status
-  const isWorking = agents.some((a) => a.state === "working");
+  // Derive group status & timing
+  const workingCount = agents.filter((a) => a.state === "working").length;
+  const isWorking = workingCount > 0;
   const hasFailed = agents.some((a) => a.state === "failed");
+  const allStopped = agents.every((a) => a.state === "stopped");
   const totalTokens = agents.reduce((acc, a) => acc + (a.tokens || 0), 0);
 
   const allCompleted = agents.every((a) => a.state === "completed");
   let groupStateText = "completed";
-  if (isWorking) groupStateText = "working";
-  else if (hasFailed) groupStateText = "failed";
-  // Orca keeps silent children as "unverifiable" instead of claiming they finished
-  // (ref/orca/src/shared/agent-status/presentation/agent-row-decay-state.ts).
-  else if (!allCompleted) groupStateText = "no update";
+  if (isWorking) {
+    groupStateText =
+      agents.length > 1 && workingCount < agents.length
+        ? `${workingCount}/${agents.length} working`
+        : "working";
+  } else if (hasFailed) {
+    groupStateText = "failed";
+  } else if (allStopped) {
+    groupStateText = "stopped";
+  } else if (!allCompleted) {
+    // Orca keeps silent children as "unverifiable" instead of claiming they finished
+    // (ref/orca/src/shared/agent-status/presentation/agent-row-decay-state.ts).
+    groupStateText = "no update";
+  }
+
+  const startedCandidates = agents
+    .map((a) => a.started_at)
+    .filter((n): n is number => typeof n === "number" && n > 0);
+  const clockStartedAt = startedCandidates.length > 0 ? Math.min(...startedCandidates) : null;
+  const settledCandidates = agents
+    .map((a) => a.settled_at)
+    .filter((n): n is number => typeof n === "number" && n > 0);
+  const settledAt =
+    !isWorking && settledCandidates.length > 0 ? Math.max(...settledCandidates) : null;
 
   const headline = isWorking
     ? `Kicked off ${agents.length} subagent${agents.length > 1 ? "s" : ""}`
@@ -45,19 +68,30 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
       <button
         type="button"
         onClick={() => setIsExpanded((prev) => !prev)}
-        className="w-full flex items-center justify-between px-3 py-2 bg-accent/10 hover:bg-accent/10 text-accent-soft transition-colors"
+        className="w-full flex items-center justify-between px-3 py-2 bg-accent/10 hover:bg-accent/15 text-accent-soft transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-          <Bot className={`w-4 h-4 text-accent-soft ${isWorking ? "animate-pulse" : ""}`} />
+          <Bot
+            className={`w-4 h-4 text-accent-soft shrink-0 ${isWorking ? "animate-pulse" : ""}`}
+          />
           <span className="font-semibold text-accent-soft truncate">{headline}</span>
           {isWorking && (
-            <span className="flex h-1.5 w-1.5 relative">
+            <span className="flex h-1.5 w-1.5 relative shrink-0">
               <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-soft opacity-75" />
               <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
             </span>
           )}
         </div>
-        <div className="flex items-center gap-2 shrink-0">
+        <div className="flex items-center gap-1.5 shrink-0">
+          {clockStartedAt !== null && (
+            <span className="text-[10px] text-accent-soft/80 tabular-nums">
+              <LiveElapsedText
+                startedAt={clockStartedAt}
+                settledAt={settledAt}
+                counting={isWorking}
+              />
+            </span>
+          )}
           {totalTokens > 0 && (
             <span className="text-[10px] text-accent-soft/80 bg-accent/10 px-1.5 py-0.5 rounded">
               {formatTokens(totalTokens)}
@@ -69,7 +103,7 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
                 ? "bg-emerald-500/10 text-emerald-400"
                 : groupStateText === "failed"
                   ? "bg-rose-500/10 text-rose-400"
-                  : groupStateText === "no update"
+                  : groupStateText === "no update" || groupStateText === "stopped"
                     ? "bg-gray-800 text-muted"
                     : "bg-accent/20 text-accent-soft"
             }`}
@@ -96,9 +130,18 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
                 <span className="font-medium text-fg-soft truncate">{agent.label || agent.id}</span>
               </div>
               <div className="flex items-center gap-2 shrink-0 text-[10px]">
-                {agent.tokens && (
-                  <span className="text-muted font-mono">{formatTokens(agent.tokens)}</span>
+                {typeof agent.started_at === "number" && agent.started_at > 0 && (
+                  <span className="text-muted font-mono tabular-nums">
+                    <LiveElapsedText
+                      startedAt={agent.started_at}
+                      settledAt={agent.settled_at}
+                      counting={agent.state === "working"}
+                    />
+                  </span>
                 )}
+                {agent.tokens ? (
+                  <span className="text-muted font-mono">{formatTokens(agent.tokens)}</span>
+                ) : null}
                 <span className={`px-1.5 py-0.5 rounded ${getSubagentStateBadge(agent.state)}`}>
                   {agent.state === "unverifiable" ? "no update" : agent.state}
                 </span>
@@ -125,6 +168,8 @@ function getSubagentStateIcon(state: SubagentState) {
       return <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />;
     case "working":
       return <Clock className="w-3.5 h-3.5 text-accent-soft animate-spin shrink-0" />;
+    case "stopped":
+      return <StopCircle className="w-3.5 h-3.5 text-muted shrink-0" />;
     default:
       return <AlertCircle className="w-3.5 h-3.5 text-muted shrink-0" />;
   }

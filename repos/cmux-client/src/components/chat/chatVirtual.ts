@@ -28,12 +28,41 @@ function estimateWrappedLines(text: string, charsPerLine: number): number {
   return lines;
 }
 
+const COMPACT_CONTINUATION_RE = /^\s*This session is being continued from a previous conversation/i;
+
+/**
+ * Returns the centered divider label when `turn` is a system boundary (or a cached
+ * pre-v0.1.14 Claude auto-compaction user record), else `null`.
+ */
+export function resolveSystemDividerLabel(turn: AgentTurn): string | null {
+  if (turn.role === "system") {
+    for (const ev of turn.events) {
+      if (ev.kind === "status" && ev.text.trim()) return ev.text.trim();
+      if ((ev.kind === "user" || ev.kind === "assistant") && ev.text.trim()) return ev.text.trim();
+    }
+    return "Context compacted";
+  }
+  if (turn.role === "user" && turn.events.length > 0) {
+    const userEvents = turn.events.filter((ev) => ev.kind === "user");
+    if (
+      userEvents.length > 0 &&
+      userEvents.every((ev) => ev.kind === "user" && COMPACT_CONTINUATION_RE.test(ev.text))
+    ) {
+      return "Context compacted";
+    }
+  }
+  return null;
+}
+
 /**
  * Estimate initial rendered height of an `AgentTurn` before DOM measurement.
  * Close initial estimates reduce initial scroll-anchoring correction passes
  * when mounting or prepending history in `OrcaChatView`.
  */
 export function estimateTurnHeight(turn: AgentTurn): number {
+  if (resolveSystemDividerLabel(turn) !== null) {
+    return 36;
+  }
   if (turn.role === "user") {
     let totalLines = 0;
     for (const ev of turn.events) {
@@ -79,6 +108,9 @@ export function estimateTurnHeight(turn: AgentTurn): number {
         break;
       case "subagents":
         height += 44 + ev.agents.length * 24;
+        break;
+      case "background-tasks":
+        height += 44;
         break;
       case "awaiting-input":
         height += 116;

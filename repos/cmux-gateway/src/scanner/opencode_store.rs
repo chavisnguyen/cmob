@@ -22,7 +22,8 @@ use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
 use crate::protocol::event::{
-    AgentEvent, AgentLifecycleState, AgentRole, AgentTurn, AwaitingInput,
+    AgentEvent, AgentLifecycleState, AgentRole, AgentTurn, AwaitingInput, SubagentEntry,
+    SubagentState,
 };
 
 /// `dbPath#sessionId`, the same reference form Orca uses for SQLite-backed transcripts
@@ -320,6 +321,43 @@ fn tool_event(part: &serde_json::Value, turn: &mut AgentTurn) {
             return;
         }
     }
+    if matches!(name.as_str(), "task" | "subagent") {
+        let inp = state.and_then(|s| s.get("input"));
+        let label = inp
+            .and_then(|i| i.get("description").or_else(|| i.get("subagent_type")))
+            .and_then(|s| s.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Subagent")
+            .to_string();
+        let sub_state = match status {
+            "running" | "pending" => SubagentState::Working,
+            "error" => SubagentState::Failed,
+            _ => SubagentState::Completed,
+        };
+        let entry = SubagentEntry {
+            id: tool_id,
+            label,
+            state: sub_state,
+            tokens: None,
+            started_at: None,
+            settled_at: None,
+        };
+        let gid = format!("opencode-subagents-{}", turn.id);
+        if let Some(agents) = turn.events.iter_mut().find_map(|e| match e {
+            AgentEvent::Subagents { group_id, agents } if *group_id == gid => Some(agents),
+            _ => None,
+        }) {
+            agents.push(entry);
+        } else {
+            turn.events.push(AgentEvent::Subagents {
+                group_id: gid,
+                agents: vec![entry],
+            });
+        }
+        return;
+    }
+
     let detail = state
         .and_then(|s| s.get("input"))
         .map(|i| cap(i.to_string()));

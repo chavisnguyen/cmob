@@ -26,6 +26,19 @@ export interface SubagentEntry {
   settled_at?: number;
 }
 
+export type BackgroundTaskKind = "agent" | "command" | "workflow" | "monitor" | "unknown";
+
+export interface BackgroundTaskEntry {
+  id: string;
+  kind: BackgroundTaskKind;
+  label: string;
+  state: SubagentState;
+  summary?: string;
+  tokens?: number;
+  started_at?: number;
+  settled_at?: number;
+}
+
 export interface AwaitingInput {
   input_kind: "permission" | "question" | "options" | "other";
   prompt: string;
@@ -48,6 +61,7 @@ export type AgentEvent =
   | { kind: "assistant"; text: string }
   | { kind: "delta"; text: string }
   | { kind: "subagents"; group_id: string; agents: SubagentEntry[] }
+  | { kind: "background-tasks"; tasks: BackgroundTaskEntry[] }
   | ({ kind: "awaiting-input" } & AwaitingInput)
   | { kind: "status"; text: string }
   | { kind: "done"; stats?: string }

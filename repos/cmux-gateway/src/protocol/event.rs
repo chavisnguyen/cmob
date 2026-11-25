@@ -52,6 +52,36 @@ pub struct SubagentEntry {
     pub settled_at: Option<u64>,
 }
 
+/// Kind of durable background task tracked across turns.
+/// Source: ref/orca/src/shared/agent-session/agent-session-background-task-wire.ts:15-18
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BackgroundTaskKind {
+    Agent,
+    Command,
+    Workflow,
+    Monitor,
+    Unknown,
+}
+
+/// Durable background job (shell command, workflow, monitor, or async task) launched by an agent.
+/// Source: ref/orca/src/shared/native-chat/native-chat-types.ts:168-190
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BackgroundTaskEntry {
+    pub id: String,
+    pub kind: BackgroundTaskKind,
+    pub label: String,
+    pub state: SubagentState,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub summary: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub settled_at: Option<u64>,
+}
+
 /// Awaiting user feedback or permission for a tool execution.
 /// Source: ref/orca/src/shared/native-chat/native-chat-types.ts & ref/cmux/agent-chat/types.ts
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -102,6 +132,9 @@ pub enum AgentEvent {
     Subagents {
         group_id: String,
         agents: Vec<SubagentEntry>,
+    },
+    BackgroundTasks {
+        tasks: Vec<BackgroundTaskEntry>,
     },
     AwaitingInput(AwaitingInput),
     Status {
