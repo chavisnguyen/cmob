@@ -1529,14 +1529,20 @@ fn handle_subscription(
     let session_id = req.params.get("session_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
     let agent_kind = req.params.get("agent_kind").and_then(|v| v.as_str()).unwrap_or("agent").to_string();
     let max_turns = req.params.get("max_turns").and_then(|v| v.as_u64()).unwrap_or(50).min(500) as usize;
+    let delta_mode = req
+        .params
+        .pointer("/capabilities/delta")
+        .and_then(|v| v.as_bool())
+        .unwrap_or(false);
 
-    let handle = tokio::spawn(chat_watcher(
+    let handle = tokio::spawn(chat_watcher_stream(
         state.clone(),
         out_tx.clone(),
         surface_id.clone(),
         session_id,
         agent_kind,
         max_turns,
+        delta_mode,
     ));
     subs.insert(surface_id.clone(), handle);
 
@@ -1848,17 +1854,27 @@ fn derive_awaiting_prompt(
     Some("Agent requested approval".to_string())
 }
 
-/// Build the `readSession` payload for a resolved session (blocking file IO).
-fn session_json(
+/// Build the `readSession` / `chat.update` payload for a resolved session (blocking file IO).
+fn session_json_with_turns(
     res: &ResolvedSession,
     max_turns: usize,
+    before_offset: Option<u64>,
     screen_context: Option<&str>,
-) -> Result<serde_json::Value, std::io::Error> {
-    let (turns, total_turns) = match &res.transcript_path {
-        Some(p) => TranscriptReader::read_recent_turns_page(std::path::Path::new(p), &res.surface_id, max_turns)?,
-        None => (Vec::new(), 0),
+) -> Result<(serde_json::Value, crate::scanner::transcript::TranscriptPage), std::io::Error> {
+    let page = match &res.transcript_path {
+        Some(p) => TranscriptReader::read_turns_page(
+            std::path::Path::new(p),
+            &res.surface_id,
+            max_turns,
+            before_offset,
+        )?,
+        None => crate::scanner::transcript::TranscriptPage {
+            turns: Vec::new(),
+            has_more: false,
+            before_offset: None,
+            total_turns: 0,
+        },
     };
-    let has_more = total_turns > turns.len();
     // Live activity line = what the agent is doing RIGHT NOW. Hook `lastSubtitle` values are completion/
     // notification texts ("Completed in X", "Permission"), never live activity, so only transcript-derived
     // activity (Kiro running tool) is exposed here. Orca: native-chat-turn-activity.ts:76-77.
@@ -1867,8 +1883,13 @@ fn session_json(
     } else {
         None
     };
-    let awaiting_prompt = derive_awaiting_prompt(res, &turns, screen_context);
-    Ok(serde_json::json!({
+    let awaiting_prompt = if before_offset.is_none() {
+        derive_awaiting_prompt(res, &page.turns, screen_context)
+    } else {
+        None
+    };
+    let val = serde_json::json!({
+        "update_kind": "snapshot",
         "activity": activity,
         "session_id": res.session_id,
         "surface_id": res.surface_id,
@@ -1878,10 +1899,12 @@ fn session_json(
         "last_event": res.last_event,
         "last_subtitle": res.last_subtitle,
         "awaiting_prompt": awaiting_prompt,
-        "has_more": has_more,
-        "total_turns": total_turns,
-        "turns": turns
-    }))
+        "has_more": page.has_more,
+        "before_offset": page.before_offset,
+        "total_turns": page.total_turns,
+        "turns": page.turns
+    });
+    Ok((val, page))
 }
 
 /// `startup_dialog` field of a chat snapshot: what the agent is asking on screen (null when nothing).
@@ -1907,10 +1930,20 @@ async fn startup_dialog_value(state: &AppState, surface_id: &str) -> serde_json:
     }
 }
 
-/// Cheap change detector: lifecycle/subtitle plus transcript mtime and size.
+/// Cheap change detector: lifecycle/subtitle plus transcript mtime/size (or OpenCode SQLite token).
 async fn fingerprint(res: &Option<ResolvedSession>) -> String {
     let Some(r) = res else { return "none".to_string() };
-    let (mtime, len) = match r.transcript_path.as_deref() {
+    let transcript_stamp = match r.transcript_path.as_deref() {
+        Some(p) if crate::scanner::opencode_store::parse_pseudo_path(std::path::Path::new(p)).is_some() => {
+            let p_owned = p.to_string();
+            tokio::task::spawn_blocking(move || {
+                crate::scanner::opencode_store::change_token_for_path(std::path::Path::new(&p_owned))
+            })
+            .await
+            .ok()
+            .flatten()
+            .unwrap_or_default()
+        }
         Some(p) => tokio::fs::metadata(p)
             .await
             .ok()
@@ -1921,19 +1954,18 @@ async fn fingerprint(res: &Option<ResolvedSession>) -> String {
                     .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                     .map(|d| d.as_nanos())
                     .unwrap_or(0);
-                (t, m.len())
+                format!("{t}|{}", m.len())
             })
-            .unwrap_or((0, 0)),
-        None => (0, 0),
+            .unwrap_or_else(|| "0|0".to_string()),
+        None => "0|0".to_string(),
     };
     format!(
-        "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{mtime}|{len}",
+        "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{transcript_stamp}",
         r.session_id, r.lifecycle, r.last_event, r.last_subtitle, r.last_body, r.tool_name
     )
 }
 
-/// Per-subscription watcher: samples the session every 500ms and pushes a full snapshot only
-/// when its fingerprint changes. This replaces client-side 1s polling of `readSession`.
+#[cfg(test)]
 async fn chat_watcher(
     state: AppState,
     out_tx: mpsc::Sender<String>,
@@ -1942,19 +1974,46 @@ async fn chat_watcher(
     fallback_agent: String,
     max_turns: usize,
 ) {
+    chat_watcher_stream(
+        state,
+        out_tx,
+        surface_id,
+        session_id,
+        fallback_agent,
+        max_turns,
+        false,
+    )
+    .await;
+}
+
+/// Per-subscription watcher: emits an immediate tail snapshot on open (without blocking on terminal
+/// screen captures when a transcript already exists), then pushes incremental `delta` frames (or
+/// `snapshot` on replacement/legacy clients) whenever the transcript or session state changes.
+async fn chat_watcher_stream(
+    state: AppState,
+    out_tx: mpsc::Sender<String>,
+    surface_id: String,
+    session_id: String,
+    fallback_agent: String,
+    max_turns: usize,
+    delta_mode: bool,
+) {
     const TICK: Duration = Duration::from_millis(500);
     const TREE_REFRESH: Duration = Duration::from_secs(3);
+    const DIALOG_POLL: Duration = Duration::from_secs(2);
 
     let mut interval = tokio::time::interval(TICK);
     let mut last_fp: Option<String> = None;
     let mut cached_tree: Option<(ResolvedSession, Instant)> = None;
-    // Startup dialogs only show while the agent is not mid-turn; the screen is read at most every 2 s.
-    const DIALOG_POLL: Duration = Duration::from_secs(2);
     let mut dialog: (serde_json::Value, Option<Instant>) = (serde_json::Value::Null, None);
     let mut approval_screen: (Option<String>, Option<Instant>) = (None, None);
+    let mut is_first_tick = true;
+    // (turn_id, events_count) of the last pushed window for O(1) incremental delta calculation.
+    let mut prev_digests: Vec<(String, usize)> = Vec::new();
 
     loop {
         interval.tick().await;
+        let first_tick = std::mem::replace(&mut is_first_tick, false);
 
         // Tree-resolved sessions (Kiro) avoid spawning `cmux tree` every tick: reuse the cached
         // resolution and only re-derive lifecycle from the transcript tail.
@@ -1983,17 +2042,33 @@ async fn chat_watcher(
             }
         };
 
-        let working = resolved.as_ref().is_some_and(|r| r.lifecycle == AgentLifecycleState::Working);
+        let has_transcript = resolved
+            .as_ref()
+            .and_then(|r| r.transcript_path.as_ref())
+            .is_some();
+        let known_dialog_waiting = crate::cmux::startup_dialog::registry::is_waiting(&surface_id);
+        // Never block initial transcript delivery on `cmux capture-pane` subprocesses unless there
+        // is no transcript yet or `spawn_dialog_watcher` already flagged an active dialog.
+        let defer_screen_probes = first_tick && has_transcript && !known_dialog_waiting;
+
+        let working = resolved
+            .as_ref()
+            .is_some_and(|r| r.lifecycle == AgentLifecycleState::Working);
         if working {
             dialog = (serde_json::Value::Null, None);
             crate::cmux::startup_dialog::registry::set(&surface_id, None);
-        } else if dialog.1.map_or(true, |at| at.elapsed() >= DIALOG_POLL) {
+        } else if !defer_screen_probes && dialog.1.map_or(true, |at| at.elapsed() >= DIALOG_POLL) {
             dialog = (startup_dialog_value(&state, &surface_id).await, Some(Instant::now()));
         }
-        let waiting = resolved.as_ref().is_some_and(|r| r.lifecycle == AgentLifecycleState::Waiting);
+
+        let waiting = resolved
+            .as_ref()
+            .is_some_and(|r| r.lifecycle == AgentLifecycleState::Waiting);
         if !waiting {
             approval_screen = (None, None);
-        } else if approval_screen.1.map_or(true, |at| at.elapsed() >= DIALOG_POLL) {
+        } else if !defer_screen_probes
+            && approval_screen.1.map_or(true, |at| at.elapsed() >= DIALOG_POLL)
+        {
             let extracted = state
                 .cmux_bridge
                 .capture_pane(Some(&surface_id), 35, false)
@@ -2003,6 +2078,7 @@ async fn chat_watcher(
                 .and_then(extract_approval_screen_context);
             approval_screen = (extracted, Some(Instant::now()));
         }
+
         let dialog_fp = dialog.0.get("fingerprint").and_then(|f| f.as_str()).unwrap_or("");
         let screen_fp = approval_screen.0.as_deref().unwrap_or("");
         let fp = format!("{}|{dialog_fp}|{screen_fp}", fingerprint(&resolved).await);
@@ -2014,15 +2090,47 @@ async fn chat_watcher(
             Some(res) => {
                 let screen_ctx = approval_screen.0.clone();
                 let built = tokio::task::spawn_blocking(move || {
-                    session_json(&res, max_turns, screen_ctx.as_deref())
+                    session_json_with_turns(&res, max_turns, None, screen_ctx.as_deref())
                 })
                 .await;
-                match built {
-                    Ok(Ok(v)) => v,
+                let (mut snap_val, page) = match built {
+                    Ok(Ok(pair)) => pair,
                     _ => continue,
+                };
+                let next_digests: Vec<(String, usize)> = page
+                    .turns
+                    .iter()
+                    .map(|t| (t.id.clone(), t.events.len()))
+                    .collect();
+
+                // When client supports delta frames (`capabilities.delta`), emit only the changed/new
+                // tail turns instead of re-sending the entire 15..50 turn window on every stream tick.
+                if delta_mode && prev_digests.len() >= 2 && !page.turns.is_empty() {
+                    let anchor = &prev_digests[prev_digests.len() - 2];
+                    if let Some(pos) = page.turns.iter().position(|t| t.id == anchor.0) {
+                        let prefix_intact = page.turns[..=pos].iter().all(|t| {
+                            prev_digests
+                                .iter()
+                                .any(|(pid, plen)| *pid == t.id && *plen == t.events.len())
+                        });
+                        if prefix_intact {
+                            let tail_turns = page.turns[pos + 1..].to_vec();
+                            if let Some(obj) = snap_val.as_object_mut() {
+                                obj.remove("turns");
+                                obj.insert("update_kind".into(), serde_json::json!("delta"));
+                                obj.insert("after_turn_id".into(), serde_json::json!(anchor.0));
+                                obj.insert("tail_turns".into(), serde_json::to_value(tail_turns).unwrap_or_default());
+                            }
+                        }
+                    }
                 }
+                prev_digests = next_digests;
+                snap_val
             }
-            None => empty_session_json(&surface_id, &fallback_agent),
+            None => {
+                prev_digests.clear();
+                empty_session_json(&surface_id, &fallback_agent)
+            }
         };
         let mut payload = payload;
         payload["startup_dialog"] = dialog.0.clone();
@@ -2199,46 +2307,85 @@ async fn dispatch_rpc(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse
             let surface_id = req.params.get("surface_id").and_then(|v| v.as_str()).unwrap_or("");
             let session_id = req.params.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
             let max_turns = req.params.get("max_turns").and_then(|v| v.as_u64()).unwrap_or(50).min(500) as usize;
+            let before_offset = req.params.get("before_offset").and_then(|v| v.as_u64());
             let fallback_agent = req.params.get("agent_kind").and_then(|v| v.as_str()).unwrap_or("agent");
 
-            let dialog = startup_dialog_value(state, surface_id).await;
-            match resolve_session(state, surface_id, session_id).await {
-                Some(res) => {
-                    let screen_ctx = if res.lifecycle == AgentLifecycleState::Waiting {
-                        state
-                            .cmux_bridge
-                            .capture_pane(Some(&res.surface_id), 35, false)
-                            .await
-                            .ok()
-                            .as_deref()
-                            .and_then(extract_approval_screen_context)
-                    } else {
-                        None
-                    };
-                    match tokio::task::spawn_blocking(move || {
-                        session_json(&res, max_turns, screen_ctx.as_deref())
-                    })
-                    .await
-                    {
-                        Ok(Ok(mut v)) => {
-                            v["startup_dialog"] = dialog;
-                            JsonRpcResponse::result_value(req.id.clone(), v)
+            // Fast path for `before_offset` historical pagination: resolve session path without
+            // spawning liveness `ps` or `cmux capture-pane` subprocesses.
+            if before_offset.is_some() {
+                match resolve_session_raw(state, surface_id, session_id).await {
+                    Some(res) => {
+                        match tokio::task::spawn_blocking(move || {
+                            session_json_with_turns(&res, max_turns, before_offset, None).map(|(v, _)| v)
+                        })
+                        .await
+                        {
+                            Ok(Ok(v)) => JsonRpcResponse::result_value(req.id.clone(), v),
+                            Ok(Err(e)) => JsonRpcResponse::error(
+                                Some(req.id.clone()),
+                                JsonRpcError::internal_error(format!("Failed to read transcript: {e}")),
+                            ),
+                            Err(e) => JsonRpcResponse::error(
+                                Some(req.id.clone()),
+                                JsonRpcError::internal_error(e.to_string()),
+                            ),
                         }
-                        Ok(Err(e)) => JsonRpcResponse::error(
-                            Some(req.id.clone()),
-                            JsonRpcError::internal_error(format!("Failed to read transcript: {e}")),
-                        ),
-                        Err(e) => JsonRpcResponse::error(
-                            Some(req.id.clone()),
-                            JsonRpcError::internal_error(e.to_string()),
-                        ),
                     }
+                    None => JsonRpcResponse::result_value(
+                        req.id.clone(),
+                        empty_session_json(surface_id, fallback_agent),
+                    ),
                 }
-                // Standby surface with no transcript yet: empty turn list with ready status
-                None => {
-                    let mut v = empty_session_json(surface_id, fallback_agent);
-                    v["startup_dialog"] = dialog;
-                    JsonRpcResponse::result_value(req.id.clone(), v)
+            } else {
+                match resolve_session(state, surface_id, session_id).await {
+                    Some(res) => {
+                        let res_surface_id = res.surface_id.clone();
+                        let res_lifecycle = res.lifecycle;
+                        let screen_ctx = if res_lifecycle == AgentLifecycleState::Waiting {
+                            state
+                                .cmux_bridge
+                                .capture_pane(Some(&res_surface_id), 35, false)
+                                .await
+                                .ok()
+                                .as_deref()
+                                .and_then(extract_approval_screen_context)
+                        } else {
+                            None
+                        };
+                        match tokio::task::spawn_blocking(move || {
+                            session_json_with_turns(&res, max_turns, None, screen_ctx.as_deref())
+                        })
+                        .await
+                        {
+                            Ok(Ok((mut v, page))) => {
+                                // Only probe `cmux capture-pane` for startup dialogs when no turns
+                                // exist yet or `spawn_dialog_watcher` already flagged the surface.
+                                let needs_dialog_probe = res_lifecycle != AgentLifecycleState::Working
+                                    && (page.turns.is_empty()
+                                        || crate::cmux::startup_dialog::registry::is_waiting(surface_id));
+                                v["startup_dialog"] = if needs_dialog_probe {
+                                    startup_dialog_value(state, surface_id).await
+                                } else {
+                                    serde_json::Value::Null
+                                };
+                                JsonRpcResponse::result_value(req.id.clone(), v)
+                            }
+                            Ok(Err(e)) => JsonRpcResponse::error(
+                                Some(req.id.clone()),
+                                JsonRpcError::internal_error(format!("Failed to read transcript: {e}")),
+                            ),
+                            Err(e) => JsonRpcResponse::error(
+                                Some(req.id.clone()),
+                                JsonRpcError::internal_error(e.to_string()),
+                            ),
+                        }
+                    }
+                    // Standby surface with no transcript yet: empty turn list with startup dialog check.
+                    None => {
+                        let mut v = empty_session_json(surface_id, fallback_agent);
+                        v["startup_dialog"] = startup_dialog_value(state, surface_id).await;
+                        JsonRpcResponse::result_value(req.id.clone(), v)
+                    }
                 }
             }
         }
@@ -2910,6 +3057,35 @@ mod tests {
         assert_eq!(second["data"]["turns"].as_array().unwrap().len(), 2);
 
         handle.abort();
+
+        // Delta mode (`capabilities.delta: true`): initial frame is a snapshot, subsequent appends
+        // send only `after_turn_id` + `tail_turns`.
+        let state_delta = AppState::new("127.0.0.1".into(), 0, "tok".into());
+        let (dtx, mut drx) = mpsc::channel(8);
+        let dhandle = tokio::spawn(chat_watcher_stream(
+            state_delta,
+            dtx,
+            "surf-watch".into(),
+            String::new(),
+            "claude".into(),
+            20,
+            true,
+        ));
+        let d_first = next_event(&mut drx).await;
+        assert_eq!(d_first["data"]["update_kind"], "snapshot");
+        assert_eq!(d_first["data"]["turns"].as_array().unwrap().len(), 2);
+
+        let mut f = std::fs::OpenOptions::new().append(true).open(&transcript).unwrap();
+        writeln!(f, "{{\"type\":\"user\",\"message\":{{\"content\":\"next prompt\"}}}}").unwrap();
+        drop(f);
+
+        let d_second = next_event(&mut drx).await;
+        assert_eq!(d_second["data"]["update_kind"], "delta");
+        assert_eq!(d_second["data"]["after_turn_id"], "turn-1");
+        assert!(d_second["data"].get("turns").is_none());
+        assert_eq!(d_second["data"]["tail_turns"].as_array().unwrap().len(), 2);
+
+        dhandle.abort();
         let _ = std::fs::remove_dir_all(&dir);
     }
 

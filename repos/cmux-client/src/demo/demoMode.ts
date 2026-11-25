@@ -46,17 +46,16 @@ export async function handleDemoRpc<T = unknown>(
       const isClaude = surfaceId.includes("claude") || (!surfaceId.includes("agy") && !isStudio);
       const isAgy = surfaceId.includes("agy");
 
+      let snap: Record<string, unknown>;
       if (isAgy) {
-        return {
+        snap = {
           turns: DEMO_AGY_TURNS,
           agent_kind: "antigravity",
           is_working: true,
           surface_id: surfaceId,
-        } as T;
-      }
-
-      if (isClaude) {
-        return {
+        };
+      } else if (isClaude) {
+        snap = {
           turns: claudeApproved ? DEMO_CLAUDE_TURNS_APPROVED : DEMO_CLAUDE_TURNS_INITIAL,
           agent_kind: "claude",
           is_working: !claudeApproved,
@@ -64,26 +63,35 @@ export async function handleDemoRpc<T = unknown>(
             ? null
             : "Allow Claude to execute bash command: npm run test?",
           surface_id: surfaceId,
-        } as T;
+        };
+      } else {
+        snap = {
+          turns: [
+            {
+              id: "demo-standby-1",
+              surface_id: surfaceId,
+              role: "assistant",
+              events: [
+                {
+                  kind: "assistant",
+                  text: "Agent ready and standing by in cmux workspace.",
+                },
+              ],
+            },
+          ],
+          agent_kind: "codex",
+          is_working: false,
+          surface_id: surfaceId,
+        };
       }
 
-      // Default fallback turn
-      return {
-        turns: [
-          {
-            role: "assistant",
-            events: [
-              {
-                kind: "assistant",
-                text: "Agent ready and standing by in cmux workspace.",
-              },
-            ],
-          },
-        ],
-        agent_kind: "codex",
-        is_working: false,
-        surface_id: surfaceId,
-      } as T;
+      if (method === RPC_METHODS.CHAT_SUBSCRIBE && eventEmitter) {
+        queueMicrotask(() => {
+          eventEmitter(RPC_EVENTS.CHAT_UPDATE, snap);
+        });
+      }
+
+      return snap as T;
     }
 
     case RPC_METHODS.CHAT_APPROVE: {

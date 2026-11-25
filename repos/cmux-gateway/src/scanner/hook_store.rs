@@ -445,15 +445,15 @@ impl HookSessionRecord {
     /// What the transcript says about a turn the hook still reports as Working (see `turn_marks`):
     /// finished => Done, interrupted (Esc) => Idle, still going / no evidence => None (trust the hook).
     fn transcript_override(&self) -> Option<AgentLifecycleState> {
-        use crate::scanner::turn_marks::{claude_last_mark, codex_last_mark, read_tail, TurnMark};
+        use crate::scanner::turn_marks::{cached_claude_mark, cached_codex_mark, TurnMark};
         let kind = crate::cmux::agents::spec_for(self.resolved_agent_kind()).map(|s| s.kind)?;
         if kind == "antigravity" {
             return self.transcript_shows_finished_reply().then_some(AgentLifecycleState::Done);
         }
         let (path, updated) = (self.transcript_path.as_deref()?, self.updated_at?);
         let mark = match kind {
-            "claude" => claude_last_mark(&read_tail(path)?),
-            "codex" => codex_last_mark(&read_tail(path)?),
+            "claude" => cached_claude_mark(path),
+            "codex" => cached_codex_mark(path),
             _ => None,
         }?;
         // The mark must be newer than the hook event it would override. A new prompt fires its hook before the

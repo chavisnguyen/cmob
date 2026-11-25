@@ -165,6 +165,12 @@ fn parse_etime_secs(etime: &str) -> Option<u64> {
     Some(days * 86_400 + secs)
 }
 
+/// Short-lived cache of the last built workspace tree so Kiro / hook-miss `get_surface` calls
+/// during conversation open reuse the recent tree instead of re-spawning `cmux tree` + `ps`.
+static LAST_TREE_SNAPSHOT: LazyLock<RwLock<Option<(Vec<WorkspaceNode>, std::time::Instant)>>> =
+    LazyLock::new(|| RwLock::new(None));
+const SURFACE_LOOKUP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4);
+
 /// Builder responsible for merging cmux CLI output with HookStoreIndex
 pub struct WorkspaceTreeBuilder;
 
@@ -174,25 +180,32 @@ impl WorkspaceTreeBuilder {
         bridge: &DualTransportCmuxBridge,
         hook_index: &HookStoreIndex,
     ) -> Result<Vec<WorkspaceNode>, CmuxBridgeError> {
-        // Step 1: Query cmux tree with --id-format both to preserve both short refs and UUIDs
-        let tree_output = bridge.run_command("tree", &["--json", "--id-format", "both"]).await?;
+        // Run `cmux tree`, `cmux rpc workspace.list`, and `ps` + Kiro lease scan concurrently
+        // instead of sequentially so cold-boot tree latency equals max(...) rather than sum(...).
+        let tree_fut = bridge.run_command("tree", &["--json", "--id-format", "both"]);
+        let ws_list_fut = bridge.rpc_call("workspace.list", None);
+        let proc_kiro_fut = tokio::task::spawn_blocking(|| {
+            let (pid_ttys, live_agents_by_tty) = Self::scan_processes_snapshot();
+            let kiro_by_tty = KiroSessionIndex::scan_default_by_pid_map(&pid_ttys);
+            (live_agents_by_tty, kiro_by_tty)
+        });
+
+        let (tree_res, ws_list_res, proc_kiro_res) =
+            tokio::join!(tree_fut, ws_list_fut, proc_kiro_fut);
+
+        let tree_output = tree_res?;
         let tree_data: RawCmuxTreeOutput = serde_json::from_str(&tree_output).map_err(|e| {
             CmuxBridgeError::JsonParseError(format!("cmux tree: {e}"))
         })?;
 
-        // Step 2: Query workspace.list to get current_directory and latest_conversation_message
         let mut dirs_by_id: HashMap<String, String> = HashMap::new();
         let mut latest_msg_by_id: HashMap<String, String> = HashMap::new();
         let mut color_by_id: HashMap<String, String> = HashMap::new();
 
-        if let Ok(ws_list) = bridge
-            .rpc_call("workspace.list", None)
-            .await
-            .and_then(|out| {
-                serde_json::from_str::<RawWorkspaceListOutput>(&out)
-                    .map_err(|e| CmuxBridgeError::JsonParseError(e.to_string()))
-            })
-        {
+        if let Ok(ws_list) = ws_list_res.and_then(|out| {
+            serde_json::from_str::<RawWorkspaceListOutput>(&out)
+                .map_err(|e| CmuxBridgeError::JsonParseError(e.to_string()))
+        }) {
             for w in ws_list.workspaces {
                 if let Some(id) = w.id {
                     if let Some(dir) = w.current_directory {
@@ -208,15 +221,7 @@ impl WorkspaceTreeBuilder {
             }
         }
 
-        // Single `ps -axo pid=,tty=,command=` scan yields both pid->tty (Kiro) and tty->agents (liveness).
-        let (pid_ttys, live_agents_by_tty) =
-            tokio::task::spawn_blocking(Self::scan_processes_snapshot)
-                .await
-                .unwrap_or((HashMap::new(), None));
-        let kiro_by_tty =
-            tokio::task::spawn_blocking(move || KiroSessionIndex::scan_default_by_pid_map(&pid_ttys))
-                .await
-                .unwrap_or_default();
+        let (live_agents_by_tty, kiro_by_tty) = proc_kiro_res.unwrap_or((None, HashMap::new()));
         crate::scanner::liveness::store_proc_scan(&live_agents_by_tty);
 
         // Step 3: Combine raw tree, workspace dirs, and hook store index
@@ -394,6 +399,10 @@ impl WorkspaceTreeBuilder {
         }
         crate::scanner::liveness::prune_surfaces(&all_surface_ids);
 
+        if let Ok(mut snap) = LAST_TREE_SNAPSHOT.write() {
+            *snap = Some((result_workspaces.clone(), std::time::Instant::now()));
+        }
+
         Ok(result_workspaces)
     }
 
@@ -465,12 +474,26 @@ impl WorkspaceTreeBuilder {
         Ok(summaries)
     }
 
-    /// Retrieve detail for a single surface
+    /// Retrieve detail for a single surface (reuses recent tree snapshot when fresh to avoid
+    /// redundant `cmux tree` + `ps` + Kiro directory scans on conversation open).
     pub async fn get_surface(
         bridge: &DualTransportCmuxBridge,
         hook_index: &HookStoreIndex,
         surface_id: &str,
     ) -> Result<Option<SurfaceNode>, CmuxBridgeError> {
+        if let Ok(guard) = LAST_TREE_SNAPSHOT.read() {
+            if let Some((cached_tree, built_at)) = guard.as_ref() {
+                if built_at.elapsed() < SURFACE_LOOKUP_CACHE_TTL {
+                    for ws in cached_tree {
+                        for surf in &ws.surfaces {
+                            if surf.id == surface_id || surf.r#ref == surface_id {
+                                return Ok(Some(surf.clone()));
+                            }
+                        }
+                    }
+                }
+            }
+        }
         let tree = Self::build_tree(bridge, hook_index).await?;
         for ws in tree {
             for surf in ws.surfaces {

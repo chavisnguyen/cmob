@@ -23,6 +23,14 @@ import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
 import { CloseSurfaceDialog } from "../components/surface/CloseSurfaceDialog";
 import { wsClient, type ConnectionState } from "../transport/wsClient";
 import { PartialSendError, formatImagePastePath } from "../components/chat/imageAttach";
+import {
+  buildTranscriptCacheKey,
+  mergeIncomingSessionFrame,
+  peekCachedChatTranscript,
+  prependOlderTurns,
+  writeCachedChatTranscript,
+  type WireSessionFrame,
+} from "../components/chat/chatTranscriptCache";
 
 /** One short line only: collapse whitespace, take the first line, cap length (never show prose). */
 function cleanActivity(text: string | null | undefined): string | null {
@@ -59,28 +67,13 @@ function countUserTurnsWithText(turns: AgentTurn[], text: string): number {
   return userTurnTexts(turns).filter((t) => t === wanted).length;
 }
 
-/** Turns fetched per page (initial load and each "load older"). */
-const TURN_PAGE_SIZE = 15;
+/** Turns fetched on initial open and per "load older" page (Orca-style tail windowing). */
+const INITIAL_TURN_PAGE_SIZE = 25;
+const OLDER_TURN_PAGE_SIZE = 30;
 /** Gateway caps `max_turns` at 500 (server.rs handle_subscription / readSession). */
 const MAX_TURN_LIMIT = 500;
 
-interface SessionSnapshot {
-  turns: AgentTurn[];
-  agent_kind?: string;
-  is_working?: boolean;
-  lifecycle_state?: AgentLifecycleState;
-  last_event?: string;
-  last_subtitle?: string;
-  awaiting_prompt?: string | null;
-  /** Live "what the agent is doing now" (e.g. "Running execute_bash"); never prose. */
-  activity?: string | null;
-  surface_id?: string;
-  /** The startup dialog on the agent's screen, if any. */
-  startup_dialog?: StartupDialogInfo | null;
-  /** Gateway: older turns exist beyond `turns`. */
-  has_more?: boolean;
-  total_turns?: number;
-}
+type SessionSnapshot = WireSessionFrame;
 
 interface SurfaceDetailViewProps {
   surface: SurfaceNode;
@@ -113,12 +106,37 @@ export function SurfaceDetailView({
   desktopLayout = false,
 }: SurfaceDetailViewProps) {
   const hasAgent = Boolean(surface.agent);
+  const surfaceKey = surface.id || surface.ref;
+  const agentSid = surface.agent?.session_id;
+  const agentKd = surface.agent?.agent_kind;
+  const agentTranscriptPath = surface.agent?.transcript_path;
+  const cacheIdentity = useMemo(
+    () =>
+      buildTranscriptCacheKey({
+        endpoint: wsClient.getEndpoint(),
+        surfaceKey,
+        agentKind: agentKd,
+        sessionId: agentSid,
+        transcriptPath: agentTranscriptPath,
+      }),
+    [surfaceKey, agentKd, agentSid, agentTranscriptPath],
+  );
+  const initialCached = useMemo(() => peekCachedChatTranscript(cacheIdentity), [cacheIdentity]);
+
   const [viewMode, setViewMode] = useState<"chat" | "terminal">(hasAgent ? "chat" : "terminal");
-  const [turns, setTurns] = useState<AgentTurn[]>([]);
-  const [initialLoading, setInitialLoading] = useState(true);
-  // How many recent turns we ask the gateway for; grows when the user pulls older history.
-  const [turnLimit, setTurnLimit] = useState(TURN_PAGE_SIZE);
-  const [hasMoreHistory, setHasMoreHistory] = useState(false);
+  const [turns, setTurns] = useState<AgentTurn[]>(() => initialCached?.turns ?? []);
+  const [initialLoading, setInitialLoading] = useState<boolean>(
+    () => !initialCached || initialCached.turns.length === 0,
+  );
+  // Unconfirmed cached rows paint immediately on switch, while approval prompts wait for live confirmation.
+  const [snapshotConfirmed, setSnapshotConfirmed] = useState(false);
+  // How many recent turns we ask legacy/non-cursor backends for; cursor backends page via `beforeOffsetRef`.
+  const [turnLimit, setTurnLimit] = useState(INITIAL_TURN_PAGE_SIZE);
+  const [hasMoreHistory, setHasMoreHistory] = useState<boolean>(
+    () => initialCached?.hasMore ?? false,
+  );
+  const beforeOffsetRef = useRef<number | null>(initialCached?.beforeOffset ?? null);
+  const snapshotSeenRef = useRef(false);
   const [loadingOlder, setLoadingOlder] = useState(false);
   // Messages sent from this phone that the transcript has not echoed yet (Orca: pendingSendsAsMessages).
   const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
@@ -128,9 +146,13 @@ export function SurfaceDetailView({
   const chatAvailable = hasAgent || Boolean(startupDialog);
   const activeMode: "chat" | "terminal" = chatAvailable ? viewMode : "terminal";
   const chatSubscriptionEnabled = hasAgent && activeMode === "chat";
-  const [isWorking, setIsWorking] = useState(false);
-  const [lifecycleState, setLifecycleState] = useState<AgentLifecycleState>("idle");
-  const [activityText, setActivityText] = useState<string | null>(null);
+  const [isWorking, setIsWorking] = useState<boolean>(() => initialCached?.isWorking ?? false);
+  const [lifecycleState, setLifecycleState] = useState<AgentLifecycleState>(
+    () => initialCached?.lifecycleState ?? "idle",
+  );
+  const [activityText, setActivityText] = useState<string | null>(
+    () => initialCached?.activityText ?? null,
+  );
   const [awaitingPrompt, setAwaitingPrompt] = useState<string | null>(null);
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
 
@@ -156,41 +178,34 @@ export function SurfaceDetailView({
   }, [surface.agent]);
 
   const applySnapshot = useCallback((resp: SessionSnapshot) => {
-    if (resp.turns) {
-      setTurns((prev) => {
-        if (prev.length === 0 && resp.turns.length === 0) return prev;
-        if (prev.length === resp.turns.length && prev.length > 0) {
-          const lastIdx = prev.length - 1;
-          const lastPrev = prev[lastIdx];
-          const lastNext = resp.turns[lastIdx];
-          if (
-            lastPrev.id === lastNext.id &&
-            lastPrev.events.length === lastNext.events.length &&
-            JSON.stringify(lastPrev) === JSON.stringify(lastNext)
-          ) {
-            return prev;
-          }
-        }
-        if (prev.length === 0) return resp.turns;
-        const prevById = new Map(prev.map((t) => [t.id, t]));
-        return resp.turns.map((nextTurn, idx) => {
-          const oldTurn = prevById.get(nextTurn.id);
-          if (
-            oldTurn &&
-            idx < resp.turns.length - 1 &&
-            oldTurn.role === nextTurn.role &&
-            oldTurn.events.length === nextTurn.events.length &&
-            (oldTurn.events.length === 0 ||
-              JSON.stringify(oldTurn.events[oldTurn.events.length - 1]) ===
-                JSON.stringify(nextTurn.events[nextTurn.events.length - 1]))
-          ) {
-            return oldTurn;
-          }
-          return nextTurn;
-        });
+    let appliedTurns = false;
+    setTurns((prev) => {
+      const merged = mergeIncomingSessionFrame({
+        prevTurns: prev,
+        frame: resp,
+        replaceSnapshot: !snapshotSeenRef.current,
+        maxRetained: MAX_TURN_LIMIT,
       });
-    }
-    if (resp.has_more !== undefined) {
+      if (!merged) return prev;
+      appliedTurns = true;
+      snapshotSeenRef.current = true;
+      if (merged.windowReplaced) {
+        beforeOffsetRef.current = merged.beforeOffset ?? null;
+        if (merged.hasMore !== undefined) {
+          setHasMoreHistory(merged.hasMore);
+        }
+      } else {
+        if (merged.beforeOffset !== undefined) {
+          beforeOffsetRef.current = merged.beforeOffset;
+        }
+        if (merged.hasMore !== undefined) {
+          setHasMoreHistory(merged.hasMore);
+        }
+      }
+      return merged.turns;
+    });
+
+    if (!appliedTurns && resp.has_more !== undefined) {
       setHasMoreHistory(resp.has_more);
     }
     setStartupDialog((prev) => {
@@ -221,9 +236,38 @@ export function SurfaceDetailView({
         setActivityText(null);
       }
     }
-    // Only a snapshot that carries turns is an answer; otherwise keep the spinner up.
-    if (resp.turns) setInitialLoading(false);
+    if (Array.isArray(resp.turns) || Array.isArray(resp.tail_turns)) {
+      setInitialLoading(false);
+      setSnapshotConfirmed(true);
+    }
   }, []);
+
+  // Persist confirmed turns to the two-tier session cache (memory LRU + localStorage when settled).
+  useEffect(() => {
+    if (!snapshotConfirmed || !hasAgent) return;
+    writeCachedChatTranscript(
+      cacheIdentity,
+      {
+        turns,
+        hasMore: hasMoreHistory,
+        beforeOffset: beforeOffsetRef.current,
+        lifecycleState,
+        isWorking,
+        activityText,
+        savedAt: Date.now(),
+      },
+      !isWorking,
+    );
+  }, [
+    cacheIdentity,
+    hasAgent,
+    snapshotConfirmed,
+    turns,
+    hasMoreHistory,
+    lifecycleState,
+    isWorking,
+    activityText,
+  ]);
 
   const loadingRef = useRef(false);
   const turnLimitRef = useRef(turnLimit);
@@ -231,10 +275,6 @@ export function SurfaceDetailView({
     turnLimitRef.current = turnLimit;
   }, [turnLimit]);
 
-  // Primitive identity of the agent: App refreshes the workspace tree every 5 s and hands down a new
-  // `surface.agent` object each time, which would otherwise rebuild this callback and restart the poll timer.
-  const agentSid = surface.agent?.session_id;
-  const agentKd = surface.agent?.agent_kind;
   const loadSessionTurns = useCallback(
     async (requestedMaxTurns?: number) => {
       if (loadingRef.current) return;
@@ -262,37 +302,71 @@ export function SurfaceDetailView({
     subscribedRef.current = subscribed;
   }, [subscribed]);
 
-  const surfaceKey = surface.id || surface.ref;
   const agentSessionId = surface.agent?.session_id;
   const agentKindForSub = surface.agent?.agent_kind;
+
+  // Single-subscription flow (Orca `use-mobile-native-chat-session.ts`): `mobile.chat.subscribe`
+  // immediately pushes the initial tail snapshot and streams incremental `delta` appends.
+  // `readSession` only runs as a fallback if subscription fails or delivers no frame within 1.5s.
   useEffect(() => {
     if (connState !== "connected" || !chatSubscriptionEnabled) {
       setSubscribed(false);
       return;
     }
     const controller = new AbortController();
+    let fallbackPoll: ReturnType<typeof setInterval> | null = null;
+    const startFallbackPolling = () => {
+      if (controller.signal.aborted || fallbackPoll !== null) return;
+      void loadSessionTurns();
+      fallbackPoll = setInterval(() => {
+        if (typeof document === "undefined" || document.visibilityState === "visible") {
+          void loadSessionTurns();
+        }
+      }, 2000);
+    };
+
+    const initialGuardTimer = setTimeout(() => {
+      if (!snapshotSeenRef.current && !controller.signal.aborted) {
+        void loadSessionTurns();
+      }
+    }, 1500);
+
     const offEvent = wsClient.onEvent((event, data) => {
       if (event !== RPC_EVENTS.CHAT_UPDATE) return;
       const snap = data as SessionSnapshot;
       if (snap.surface_id && snap.surface_id !== surface.id && snap.surface_id !== surface.ref) {
         return;
       }
+      clearTimeout(initialGuardTimer);
       applySnapshot(snap);
     });
     wsClient
-      .call("mobile.chat.subscribe", {
+      .call<SessionSnapshot & { subscribed?: boolean }>("mobile.chat.subscribe", {
         surface_id: surfaceKey,
         session_id: agentSessionId,
         agent_kind: agentKindForSub,
         max_turns: turnLimitRef.current,
+        capabilities: { delta: true },
       })
-      .then(() => {
-        if (!controller.signal.aborted) setSubscribed(true);
+      .then((res) => {
+        if (controller.signal.aborted) return;
+        setSubscribed(true);
+        // Demo mode or inline hosts may return `turns` directly on the subscribe response.
+        if (res && Array.isArray(res.turns)) {
+          clearTimeout(initialGuardTimer);
+          applySnapshot(res);
+        }
       })
-      .catch((err) => console.warn("Chat subscribe failed, falling back to polling:", err));
+      .catch((err) => {
+        console.warn("Chat subscribe failed, falling back to polling:", err);
+        clearTimeout(initialGuardTimer);
+        startFallbackPolling();
+      });
     const mountedEndpoint = wsClient.getEndpoint();
     return () => {
       controller.abort();
+      clearTimeout(initialGuardTimer);
+      if (fallbackPoll !== null) clearInterval(fallbackPoll);
       offEvent();
       setSubscribed(false);
       if (wsClient.getEndpoint() === mountedEndpoint && wsClient.getState() === "connected") {
@@ -308,42 +382,73 @@ export function SurfaceDetailView({
     agentSessionId,
     agentKindForSub,
     applySnapshot,
+    loadSessionTurns,
   ]);
 
-  // Reset paging when switching surface.
+  // Hydrate from two-tier cache (instead of wiping to blank) if identity changes without remounting.
+  const prevCacheIdentityRef = useRef(cacheIdentity);
   useEffect(() => {
-    setTurnLimit(TURN_PAGE_SIZE);
-    turnLimitRef.current = TURN_PAGE_SIZE;
-    setHasMoreHistory(false);
-    setTurns([]);
-    setInitialLoading(true);
-  }, [surfaceKey]);
+    if (prevCacheIdentityRef.current === cacheIdentity) return;
+    prevCacheIdentityRef.current = cacheIdentity;
+    const cached = peekCachedChatTranscript(cacheIdentity);
+    snapshotSeenRef.current = false;
+    setSnapshotConfirmed(false);
+    setTurnLimit(INITIAL_TURN_PAGE_SIZE);
+    turnLimitRef.current = INITIAL_TURN_PAGE_SIZE;
+    beforeOffsetRef.current = cached?.beforeOffset ?? null;
+    setHasMoreHistory(cached?.hasMore ?? false);
+    setTurns(cached?.turns ?? []);
+    setInitialLoading(!cached || cached.turns.length === 0);
+  }, [cacheIdentity]);
 
   const handleLoadOlder = useCallback(async () => {
     if (loadingOlder || !hasMoreHistory) return;
     setLoadingOlder(true);
-    const next = Math.min(MAX_TURN_LIMIT, turnLimit + TURN_PAGE_SIZE);
+    const capturedCursor = beforeOffsetRef.current;
     try {
-      const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
-        surface_id: surface.id || surface.ref,
-        session_id: agentSid,
-        agent_kind: agentKd,
-        max_turns: next,
-      });
-      if (resp) applySnapshot(resp);
-      setTurnLimit(next);
-      turnLimitRef.current = next;
-      if (subscribedRef.current && wsClient.getState() === "connected") {
-        void wsClient
-          .call("mobile.chat.subscribe", {
-            surface_id: surfaceKey,
-            session_id: agentSessionId,
-            agent_kind: agentKindForSub,
-            max_turns: next,
-          })
-          .catch(() => {});
+      if (capturedCursor !== null) {
+        // Cursor-based reverse tail read: fetch only the preceding page before `capturedCursor`.
+        const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
+          surface_id: surface.id || surface.ref,
+          session_id: agentSid,
+          agent_kind: agentKd,
+          max_turns: OLDER_TURN_PAGE_SIZE,
+          before_offset: capturedCursor,
+        });
+        if (resp && Array.isArray(resp.turns) && beforeOffsetRef.current === capturedCursor) {
+          beforeOffsetRef.current = resp.before_offset ?? null;
+          setTurns((prev) => {
+            const next = prependOlderTurns(resp.turns ?? [], prev);
+            return next.length > MAX_TURN_LIMIT ? next.slice(next.length - MAX_TURN_LIMIT) : next;
+          });
+          const more = Boolean(resp.has_more && resp.before_offset != null);
+          setHasMoreHistory(more);
+        }
+      } else {
+        // Non-cursor fallback (OpenCode SQLite or older gateways): grow window while preserving streamed tail.
+        const next = Math.min(
+          MAX_TURN_LIMIT,
+          Math.max(turnLimit, turns.length) + OLDER_TURN_PAGE_SIZE,
+        );
+        const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
+          surface_id: surface.id || surface.ref,
+          session_id: agentSid,
+          agent_kind: agentKd,
+          max_turns: next,
+        });
+        if (resp && Array.isArray(resp.turns)) {
+          setTurns((prev) => {
+            const lastOlderId = resp.turns?.[resp.turns.length - 1]?.id;
+            const liveTailIdx = lastOlderId ? prev.findIndex((t) => t.id === lastOlderId) : -1;
+            return liveTailIdx === -1
+              ? resp.turns!
+              : [...resp.turns!, ...prev.slice(liveTailIdx + 1)];
+          });
+          setTurnLimit(next);
+          turnLimitRef.current = next;
+          setHasMoreHistory(Boolean(resp.has_more) && next < MAX_TURN_LIMIT);
+        }
       }
-      if (next >= MAX_TURN_LIMIT) setHasMoreHistory(false);
     } catch (err) {
       console.warn("Failed to load older turns:", err);
     } finally {
@@ -353,30 +458,12 @@ export function SurfaceDetailView({
     loadingOlder,
     hasMoreHistory,
     turnLimit,
+    turns.length,
     surface.id,
     surface.ref,
-    surfaceKey,
     agentSid,
     agentKd,
-    agentSessionId,
-    agentKindForSub,
-    applySnapshot,
   ]);
-
-  // Fetch initial snapshot once on chat mount; poll only as a fallback when push subscription is inactive.
-  useEffect(() => {
-    if (connState !== "connected" || !chatSubscriptionEnabled) return;
-    if (!subscribedRef.current) {
-      void loadSessionTurns();
-    }
-    if (subscribed) return;
-    const interval = setInterval(() => {
-      if (typeof document === "undefined" || document.visibilityState === "visible") {
-        void loadSessionTurns();
-      }
-    }, 2000);
-    return () => clearInterval(interval);
-  }, [connState, chatSubscriptionEnabled, loadSessionTurns, subscribed]);
 
   // One-shot startup-dialog check when opening a plain shell surface without an active agent hook.
   useEffect(() => {
@@ -886,7 +973,7 @@ export function SurfaceDetailView({
             turns={displayTurns}
             isLoading={initialLoading}
             agentKind={surface.agent?.agent_kind || "agent"}
-            startupDialog={startupDialog}
+            startupDialog={snapshotConfirmed ? startupDialog : null}
             onAnswerDialog={handleAnswerDialog}
             onOpenTerminal={() => setViewMode("terminal")}
             hasMoreHistory={hasMoreHistory}
@@ -895,7 +982,7 @@ export function SurfaceDetailView({
             isWorking={isWorking || hasFreshPending}
             lifecycleState={lifecycleState}
             activityText={activityText}
-            awaitingPrompt={awaitingPrompt}
+            awaitingPrompt={snapshotConfirmed ? awaitingPrompt : null}
             onSend={handleSendPrompt}
             onUploadImage={handleUploadImage}
             surfaceId={surface.id || surface.ref}

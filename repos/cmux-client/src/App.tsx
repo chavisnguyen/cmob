@@ -43,6 +43,7 @@ import type {
 import { RPC_EVENTS, RPC_METHODS } from "./protocol/rpc";
 import { wsClient, type ConnectionState } from "./transport/wsClient";
 import { pushManager } from "./notifications/pushManager";
+import { peekCachedWorkspaces, writeCachedWorkspaces } from "./hosts/workspaceCache";
 import {
   isAlertSuppressedForView,
   loadLocalNotificationPrefs,
@@ -167,14 +168,37 @@ function mergeWorkspaces(prev: WorkspaceNode[], next: WorkspaceNode[]): Workspac
 }
 
 export function App() {
+  const isDesktop = useIsDesktop();
   const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
-  const [workspaces, setWorkspaces] = useState<WorkspaceNode[]>([]);
+  const [workspaces, setWorkspaces] = useState<WorkspaceNode[]>(() =>
+    peekCachedWorkspaces(wsClient.getEndpoint()),
+  );
   const [loading, setLoading] = useState(false);
   const [mainTab, setMainTab] = useState<"workspaces" | "usage" | "devices">("workspaces");
   const [showHostSheet, setShowHostSheet] = useState(false);
   const [activeView, setActiveView] = useState<"workspaces" | "surfaces" | "detail">("workspaces");
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceNode | null>(null);
-  const [selectedSurface, setSelectedSurface] = useState<SurfaceNode | null>(null);
+  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceNode | null>(() =>
+    isDesktop && workspaces.length > 0
+      ? reconcileSelection({
+          workspaces,
+          selectedWorkspace: null,
+          selectedSurface: null,
+          isDesktop: true,
+          hasPendingJump: false,
+        }).workspace
+      : null,
+  );
+  const [selectedSurface, setSelectedSurface] = useState<SurfaceNode | null>(() =>
+    isDesktop && workspaces.length > 0
+      ? reconcileSelection({
+          workspaces,
+          selectedWorkspace: null,
+          selectedSurface: null,
+          isDesktop: true,
+          hasPendingJump: false,
+        }).surface
+      : null,
+  );
   const [tokenInput, setTokenInput] = useState(wsClient.getToken());
   const [showTokenModal, setShowTokenModal] = useState(false);
   const [showAppMenu, setShowAppMenu] = useState(false);
@@ -193,7 +217,6 @@ export function App() {
   );
   const [activeToasts, setActiveToasts] = useState<NotificationAlertPayload[]>([]);
 
-  const isDesktop = useIsDesktop();
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarNewWs, setSidebarNewWs] = useState<WorkspaceNode | null>(null);
   const [sidebarCloseTarget, setSidebarCloseTarget] = useState<{
@@ -362,6 +385,7 @@ export function App() {
         if (merged !== workspacesRef.current) {
           setWorkspaces(merged);
         }
+        writeCachedWorkspaces(wsClient.getEndpoint(), merged);
 
         const reconciled = reconcileSelection({
           workspaces: merged,
@@ -398,7 +422,9 @@ export function App() {
       if (!isDesktopRef.current) {
         replaceView("workspaces");
       }
-      setWorkspaces([]);
+      const cachedForHost = peekCachedWorkspaces(host.endpoint);
+      setWorkspaces(cachedForHost);
+      workspacesRef.current = cachedForHost;
       setChangesWs(null);
       for (const timer of toastTimersRef.current.values()) {
         clearTimeout(timer);

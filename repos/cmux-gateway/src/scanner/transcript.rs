@@ -36,8 +36,6 @@ fn cap_detail(s: String) -> String {
 #[derive(Default, Clone)]
 struct CodexState {
     paginated: bool,
-    /// Path of the rollout being parsed; child rollouts are located relative to it.
-    rollout_path: Option<std::path::PathBuf>,
     /// `spawn_agent` call_id -> role label parsed from the prompt ("You are the `Role`").
     spawn_roles: std::collections::HashMap<String, String>,
     /// call_ids of spawn/wait/close_agent calls: folded into the subagent card, not shown as tool rows.
@@ -64,7 +62,7 @@ fn codex_role_from_prompt(msg: &str) -> Option<String> {
 
 /// Add a spawned child to the turn's single "codex-subagents" card.
 fn codex_push_subagent(
-    state: &CodexState,
+    _state: &CodexState,
     surface_id: &str,
     current_turn: &mut Option<AgentTurn>,
     turns: &mut Vec<AgentTurn>,
@@ -76,15 +74,13 @@ fn codex_push_subagent(
         Some(role) => format!("{role} ({nickname})"),
         None => nickname.to_string(),
     };
-    let (child_state, tokens) = match state.rollout_path.as_deref() {
-        Some(parent) => codex_child_status(parent, agent_id),
-        None => (SubagentState::Unverifiable, None),
-    };
+    // Defer child rollout file I/O until `refresh_working_codex_subagents` runs on the final
+    // visible slice so historical turns outside the window never touch child rollout files.
     let entry = SubagentEntry {
         id: agent_id.to_string(),
         label,
-        state: child_state,
-        tokens,
+        state: SubagentState::Working,
+        tokens: None,
         started_at: None,
         settled_at: None,
     };
@@ -191,17 +187,478 @@ fn assistant_turn<'a>(
     })
 }
 
+/// Reverse tail-chunk size (matches Orca `TAIL_CHUNK_BYTES = 64 * 1024` in `transcript-tail-boundary.ts:4`).
+const TAIL_CHUNK_BYTES: u64 = 64 * 1024;
+/// Files up to 128 KiB are read from byte 0 in one pass; larger transcripts seek from the tail.
+const TAIL_WINDOW_THRESHOLD_BYTES: u64 = 128 * 1024;
+/// Skip individual JSONL records over 2 MiB (matches Orca `MAX_NATIVE_CHAT_TRANSCRIPT_RECORD_BYTES`).
+const MAX_RECORD_BYTES: usize = 2 * 1024 * 1024;
+/// Maximum bytes scanned backwards in a single page request on pathological transcripts without user turns.
+const MAX_WINDOW_SCAN_BYTES: u64 = 16 * 1024 * 1024;
+
+#[derive(Debug, Clone)]
+pub struct TranscriptPage {
+    pub turns: Vec<AgentTurn>,
+    pub has_more: bool,
+    pub before_offset: Option<u64>,
+    pub total_turns: usize,
+}
+
 struct CachedTranscript {
     mtime_ns: u128,
+    window_start_offset: u64,
     byte_offset: u64,
     turns: Vec<AgentTurn>,
+    turn_offsets: Vec<u64>,
     current_turn: Option<AgentTurn>,
+    current_turn_offset: Option<u64>,
     codex: CodexState,
 }
 
-static TRANSCRIPT_CACHE: LazyLock<Mutex<HashMap<(PathBuf, String), CachedTranscript>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
-const MAX_TRANSCRIPT_CACHE: usize = 32;
+type CacheKey = (PathBuf, String);
+type CacheSlot = std::sync::Arc<Mutex<Option<CachedTranscript>>>;
+
+struct TranscriptCacheMap {
+    clock: u64,
+    entries: HashMap<CacheKey, (u64, CacheSlot)>,
+}
+
+static TRANSCRIPT_CACHE: LazyLock<Mutex<TranscriptCacheMap>> = LazyLock::new(|| {
+    Mutex::new(TranscriptCacheMap {
+        clock: 0,
+        entries: HashMap::new(),
+    })
+});
+const MAX_TRANSCRIPT_CACHE: usize = 64;
+
+fn get_transcript_cache_slot(key: CacheKey) -> CacheSlot {
+    let mut store = TRANSCRIPT_CACHE.lock().unwrap_or_else(|e| e.into_inner());
+    store.clock = store.clock.wrapping_add(1);
+    let tick = store.clock;
+    if let Some((used_at, slot)) = store.entries.get_mut(&key) {
+        *used_at = tick;
+        return std::sync::Arc::clone(slot);
+    }
+    while store.entries.len() >= MAX_TRANSCRIPT_CACHE {
+        let Some(oldest_key) = store
+            .entries
+            .iter()
+            .min_by_key(|(_, (used_at, _))| *used_at)
+            .map(|(k, _)| k.clone())
+        else {
+            break;
+        };
+        store.entries.remove(&oldest_key);
+    }
+    let slot = std::sync::Arc::new(Mutex::new(None));
+    store.entries.insert(key, (tick, std::sync::Arc::clone(&slot)));
+    slot
+}
+
+/// Fast byte-level check for records that may open a new `User` turn, avoiding full JSON decode while
+/// scanning `64 KiB` chunks backwards.
+fn is_likely_user_turn_record(line: &str) -> bool {
+    line.contains("\"USER_INPUT\"")
+        || line.contains("\"UserMessage\"")
+        || (line.contains("\"user\"") && !line.contains("\"tool_result\""))
+}
+
+/// Read line 1 (up to 4 KiB) to detect Codex `session_meta.history_mode == "paginated"` when tail-seeking.
+fn read_codex_header_state(file: &mut File) -> CodexState {
+    let mut codex = CodexState::default();
+    if file.seek(SeekFrom::Start(0)).is_err() {
+        return codex;
+    }
+    let mut header_buf = vec![0u8; 4096];
+    let Ok(n) = file.read(&mut header_buf) else {
+        return codex;
+    };
+    if n == 0 {
+        return codex;
+    }
+    let slice = match header_buf[..n].iter().position(|&b| b == b'\n') {
+        Some(nl) => &header_buf[..nl],
+        None if n < header_buf.len() => &header_buf[..n],
+        None => return codex,
+    };
+    let line = String::from_utf8_lossy(slice);
+    if let Ok(val) = serde_json::from_str::<serde_json::Value>(line.trim()) {
+        if val.get("type").and_then(|t| t.as_str()) == Some("session_meta") {
+            codex.paginated = val
+                .get("payload")
+                .and_then(|p| p.get("history_mode"))
+                .and_then(|m| m.as_str())
+                == Some("paginated");
+        }
+    }
+    codex
+}
+
+/// Feed one line while recording the file byte offset of every newly created turn and assigning
+/// byte-anchored turn IDs (`turn-@<offset>`) whenever parsing starts mid-file (`offset_anchored`).
+fn parse_line_with_offsets(
+    trimmed: &str,
+    line_offset: u64,
+    offset_anchored: bool,
+    surface_id: &str,
+    codex: &mut CodexState,
+    current_turn: &mut Option<AgentTurn>,
+    current_turn_offset: &mut Option<u64>,
+    turns: &mut Vec<AgentTurn>,
+    turn_offsets: &mut Vec<u64>,
+) {
+    let prev_len = turns.len();
+    let prev_had_current = current_turn.is_some();
+    let prev_current_off = *current_turn_offset;
+
+    parse_transcript_line(trimmed, surface_id, codex, current_turn, turns);
+
+    let added = turns.len().saturating_sub(prev_len);
+    if added > 0 {
+        for i in 0..added {
+            let idx = prev_len + i;
+            let off = if i == 0 && prev_had_current {
+                prev_current_off.unwrap_or(line_offset)
+            } else {
+                line_offset
+            };
+            if offset_anchored {
+                turns[idx].id = format!("turn-@{off}");
+            }
+            turn_offsets.push(off);
+        }
+    }
+
+    if let Some(ct) = current_turn.as_mut() {
+        if !prev_had_current || added > 0 {
+            *current_turn_offset = Some(line_offset);
+            if offset_anchored {
+                ct.id = format!("turn-@{line_offset}");
+            }
+        }
+    } else {
+        *current_turn_offset = None;
+    }
+}
+
+/// Determine the last safe byte offset `<= end_limit` to consume. At live EOF (`check_partial_tail`),
+/// an unterminated trailing line that is not yet valid JSON is held back for the next incremental read.
+fn find_consumable_end(
+    file: &mut File,
+    end_limit: u64,
+    check_partial_tail: bool,
+) -> Result<u64, std::io::Error> {
+    if end_limit == 0 {
+        return Ok(0);
+    }
+    if !check_partial_tail {
+        return Ok(end_limit);
+    }
+    let mut byte = [0u8; 1];
+    file.seek(SeekFrom::Start(end_limit - 1))?;
+    if file.read(&mut byte)? == 1 && byte[0] == b'\n' {
+        return Ok(end_limit);
+    }
+    // Scan backwards in 64 KiB chunks to find the start of the unterminated trailing line.
+    let mut cursor = end_limit;
+    let mut tail_parts: Vec<Vec<u8>> = Vec::new();
+    let mut total_tail = 0usize;
+    while cursor > 0 {
+        let start = cursor.saturating_sub(TAIL_CHUNK_BYTES);
+        let chunk_len = (cursor - start) as usize;
+        let mut buf = vec![0u8; chunk_len];
+        file.seek(SeekFrom::Start(start))?;
+        file.read_exact(&mut buf)?;
+        if let Some(pos) = buf.iter().rposition(|&b| b == b'\n') {
+            let after_nl = &buf[pos + 1..];
+            total_tail += after_nl.len();
+            if total_tail > MAX_RECORD_BYTES {
+                return Ok(end_limit);
+            }
+            let mut full = Vec::with_capacity(total_tail);
+            full.extend_from_slice(after_nl);
+            for part in tail_parts.into_iter().rev() {
+                full.extend_from_slice(&part);
+            }
+            let s = String::from_utf8_lossy(&full);
+            let trimmed = s.trim();
+            if trimmed.is_empty() || serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+                return Ok(end_limit);
+            }
+            return Ok(start + pos as u64 + 1);
+        }
+        total_tail += chunk_len;
+        if total_tail > MAX_RECORD_BYTES {
+            return Ok(end_limit);
+        }
+        tail_parts.push(buf);
+        cursor = start;
+    }
+    let mut full = Vec::with_capacity(total_tail);
+    for part in tail_parts.into_iter().rev() {
+        full.extend_from_slice(&part);
+    }
+    let s = String::from_utf8_lossy(&full);
+    let trimmed = s.trim();
+    if trimmed.is_empty() || serde_json::from_str::<serde_json::Value>(trimmed).is_ok() {
+        Ok(end_limit)
+    } else {
+        Ok(0)
+    }
+}
+
+/// Read a bounded tail window ending at `end_limit` by stepping backwards in `64 KiB` chunks
+/// (Orca `readNativeChatTranscriptTailFile` pattern) and assembling complete `AgentTurn`s.
+fn read_tail_window(
+    file: &mut File,
+    surface_id: &str,
+    end_limit: u64,
+    needed_turns: usize,
+    is_live_tail: bool,
+) -> Result<CachedTranscript, std::io::Error> {
+    let consumed_to = find_consumable_end(file, end_limit, is_live_tail)?;
+    let base_codex = if consumed_to > TAIL_WINDOW_THRESHOLD_BYTES {
+        read_codex_header_state(file)
+    } else {
+        CodexState::default()
+    };
+
+    if consumed_to == 0 {
+        return Ok(CachedTranscript {
+            mtime_ns: 0,
+            window_start_offset: 0,
+            byte_offset: 0,
+            turns: Vec::new(),
+            turn_offsets: Vec::new(),
+            current_turn: None,
+            current_turn_offset: None,
+            codex: base_codex,
+        });
+    }
+
+    // Small files (<= 128 KiB): single forward pass from byte 0 preserves sequential `turn-N` IDs.
+    if consumed_to <= TAIL_WINDOW_THRESHOLD_BYTES && is_live_tail {
+        file.seek(SeekFrom::Start(0))?;
+        let mut reader = BufReader::new(file.try_clone()?);
+        let mut offset = 0u64;
+        let mut line_buf = Vec::new();
+        let mut codex = base_codex;
+        let mut turns = Vec::new();
+        let mut turn_offsets = Vec::new();
+        let mut current_turn = None;
+        let mut current_turn_offset = None;
+
+        while offset < consumed_to {
+            line_buf.clear();
+            let n = reader.read_until(b'\n', &mut line_buf)?;
+            if n == 0 {
+                break;
+            }
+            let line_start = offset;
+            offset = (offset + n as u64).min(consumed_to);
+            if line_buf.len() <= MAX_RECORD_BYTES {
+                let text = String::from_utf8_lossy(&line_buf);
+                let trimmed = text.trim();
+                if !trimmed.is_empty() {
+                    parse_line_with_offsets(
+                        trimmed,
+                        line_start,
+                        false,
+                        surface_id,
+                        &mut codex,
+                        &mut current_turn,
+                        &mut current_turn_offset,
+                        &mut turns,
+                        &mut turn_offsets,
+                    );
+                }
+            }
+        }
+        return Ok(CachedTranscript {
+            mtime_ns: 0,
+            window_start_offset: 0,
+            byte_offset: consumed_to,
+            turns,
+            turn_offsets,
+            current_turn,
+            current_turn_offset,
+            codex,
+        });
+    }
+
+    // Large files or `before_offset` cursor reads: walk backwards in 64 KiB chunks.
+    let target_user_boundaries = (needed_turns / 2).saturating_add(3);
+    let mut cursor = consumed_to;
+    // Check if last byte is `\n` so we don't emit a bogus empty trailing segment.
+    let mut last_byte = [0u8; 1];
+    file.seek(SeekFrom::Start(consumed_to - 1))?;
+    if file.read(&mut last_byte)? == 1 && last_byte[0] == b'\n' {
+        cursor -= 1;
+    }
+
+    let mut carry_parts: Vec<Vec<u8>> = Vec::new();
+    let mut carry_bytes = 0usize;
+    let mut carry_oversized = false;
+    let mut rev_lines: Vec<(u64, String)> = Vec::new();
+    let mut user_boundaries = 0usize;
+    let mut scanned_bytes = 0u64;
+
+    let push_assembled_line = |line_offset: u64,
+                               parts: &mut Vec<Vec<u8>>,
+                               bytes_len: &mut usize,
+                               oversized: &mut bool,
+                               out: &mut Vec<(u64, String)>,
+                               boundaries: &mut usize| {
+        if !*oversized && *bytes_len > 0 {
+            let text = if parts.len() == 1 {
+                String::from_utf8_lossy(&parts[0]).into_owned()
+            } else {
+                let mut joined = Vec::with_capacity(*bytes_len);
+                for p in parts.iter().rev() {
+                    joined.extend_from_slice(p);
+                }
+                String::from_utf8_lossy(&joined).into_owned()
+            };
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                if is_likely_user_turn_record(trimmed) {
+                    *boundaries += 1;
+                }
+                out.push((line_offset, trimmed.to_string()));
+            }
+        }
+        parts.clear();
+        *bytes_len = 0;
+        *oversized = false;
+    };
+
+    loop {
+        while cursor > 0 && user_boundaries < target_user_boundaries && scanned_bytes < MAX_WINDOW_SCAN_BYTES {
+            let start = cursor.saturating_sub(TAIL_CHUNK_BYTES);
+            let chunk_len = (cursor - start) as usize;
+            let mut buf = vec![0u8; chunk_len];
+            file.seek(SeekFrom::Start(start))?;
+            file.read_exact(&mut buf)?;
+            scanned_bytes += chunk_len as u64;
+
+            let mut seg_end = chunk_len;
+            for idx in (0..chunk_len).rev() {
+                if buf[idx] != b'\n' {
+                    continue;
+                }
+                let seg = &buf[idx + 1..seg_end];
+                if !carry_oversized {
+                    carry_bytes += seg.len();
+                    if carry_bytes > MAX_RECORD_BYTES {
+                        carry_parts.clear();
+                        carry_oversized = true;
+                    } else if !seg.is_empty() {
+                        carry_parts.push(seg.to_vec());
+                    }
+                }
+                push_assembled_line(
+                    start + idx as u64 + 1,
+                    &mut carry_parts,
+                    &mut carry_bytes,
+                    &mut carry_oversized,
+                    &mut rev_lines,
+                    &mut user_boundaries,
+                );
+                seg_end = idx;
+                if user_boundaries >= target_user_boundaries {
+                    cursor = start + idx as u64;
+                    break;
+                }
+            }
+
+            if user_boundaries >= target_user_boundaries {
+                break;
+            }
+
+            if seg_end > 0 && !carry_oversized {
+                let rem = &buf[..seg_end];
+                carry_bytes += rem.len();
+                if carry_bytes > MAX_RECORD_BYTES {
+                    carry_parts.clear();
+                    carry_oversized = true;
+                } else {
+                    carry_parts.push(rem.to_vec());
+                }
+            }
+            cursor = start;
+        }
+
+        if cursor == 0 && (carry_bytes > 0 || carry_oversized) {
+            push_assembled_line(
+                0,
+                &mut carry_parts,
+                &mut carry_bytes,
+                &mut carry_oversized,
+                &mut rev_lines,
+                &mut user_boundaries,
+            );
+        }
+
+        // Parse collected lines in chronological order.
+        let offset_anchored = cursor > 0 || !is_live_tail;
+        let mut codex = base_codex.clone();
+        let mut turns = Vec::new();
+        let mut turn_offsets = Vec::new();
+        let mut current_turn = None;
+        let mut current_turn_offset = None;
+
+        for (line_off, trimmed) in rev_lines.iter().rev() {
+            parse_line_with_offsets(
+                trimmed,
+                *line_off,
+                offset_anchored,
+                surface_id,
+                &mut codex,
+                &mut current_turn,
+                &mut current_turn_offset,
+                &mut turns,
+                &mut turn_offsets,
+            );
+        }
+
+        // When starting mid-file (`cursor > 0`), drop any leading partial assistant events that
+        // preceded the first complete `User` turn in our window so the boundary turn is whole.
+        if cursor > 0 {
+            if let Some(first_user_idx) = turns.iter().position(|t| t.role == AgentRole::User) {
+                if first_user_idx > 0 {
+                    turns.drain(0..first_user_idx);
+                    turn_offsets.drain(0..first_user_idx);
+                }
+            }
+        }
+
+        let total_parsed = turns.len() + usize::from(current_turn.is_some());
+        if total_parsed >= needed_turns || cursor == 0 || scanned_bytes >= MAX_WINDOW_SCAN_BYTES {
+            let window_start = if cursor == 0 {
+                0
+            } else {
+                turn_offsets
+                    .first()
+                    .copied()
+                    .or(current_turn_offset)
+                    .unwrap_or(cursor)
+            };
+            return Ok(CachedTranscript {
+                mtime_ns: 0,
+                window_start_offset: window_start,
+                byte_offset: consumed_to,
+                turns,
+                turn_offsets,
+                current_turn,
+                current_turn_offset,
+                codex,
+            });
+        }
+
+        // Some `"user"` lines were tool results/echoes; pull a couple more user boundaries.
+        user_boundaries = 0;
+    }
+}
 
 fn file_mtime_len(path: &Path) -> Result<(u128, u64), std::io::Error> {
     let meta = std::fs::metadata(path)?;
@@ -553,77 +1010,181 @@ impl TranscriptReader {
         Self::read_recent_turns_page(transcript_path, surface_id, max_turns).map(|(turns, _)| turns)
     }
 
-    /// Incrementally parses JSONL transcripts by tracking byte offset per `(path, surface_id)`.
+    /// Incrementally parses JSONL transcripts by tracking byte offset per `(path, surface_id)`,
+    /// seeking backwards in `64 KiB` chunks on cold opens and `before_offset` pagination.
     pub fn read_recent_turns_page(
         transcript_path: &Path,
         surface_id: &str,
         max_turns: usize,
     ) -> Result<(Vec<AgentTurn>, usize), std::io::Error> {
+        let page = Self::read_turns_page(transcript_path, surface_id, max_turns, None)?;
+        Ok((page.turns, page.total_turns))
+    }
+
+    pub fn read_turns_page(
+        transcript_path: &Path,
+        surface_id: &str,
+        max_turns: usize,
+        before_offset: Option<u64>,
+    ) -> Result<TranscriptPage, std::io::Error> {
         if let Some((db, session_id)) = crate::scanner::opencode_store::parse_pseudo_path(transcript_path) {
-            return crate::scanner::opencode_store::read_recent_turns_page(&db, &session_id, surface_id, max_turns)
-                .map_err(std::io::Error::other);
+            let (turns, total_turns) =
+                crate::scanner::opencode_store::read_recent_turns_page(&db, &session_id, surface_id, max_turns)
+                    .map_err(std::io::Error::other)?;
+            let has_more = total_turns > turns.len();
+            return Ok(TranscriptPage {
+                turns,
+                has_more,
+                before_offset: None,
+                total_turns,
+            });
         }
         if !transcript_path.exists() {
-            return Ok((Vec::new(), 0));
+            return Ok(TranscriptPage {
+                turns: Vec::new(),
+                has_more: false,
+                before_offset: None,
+                total_turns: 0,
+            });
         }
 
         let (mtime_ns, len) = file_mtime_len(transcript_path)?;
-        let cache_key = (transcript_path.to_path_buf(), surface_id.to_string());
 
-        let cached_opt = TRANSCRIPT_CACHE.lock().ok().and_then(|mut c| {
-            let hit = c.remove(&cache_key)?;
-            let reusable = len > hit.byte_offset || (len == hit.byte_offset && mtime_ns == hit.mtime_ns);
-            reusable.then_some(hit)
-        });
-
-        let mut cached = cached_opt.unwrap_or_else(|| CachedTranscript {
-            mtime_ns: 0,
-            byte_offset: 0,
-            turns: Vec::new(),
-            current_turn: None,
-            codex: CodexState {
-                rollout_path: Some(transcript_path.to_path_buf()),
-                ..Default::default()
-            },
-        });
-
-        if len > cached.byte_offset {
-            let mut file = File::open(transcript_path)?;
-            file.seek(SeekFrom::Start(cached.byte_offset))?;
-            let mut reader = BufReader::new(file);
-            let mut offset = cached.byte_offset;
-            let mut line_buf = Vec::new();
-            loop {
-                line_buf.clear();
-                let n = reader.read_until(b'\n', &mut line_buf)?;
-                if n == 0 {
-                    break;
-                }
-                let ends_nl = line_buf.ends_with(b"\n");
-                let text = String::from_utf8_lossy(&line_buf);
-                let trimmed = text.trim();
-                if !ends_nl && !trimmed.is_empty() && serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
-                    // Partial line still being written; stop advancing offset here so next tick finishes it.
-                    break;
-                }
-                offset += n as u64;
-                if !trimmed.is_empty() {
-                    parse_transcript_line(
-                        trimmed,
-                        surface_id,
-                        &mut cached.codex,
-                        &mut cached.current_turn,
-                        &mut cached.turns,
-                    );
-                }
+        // Cursor-based historical page (`before_offset`): read backwards from `cursor` without
+        // disturbing the live tail cache.
+        if let Some(cursor) = before_offset {
+            let capped_end = cursor.min(len);
+            if capped_end == 0 || max_turns == 0 {
+                return Ok(TranscriptPage {
+                    turns: Vec::new(),
+                    has_more: false,
+                    before_offset: None,
+                    total_turns: 0,
+                });
             }
-            cached.byte_offset = offset;
-            cached.mtime_ns = mtime_ns;
+            let mut file = File::open(transcript_path)?;
+            let mut win = read_tail_window(
+                &mut file,
+                surface_id,
+                capped_end,
+                max_turns,
+                false,
+            )?;
+            if let Some(ct) = win.current_turn.take() {
+                let off = win.current_turn_offset.unwrap_or(win.window_start_offset);
+                win.turns.push(ct);
+                win.turn_offsets.push(off);
+            }
+            let avail = win.turns.len();
+            let start_idx = avail.saturating_sub(max_turns);
+            let first_offset = win.turn_offsets.get(start_idx).copied().unwrap_or(0);
+            let mut slice = win.turns[start_idx..].to_vec();
+            refresh_working_codex_subagents(transcript_path, &mut slice);
+            let has_more = (start_idx > 0 || win.window_start_offset > 0) && first_offset > 0;
+            return Ok(TranscriptPage {
+                total_turns: slice.len() + usize::from(has_more),
+                turns: slice,
+                has_more,
+                before_offset: has_more.then_some(first_offset),
+            });
         }
 
-        let total = cached.turns.len() + usize::from(cached.current_turn.is_some());
-        let tail_start = total.saturating_sub(max_turns);
-        let mut slice: Vec<AgentTurn> = if tail_start < cached.turns.len() {
+        // Live tail read: per-(path, surface_id) singleflight mutex inside a bounded LRU map.
+        let cache_key = (transcript_path.to_path_buf(), surface_id.to_string());
+        let slot = get_transcript_cache_slot(cache_key);
+        let mut guard = slot.lock().unwrap_or_else(|e| e.into_inner());
+
+        let needs_rebuild = match guard.as_ref() {
+            None => true,
+            Some(hit) => {
+                let reusable = len > hit.byte_offset || (len == hit.byte_offset && mtime_ns == hit.mtime_ns);
+                let have_turns = hit.turns.len() + usize::from(hit.current_turn.is_some());
+                !reusable || (hit.window_start_offset > 0 && have_turns < max_turns)
+            }
+        };
+
+        if needs_rebuild {
+            let mut file = File::open(transcript_path)?;
+            let mut fresh = read_tail_window(
+                &mut file,
+                surface_id,
+                len,
+                max_turns,
+                true,
+            )?;
+            fresh.mtime_ns = mtime_ns;
+            *guard = Some(fresh);
+        } else if let Some(cached) = guard.as_mut() {
+            if len > cached.byte_offset {
+                let mut file = File::open(transcript_path)?;
+                file.seek(SeekFrom::Start(cached.byte_offset))?;
+                let mut reader = BufReader::new(file);
+                let mut offset = cached.byte_offset;
+                let mut line_buf = Vec::new();
+                let offset_anchored = cached.window_start_offset > 0;
+                loop {
+                    line_buf.clear();
+                    let n = reader.read_until(b'\n', &mut line_buf)?;
+                    if n == 0 {
+                        break;
+                    }
+                    let ends_nl = line_buf.ends_with(b"\n");
+                    if line_buf.len() > MAX_RECORD_BYTES {
+                        if !ends_nl {
+                            break;
+                        }
+                        offset += n as u64;
+                        continue;
+                    }
+                    let text = String::from_utf8_lossy(&line_buf);
+                    let trimmed = text.trim();
+                    if !ends_nl && !trimmed.is_empty() && serde_json::from_str::<serde_json::Value>(trimmed).is_err() {
+                        // Partial line still being written; stop advancing offset here so next tick finishes it.
+                        break;
+                    }
+                    let line_start = offset;
+                    offset += n as u64;
+                    if !trimmed.is_empty() {
+                        parse_line_with_offsets(
+                            trimmed,
+                            line_start,
+                            offset_anchored,
+                            surface_id,
+                            &mut cached.codex,
+                            &mut cached.current_turn,
+                            &mut cached.current_turn_offset,
+                            &mut cached.turns,
+                            &mut cached.turn_offsets,
+                        );
+                    }
+                }
+                cached.byte_offset = offset;
+                cached.mtime_ns = mtime_ns;
+            }
+        }
+
+        let cached = guard.as_mut().expect("cached transcript populated");
+        let total_in_window = cached.turns.len() + usize::from(cached.current_turn.is_some());
+        let tail_start = total_in_window.saturating_sub(max_turns);
+
+        let first_offset = if tail_start < cached.turn_offsets.len() {
+            cached.turn_offsets[tail_start]
+        } else {
+            cached.current_turn_offset.unwrap_or(cached.window_start_offset)
+        };
+
+        // Refresh working Codex subagents directly on the cached tail turns so completed children
+        // stay cached as Completed on subsequent ticks.
+        if tail_start < cached.turns.len() {
+            refresh_working_codex_subagents(transcript_path, &mut cached.turns[tail_start..]);
+        }
+        if let Some(ct) = cached.current_turn.as_mut() {
+            refresh_working_codex_subagents(transcript_path, std::slice::from_mut(ct));
+        }
+
+        let slice: Vec<AgentTurn> = if max_turns == 0 {
+            Vec::new()
+        } else if tail_start < cached.turns.len() {
             let mut out = cached.turns[tail_start..].to_vec();
             if let Some(t) = &cached.current_turn {
                 out.push(t.clone());
@@ -635,16 +1196,19 @@ impl TranscriptReader {
             Vec::new()
         };
 
-        if let Ok(mut c) = TRANSCRIPT_CACHE.lock() {
-            if c.len() >= MAX_TRANSCRIPT_CACHE {
-                c.clear();
-            }
-            c.insert(cache_key, cached);
-        }
+        let has_more = (tail_start > 0 || cached.window_start_offset > 0) && first_offset > 0;
+        let total_turns = if cached.window_start_offset == 0 {
+            total_in_window
+        } else {
+            total_in_window.max(slice.len() + usize::from(has_more))
+        };
 
-        refresh_working_codex_subagents(transcript_path, &mut slice);
-
-        Ok((slice, total))
+        Ok(TranscriptPage {
+            turns: slice,
+            has_more,
+            before_offset: has_more.then_some(first_offset),
+            total_turns,
+        })
     }
 
     fn parse_ask_event(name: &str, args: Option<&serde_json::Value>) -> Option<AgentEvent> {
@@ -1451,5 +2015,81 @@ mod tests {
     #[allow(non_snake_case)]
     fn Self_parse(v: serde_json::Value, cur: &mut Option<AgentTurn>, turns: &mut Vec<AgentTurn>) {
         TranscriptReader::parse_claude_line(v, "s", cur, turns);
+    }
+
+    #[test]
+    fn large_transcript_tail_window_and_before_offset_pagination() {
+        let path = std::env::temp_dir().join(format!("cmux-tail-win-{}.jsonl", uuid::Uuid::new_v4()));
+        let mut f = File::create(&path).unwrap();
+        let padding = "x".repeat(4500);
+        // 40 exchanges = 80 turns (~380 KiB > 128 KiB tail-window threshold).
+        for idx in 0..40 {
+            writeln!(
+                f,
+                r#"{{"type":"user","message":{{"role":"user","content":"prompt-{idx} {padding}"}}}}"#
+            )
+            .unwrap();
+            writeln!(
+                f,
+                r#"{{"type":"assistant","message":{{"content":[{{"type":"text","text":"reply-{idx} {padding}"}}]}}}}"#
+            )
+            .unwrap();
+        }
+        drop(f);
+
+        // Cold tail read of last 10 turns.
+        let tail_page = TranscriptReader::read_turns_page(&path, "surf-tail", 10, None).unwrap();
+        assert_eq!(tail_page.turns.len(), 10);
+        assert!(tail_page.has_more);
+        assert!(tail_page.before_offset.is_some());
+        assert!(tail_page.turns[0].id.starts_with("turn-@"));
+        assert!(matches!(
+            &tail_page.turns[9].events[0],
+            AgentEvent::Assistant { text } if text.starts_with("reply-39 ")
+        ));
+
+        // Walk backwards via `before_offset` cursor until beginning of file.
+        let mut all_turns = tail_page.turns.clone();
+        let mut cursor = tail_page.before_offset;
+        let mut safety = 0;
+        while let Some(off) = cursor {
+            safety += 1;
+            assert!(safety <= 20, "pagination did not converge");
+            let older = TranscriptReader::read_turns_page(&path, "surf-tail", 14, Some(off)).unwrap();
+            assert!(!older.turns.is_empty());
+            let mut combined = older.turns;
+            combined.extend(all_turns);
+            all_turns = combined;
+            cursor = if older.has_more { older.before_offset } else { None };
+        }
+
+        assert_eq!(all_turns.len(), 80);
+        assert!(matches!(
+            &all_turns[0].events[0],
+            AgentEvent::User { text } if text.starts_with("prompt-0 ")
+        ));
+        assert!(matches!(
+            &all_turns[79].events[0],
+            AgentEvent::Assistant { text } if text.starts_with("reply-39 ")
+        ));
+
+        // Incremental append after cold tail open keeps byte-anchored turn IDs.
+        let mut f = std::fs::OpenOptions::new().append(true).open(&path).unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"user","message":{{"role":"user","content":"prompt-40"}}}}"#
+        )
+        .unwrap();
+        drop(f);
+
+        let updated = TranscriptReader::read_turns_page(&path, "surf-tail", 10, None).unwrap();
+        assert_eq!(updated.turns.len(), 10);
+        assert!(updated.turns[9].id.starts_with("turn-@"));
+        assert!(matches!(
+            &updated.turns[9].events[0],
+            AgentEvent::User { text } if text == "prompt-40"
+        ));
+
+        let _ = std::fs::remove_file(&path);
     }
 }
