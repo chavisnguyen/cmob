@@ -6,6 +6,7 @@
  */
 export function plainSnippet(text: string): string {
   return text
+    .replace(/\[Image(?: #(\d+))?(?::[^\]]*)?\]/g, (_, n) => (n ? `🖼 Image ${n}` : "🖼 Image"))
     .replace(/<\/?[a-zA-Z][\w:-]*(\s[^<>]*)?>/g, " ")
     .replace(/```[a-zA-Z0-9_-]*/g, " ")
     .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")

@@ -743,7 +743,9 @@ impl HookStoreIndex {
         }
     }
 
-    /// Get the latest turn snippet (lastBody) for a workspace, if available
+    /// Get the latest turn snippet for a workspace: checks each session newest-first, using
+    /// non-generic `lastBody` when present and falling back to that session's cached transcript
+    /// tail (since Antigravity / OpenCode / SessionStart hooks leave `lastBody: null`).
     pub fn get_workspace_snippet(&self, workspace_id: &str) -> Option<String> {
         let sessions = self.sessions_by_workspace.get(workspace_id)?;
         let mut sorted = sessions.clone();
@@ -756,10 +758,17 @@ impl HookStoreIndex {
         });
 
         for s in sorted {
-            if let Some(body) = s.last_body {
+            if let Some(body) = s.last_body.as_deref() {
                 let trimmed = body.trim();
-                if !trimmed.is_empty() {
+                if !trimmed.is_empty() && !crate::notifications::is_generic_placeholder(trimmed) {
                     return Some(trimmed.to_string());
+                }
+            }
+            if let Some(path) = s.transcript_path.as_deref() {
+                if let Some(from_transcript) =
+                    crate::notifications::cached_transcript_workspace_snippet(path, &s.surface_id)
+                {
+                    return Some(from_transcript);
                 }
             }
         }
@@ -834,6 +843,31 @@ mod tests {
         assert!(index.is_workspace_running("ws1"));
         assert!(!index.is_workspace_running("ws-unknown"));
         assert_eq!(index.get_workspace_snippet("ws1").as_deref(), Some("Working on tests..."));
+
+        // When the newest session (e.g. Antigravity) has `lastBody: None`, `get_workspace_snippet`
+        // reads its transcript tail rather than falling back to an older session or `[Image #1]`.
+        let tmp_tx = std::env::temp_dir().join(format!("cmux-agy-snip-{}.jsonl", uuid::Uuid::new_v4()));
+        std::fs::write(
+            &tmp_tx,
+            "{\"type\":\"USER_INPUT\",\"content\":\"sync messages\"}\n{\"type\":\"PLANNER_RESPONSE\",\"status\":\"DONE\",\"content\":\"Đã sync nốt tin nhắn cuối, commit và push.\"}\n",
+        )
+        .unwrap();
+        let mut agy_record = record_running.clone();
+        agy_record.session_id = "agy-latest".to_string();
+        agy_record.workspace_id = "ws-idbf".to_string();
+        agy_record.last_body = None;
+        agy_record.updated_at = Some(unix_now() + 10.0);
+        agy_record.transcript_path = Some(tmp_tx.to_string_lossy().into_owned());
+        index
+            .sessions_by_workspace
+            .entry("ws-idbf".to_string())
+            .or_default()
+            .push(agy_record);
+        assert_eq!(
+            index.get_workspace_snippet("ws-idbf").as_deref(),
+            Some("Đã sync nốt tin nhắn cuối, commit và push.")
+        );
+        let _ = std::fs::remove_file(&tmp_tx);
         assert_eq!(record_running.resolved_lifecycle(), AgentLifecycleState::Working);
 
         // Test waiting state on needsInput

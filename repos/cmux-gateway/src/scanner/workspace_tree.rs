@@ -245,11 +245,6 @@ impl WorkspaceTreeBuilder {
                 let is_running = hook_index.is_workspace_running(&ws_id);
                 let status = if is_running { "running".to_string() } else { "idle".to_string() };
 
-                // Snippet precedence: hook session lastBody, fallback to latest_conversation_message
-                let snippet = hook_index
-                    .get_workspace_snippet(&ws_id)
-                    .or_else(|| latest_msg_by_id.get(&ws_id).cloned());
-
                 // Build surface list
                 let mut surfaces = Vec::new();
                 for pane in raw_ws.panes {
@@ -387,11 +382,38 @@ impl WorkspaceTreeBuilder {
                     status,
                     current_directory,
                     color: color_by_id.get(&ws_id_for_color).cloned(),
-                    snippet,
+                    snippet: None,
                     surfaces,
                 });
             }
         }
+
+        // Resolve workspace snippets on a blocking worker (cached by `(path, mtime, len)`):
+        // 1. Newest hook session `lastBody` or its `transcriptPath`
+        // 2. Discovered surface `agent.transcript_path` (covers hook-less agents like Kiro)
+        // 3. Fallback to `cmux rpc workspace.list`'s `latest_conversation_message`
+        let hook_for_snippets = hook_index.clone();
+        let result_workspaces = tokio::task::spawn_blocking(move || {
+            let mut workspaces = result_workspaces;
+            for ws in &mut workspaces {
+                ws.snippet = hook_for_snippets
+                    .get_workspace_snippet(&ws.id)
+                    .or_else(|| {
+                        ws.surfaces
+                            .iter()
+                            .filter(|s| s.selected || s.focused)
+                            .chain(ws.surfaces.iter().filter(|s| !s.selected && !s.focused))
+                            .find_map(|s| {
+                                let path = s.agent.as_ref()?.transcript_path.as_deref()?;
+                                crate::notifications::cached_transcript_workspace_snippet(path, &s.id)
+                            })
+                    })
+                    .or_else(|| latest_msg_by_id.get(&ws.id).cloned());
+            }
+            workspaces
+        })
+        .await
+        .unwrap_or_default();
 
         // Prune remembered surfaces and tty cache that no longer exist in cmux
         if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
@@ -437,40 +459,43 @@ impl WorkspaceTreeBuilder {
             }
         }
 
-        let mut summaries = Vec::new();
-        for win in tree_data.windows {
-            for raw_ws in win.workspaces {
-                let ws_id = raw_ws.id.unwrap_or_default();
-                let ws_ref = raw_ws.r#ref.unwrap_or_else(|| format!("workspace:{ws_id}"));
-                let title = raw_ws.title.unwrap_or_else(|| "Workspace".to_string());
-                let pinned = raw_ws.pinned.unwrap_or(false);
-                let selected = raw_ws.selected.unwrap_or(false);
-                let current_directory = dirs_by_id.get(&ws_id).cloned().unwrap_or_else(|| "~".to_string());
-                let snippet = hook_index
-                    .get_workspace_snippet(&ws_id)
-                    .or_else(|| latest_msg_by_id.get(&ws_id).cloned());
-                let has_running = hook_index.is_workspace_running(&ws_id);
-                let status = if has_running { "running" } else { "idle" }.to_string();
-                let surface_count: usize = raw_ws
-                    .panes
-                    .iter()
-                    .map(|p| p.surfaces.len())
-                    .sum();
-                summaries.push(WorkspaceSummary {
-                    id: ws_id.clone(),
-                    r#ref: ws_ref,
-                    title,
-                    pinned,
-                    selected,
-                    status,
-                    current_directory,
-                    color: color_by_id.get(&ws_id).cloned(),
-                    snippet,
-                    surface_count,
-                    has_running_agent: has_running,
-                });
+        let hook_for_summaries = hook_index.clone();
+        let summaries = tokio::task::spawn_blocking(move || {
+            let mut out = Vec::new();
+            for win in tree_data.windows {
+                for raw_ws in win.workspaces {
+                    let ws_id = raw_ws.id.unwrap_or_default();
+                    let ws_ref = raw_ws.r#ref.unwrap_or_else(|| format!("workspace:{ws_id}"));
+                    let title = raw_ws.title.unwrap_or_else(|| "Workspace".to_string());
+                    let pinned = raw_ws.pinned.unwrap_or(false);
+                    let selected = raw_ws.selected.unwrap_or(false);
+                    let current_directory =
+                        dirs_by_id.get(&ws_id).cloned().unwrap_or_else(|| "~".to_string());
+                    let snippet = hook_for_summaries
+                        .get_workspace_snippet(&ws_id)
+                        .or_else(|| latest_msg_by_id.get(&ws_id).cloned());
+                    let has_running = hook_for_summaries.is_workspace_running(&ws_id);
+                    let status = if has_running { "running" } else { "idle" }.to_string();
+                    let surface_count: usize = raw_ws.panes.iter().map(|p| p.surfaces.len()).sum();
+                    out.push(WorkspaceSummary {
+                        id: ws_id.clone(),
+                        r#ref: ws_ref,
+                        title,
+                        pinned,
+                        selected,
+                        status,
+                        current_directory,
+                        color: color_by_id.get(&ws_id).cloned(),
+                        snippet,
+                        surface_count,
+                        has_running_agent: has_running,
+                    });
+                }
             }
-        }
+            out
+        })
+        .await
+        .unwrap_or_default();
         Ok(summaries)
     }
 

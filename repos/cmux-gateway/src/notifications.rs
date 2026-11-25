@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use std::path::Path;
-use std::time::{Duration, Instant};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::protocol::event::{AgentEvent, AgentLifecycleState};
 use crate::scanner::hook_store::HookSessionRecord;
@@ -593,6 +594,124 @@ pub fn format_context_label(ctx: &SurfaceContext) -> String {
         (true, true) => "workspace".to_string(),
     };
     normalize_text(Some(&combined), TITLE_MAX_CHARS)
+}
+
+struct SnippetCacheMap {
+    clock: u64,
+    entries: HashMap<String, (u64, u128, u64, Option<String>)>,
+}
+
+static WORKSPACE_SNIPPET_CACHE: LazyLock<Mutex<SnippetCacheMap>> = LazyLock::new(|| {
+    Mutex::new(SnippetCacheMap {
+        clock: 0,
+        entries: HashMap::new(),
+    })
+});
+const MAX_WORKSPACE_SNIPPET_CACHE: usize = 128;
+
+fn transcript_stamp_for_snippet(transcript_path: &str) -> Option<(u128, u64)> {
+    let target = match crate::scanner::opencode_store::parse_pseudo_path(Path::new(transcript_path)) {
+        Some((db, _)) => db,
+        None => std::path::PathBuf::from(transcript_path),
+    };
+    let meta = std::fs::metadata(target).ok()?;
+    let mtime_ns = meta
+        .modified()
+        .ok()
+        .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    Some((mtime_ns, meta.len()))
+}
+
+fn is_bare_image_placeholder(text: &str) -> bool {
+    let t = text.trim();
+    t.starts_with("[Image") && t.ends_with(']') && !t[1..t.len() - 1].contains(']')
+}
+
+/// Cached latest conversation snippet from a session transcript (matching cmux desktop sidebar:
+/// prefers the newest assistant reply / active prompt over stale `latest_conversation_message`).
+pub fn cached_transcript_workspace_snippet(transcript_path: &str, surface_id: &str) -> Option<String> {
+    let (mtime_ns, len) = transcript_stamp_for_snippet(transcript_path)?;
+    if let Ok(mut store) = WORKSPACE_SNIPPET_CACHE.lock() {
+        store.clock = store.clock.wrapping_add(1);
+        let tick = store.clock;
+        if let Some((used_at, c_mtime, c_len, cached)) = store.entries.get_mut(transcript_path) {
+            if *c_mtime == mtime_ns && *c_len == len {
+                *used_at = tick;
+                return cached.clone();
+            }
+        }
+    }
+
+    let computed = (|| -> Option<String> {
+        let turns = TranscriptReader::read_recent_turns(Path::new(transcript_path), surface_id, 6).ok()?;
+        // 1. Newest assistant reply / awaiting-input / error across recent turns.
+        for turn in turns.iter().rev() {
+            for ev in turn.events.iter().rev() {
+                match ev {
+                    AgentEvent::AwaitingInput(ai) => {
+                        let s = normalize_text(Some(&ai.prompt), BODY_MAX_CHARS);
+                        if !s.is_empty() && !is_generic_placeholder(&s) {
+                            return Some(s);
+                        }
+                    }
+                    AgentEvent::Error { message } => {
+                        let s = normalize_text(Some(message), BODY_MAX_CHARS);
+                        if !s.is_empty() && !is_generic_placeholder(&s) {
+                            return Some(s);
+                        }
+                    }
+                    AgentEvent::Assistant { text } => {
+                        let stripped = strip_markdown_for_notification(text);
+                        let s = normalize_text(Some(&stripped), BODY_MAX_CHARS);
+                        if !s.is_empty() && !is_generic_placeholder(&s) {
+                            return Some(s);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        // 2. Brand-new session before any assistant reply: use the user's prompt unless it is a bare image chip.
+        for turn in turns.iter().rev() {
+            for ev in turn.events.iter().rev() {
+                if let AgentEvent::User { text } = ev {
+                    let cleaned = TranscriptReader::clean_user_prompt(text);
+                    let stripped = strip_markdown_for_notification(&cleaned);
+                    let s = normalize_text(Some(&stripped), BODY_MAX_CHARS);
+                    if !s.is_empty() && !is_generic_placeholder(&s) && !is_bare_image_placeholder(&s) {
+                        return Some(s);
+                    }
+                }
+            }
+        }
+        None
+    })();
+
+    if let Ok(mut store) = WORKSPACE_SNIPPET_CACHE.lock() {
+        store.clock = store.clock.wrapping_add(1);
+        let tick = store.clock;
+        while store.entries.len() >= MAX_WORKSPACE_SNIPPET_CACHE
+            && !store.entries.contains_key(transcript_path)
+        {
+            let Some(oldest) = store
+                .entries
+                .iter()
+                .min_by_key(|(_, (used_at, _, _, _))| *used_at)
+                .map(|(k, _)| k.clone())
+            else {
+                break;
+            };
+            store.entries.remove(&oldest);
+        }
+        store.entries.insert(
+            transcript_path.to_string(),
+            (tick, mtime_ns, len, computed.clone()),
+        );
+    }
+
+    computed
 }
 
 /// Extracts a concise preview from the session transcript when hook metadata lacks rich text.
