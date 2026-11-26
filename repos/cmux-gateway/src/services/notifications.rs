@@ -5,23 +5,18 @@ use std::time::{Duration, Instant, UNIX_EPOCH};
 
 use crate::protocol::event::{AgentEvent, AgentLifecycleState};
 use crate::scanner::hook_store::HookSessionRecord;
+use crate::scanner::liveness::WorkspaceRuntimeStore;
 use crate::scanner::transcript::TranscriptReader;
+
+pub use crate::domain::notification_text::{
+    is_generic_placeholder, normalize_text, strip_markdown_for_notification, BODY_MAX_CHARS,
+    MAX_PUSH_TAG_LEN, TITLE_MAX_CHARS,
+};
 
 /// Wait out brief Done -> Working transitions (e.g. Antigravity mid-turn PLANNER_RESPONSE
 /// followed by SYSTEM_MESSAGE wake-up) before announcing a finished turn.
 /// Matches Orca `AGENT_DONE_QUIET_MS` (ref/orca/src/shared/agent-status/lifecycle/agent-transitions.ts:11).
 pub const AGENT_DONE_QUIET_MS: u64 = 1_500;
-
-/// Max characters for workspace/surface context and subtitle fields.
-/// Matches Orca `NOTIFICATION_TITLE_CONTEXT_MAX_LENGTH` (ref/orca/src/main/ipc/notification-options.ts:9).
-pub const TITLE_MAX_CHARS: usize = 80;
-
-/// Max characters for notification body previews.
-/// Matches Orca `NOTIFICATION_BODY_PREVIEW_MAX_LENGTH` (ref/orca/src/main/ipc/notification-options.ts:10).
-pub const BODY_MAX_CHARS: usize = 180;
-
-/// Maximum topic/tag length permitted by Web Push (RFC 8030 section 5.4).
-pub const MAX_PUSH_TAG_LEN: usize = 32;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SurfaceContext {
@@ -100,8 +95,20 @@ impl NotificationEngine {
 
     /// Seeds baseline state from existing hook sessions without emitting notifications.
     pub fn seed(&mut self, sessions: &[&HookSessionRecord]) {
+        self.seed_with(sessions, HookSessionRecord::live_lifecycle);
+    }
+
+    pub fn seed_in(&mut self, sessions: &[&HookSessionRecord], runtime: &WorkspaceRuntimeStore) {
+        self.seed_with(sessions, |rec| rec.live_lifecycle_in(runtime));
+    }
+
+    fn seed_with(
+        &mut self,
+        sessions: &[&HookSessionRecord],
+        lifecycle_fn: impl Fn(&HookSessionRecord) -> AgentLifecycleState,
+    ) {
         for rec in sessions {
-            let lifecycle = rec.live_lifecycle();
+            let lifecycle = lifecycle_fn(rec);
             let mut tracker = SurfaceTracker {
                 session_id: rec.session_id.clone(),
                 last_lifecycle: Some(lifecycle),
@@ -120,12 +127,30 @@ impl NotificationEngine {
     /// Processes the latest active top-level sessions per surface and returns any immediate alerts,
     /// matured quiet-window alerts, or dismissals.
     pub fn step(&mut self, sessions: &[&HookSessionRecord], now: Instant) -> Vec<EngineEvent> {
+        self.step_with(sessions, now, HookSessionRecord::live_lifecycle)
+    }
+
+    pub fn step_in(
+        &mut self,
+        sessions: &[&HookSessionRecord],
+        now: Instant,
+        runtime: &WorkspaceRuntimeStore,
+    ) -> Vec<EngineEvent> {
+        self.step_with(sessions, now, |rec| rec.live_lifecycle_in(runtime))
+    }
+
+    fn step_with(
+        &mut self,
+        sessions: &[&HookSessionRecord],
+        now: Instant,
+        lifecycle_fn: impl Fn(&HookSessionRecord) -> AgentLifecycleState,
+    ) -> Vec<EngineEvent> {
         let mut events = Vec::new();
         let mut present_surfaces = std::collections::HashSet::with_capacity(sessions.len());
 
         for rec in sessions {
             present_surfaces.insert(rec.surface_id.clone());
-            let lifecycle = rec.live_lifecycle();
+            let lifecycle = lifecycle_fn(rec);
             let tracker = self.trackers.entry(rec.surface_id.clone()).or_default();
 
             if !tracker.session_id.is_empty() && tracker.session_id != rec.session_id {
@@ -353,262 +378,6 @@ fn sanitize_id_part(raw: &str, max_len: usize) -> String {
         .filter(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '_')
         .take(max_len)
         .collect()
-}
-
-/// Strip common Markdown syntax from a string so it reads naturally as plain text in a
-/// push-notification body. Mirrors what Orca avoids by sourcing text from the hook's
-/// `last_assistant_message` field (plain) rather than the raw transcript.
-///
-/// Rules (each applied per-line, then the result is collapsed):
-///   - Table rows / separator lines (`| … |` or `| --- |`) → dropped entirely
-///   - ATX headings (`# … ` through `###### …`) → heading text only
-///   - Block-quote markers (`> `) → stripped
-///   - Horizontal rules (`---`, `***`, `___` alone on a line) → dropped
-///   - Fenced code-block markers (``` or ~~~) → dropped
-///   - Inline: `**bold**`, `__bold__`, `*italic*`, `_italic_` → inner text
-///   - Inline: `` `code` `` → inner text
-///   - Inline: `[label](url)` → label
-///   - Inline: `![alt](url)` → alt text (or dropped when empty)
-pub fn strip_markdown_for_notification(text: &str) -> String {
-    // ---- per-line pass ----
-    let mut lines_out: Vec<&str> = Vec::new();
-    // Track whether we are inside a fenced code block.
-    let mut in_fence = false;
-
-    // We work on the raw &str slices when possible, falling back to owned Strings only when
-    // inline substitutions are needed.
-    for raw_line in text.lines() {
-        let line = raw_line.trim();
-
-        // Fenced code blocks: drop the opening/closing fence markers; pass content through.
-        if line.starts_with("```") || line.starts_with("~~~") {
-            in_fence = !in_fence;
-            continue; // drop the fence marker itself
-        }
-        if in_fence {
-            // Keep code content as-is (plain already).
-            lines_out.push(raw_line);
-            continue;
-        }
-
-        // Table rows: a line whose first non-whitespace character is `|`.
-        if line.starts_with('|') {
-            continue;
-        }
-
-        // Horizontal rules: `---`, `***`, `___` (optionally spaced).
-        {
-            let stripped = line.replace(['-', '*', '_', ' '], "");
-            if stripped.is_empty() && !line.is_empty() {
-                continue;
-            }
-        }
-
-        // ATX headings: `# Foo` → `Foo`
-        if let Some(rest) = line.strip_prefix('#') {
-            let heading = rest.trim_start_matches('#').trim();
-            if !heading.is_empty() {
-                lines_out.push(heading);
-            }
-            continue;
-        }
-
-        // Block-quote: `> text`
-        if let Some(rest) = line.strip_prefix('>') {
-            let content = rest.trim_start_matches('>').trim();
-            if !content.is_empty() {
-                lines_out.push(content);
-            }
-            continue;
-        }
-
-        lines_out.push(line);
-    }
-
-    // ---- inline pass on joined text ----
-    let joined = lines_out.join(" ");
-
-    // Apply inline substitutions with a simple character-by-character state machine to avoid
-    // pulling in a regex dependency.
-    fn strip_inline(src: &str) -> String {
-        let chars: Vec<char> = src.chars().collect();
-        let n = chars.len();
-        let mut out = String::with_capacity(src.len());
-        let mut i = 0;
-        while i < n {
-            // `![alt](url)` → alt (or nothing when alt is empty)
-            if chars[i] == '!' && i + 1 < n && chars[i + 1] == '[' {
-                if let Some((alt, skip)) = find_link_parts(&chars, i + 1) {
-                    if !alt.is_empty() {
-                        out.push_str(&alt);
-                    }
-                    i += skip + 1; // +1 for the leading '!'
-                    continue;
-                }
-            }
-            // `[label](url)` → label
-            if chars[i] == '[' {
-                if let Some((label, skip)) = find_link_parts(&chars, i) {
-                    out.push_str(&label);
-                    i += skip;
-                    continue;
-                }
-            }
-            // Bold/italic: `**`, `__`, `*`, `_` (preserving intraword `snake_case` underscores!)
-            if chars[i] == '*' || chars[i] == '_' {
-                let marker = chars[i];
-                let double = i + 1 < n && chars[i + 1] == marker;
-                let fence_len = if double { 2 } else { 1 };
-                let search_start = i + fence_len;
-                let prev_alnum = i > 0 && chars[i - 1].is_alphanumeric();
-                let open_valid = search_start < n
-                    && !chars[search_start].is_whitespace()
-                    && (marker != '_' || !prev_alnum);
-                if open_valid {
-                    let close = find_closing_emphasis(&chars, search_start, marker, fence_len);
-                    if let Some(end) = close {
-                        let inner: String = chars[search_start..end].iter().collect();
-                        out.push_str(&inner);
-                        i = end + fence_len;
-                        continue;
-                    }
-                }
-            }
-            // Inline code: `code`
-            if chars[i] == '`' {
-                let fence_len = if i + 1 < n && chars[i + 1] == '`' { 2 } else { 1 };
-                let search_start = i + fence_len;
-                let close = if fence_len == 2 {
-                    find_closing(&chars, search_start, &['`', '`'])
-                } else {
-                    find_closing_single(&chars, search_start, '`')
-                };
-                if let Some(end) = close {
-                    let inner: String = chars[search_start..end].iter().collect();
-                    out.push_str(&inner);
-                    i = end + fence_len;
-                    continue;
-                }
-            }
-            out.push(chars[i]);
-            i += 1;
-        }
-        out
-    }
-
-    /// Find `[label](url)` starting at `pos` (the `[`). Returns `(label, chars_consumed)`.
-    fn find_link_parts(chars: &[char], pos: usize) -> Option<(String, usize)> {
-        if chars.get(pos) != Some(&'[') {
-            return None;
-        }
-        // Find closing `]`
-        let close_bracket = chars[pos + 1..].iter().position(|&c| c == ']')? + pos + 1;
-        // Must be immediately followed by `(`
-        if chars.get(close_bracket + 1) != Some(&'(') {
-            return None;
-        }
-        let close_paren = chars[close_bracket + 2..].iter().position(|&c| c == ')')? + close_bracket + 2;
-        let label: String = chars[pos + 1..close_bracket].iter().collect();
-        let consumed = close_paren - pos + 1;
-        Some((label, consumed))
-    }
-
-    fn find_closing_emphasis(
-        chars: &[char],
-        from: usize,
-        marker: char,
-        fence_len: usize,
-    ) -> Option<usize> {
-        let n = chars.len();
-        if from + fence_len > n {
-            return None;
-        }
-        for idx in from..=(n - fence_len) {
-            let matches_fence = if fence_len == 2 {
-                chars[idx] == marker && chars[idx + 1] == marker
-            } else {
-                chars[idx] == marker
-                    && (idx + 1 >= n || chars[idx + 1] != marker)
-                    && (idx == 0 || chars[idx - 1] != marker)
-            };
-            if !matches_fence {
-                continue;
-            }
-            if idx == from || chars[idx - 1].is_whitespace() {
-                continue;
-            }
-            let after_idx = idx + fence_len;
-            if marker == '_' && after_idx < n && chars[after_idx].is_alphanumeric() {
-                continue;
-            }
-            return Some(idx);
-        }
-        None
-    }
-
-    fn find_closing(chars: &[char], from: usize, pat: &[char]) -> Option<usize> {
-        let n = chars.len();
-        let plen = pat.len();
-        if from + plen > n {
-            return None;
-        }
-        for i in from..=(n - plen) {
-            if &chars[i..i + plen] == pat {
-                return Some(i);
-            }
-        }
-        None
-    }
-
-    fn find_closing_single(chars: &[char], from: usize, pat: char) -> Option<usize> {
-        chars[from..].iter().position(|&c| c == pat).map(|p| p + from)
-    }
-
-    strip_inline(&joined)
-}
-
-pub fn normalize_text(value: Option<&str>, max_chars: usize) -> String {
-    let Some(raw) = value else {
-        return String::new();
-    };
-    let collapsed = raw.split_whitespace().collect::<Vec<_>>().join(" ");
-    if collapsed.is_empty() || max_chars == 0 {
-        return String::new();
-    }
-    let char_count = collapsed.chars().count();
-    if char_count <= max_chars {
-        return collapsed;
-    }
-    if max_chars == 1 {
-        return "…".to_string();
-    }
-    let mut truncated: String = collapsed.chars().take(max_chars - 1).collect();
-    truncated.push('…');
-    truncated
-}
-
-pub fn is_generic_placeholder(text: &str) -> bool {
-    let lower = text.trim().to_ascii_lowercase();
-    if lower.is_empty() {
-        return true;
-    }
-    matches!(
-        lower.as_str(),
-        "needs input"
-            | "permission"
-            | "permission required"
-            | "needs approval"
-            | "approval required"
-            | "agent requested approval"
-            | "turn finished"
-            | "turn complete"
-            | "completed"
-            | "done"
-            | "finished"
-            | "waiting for input"
-            | "error"
-            | "failed"
-    )
 }
 
 pub fn format_context_label(ctx: &SurfaceContext) -> String {

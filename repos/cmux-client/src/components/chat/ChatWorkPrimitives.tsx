@@ -17,7 +17,7 @@ import {
   taskDisplayLabel,
   type ChatTaskItem,
   type ChatTaskStatus,
-} from "./taskList";
+} from "../../domain/chat/taskList";
 
 /** Isolated 1s clock so ticks never re-render the chat timeline or parent strip. */
 export const LiveElapsedText = memo(function LiveElapsedText({

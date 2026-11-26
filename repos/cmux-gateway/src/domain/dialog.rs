@@ -2,8 +2,8 @@
 
 use serde::Deserialize;
 
-use crate::cmux::agent_profile::{profile_for, ApproveInput};
-use crate::cmux::startup_dialog;
+use crate::domain::agent_profile::{profile_for, ApproveInput};
+use crate::domain::startup_dialog;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum QuestionStep {
@@ -295,7 +295,7 @@ pub fn plan_question_answer_steps(
     multi_select: bool,
 ) -> QuestionAnswerPlan {
     let other_clean = other.map(str::trim).filter(|s| !s.is_empty());
-    let kind = crate::cmux::agents::spec_for(agent_kind)
+    let kind = crate::domain::agents::spec_for(agent_kind)
         .map(|s| s.kind)
         .unwrap_or(agent_kind);
 
@@ -390,7 +390,7 @@ pub fn plan_batch_question_steps_for_selector(
     agent_kind: &str,
     selections: &[QuestionAnswerSelection],
 ) -> Option<Vec<QuestionStep>> {
-    let kind = crate::cmux::agents::spec_for(agent_kind)
+    let kind = crate::domain::agents::spec_for(agent_kind)
         .map(|s| s.kind)
         .unwrap_or(agent_kind);
     let multi_question = selections.len() > 1;
@@ -533,7 +533,7 @@ pub fn plan_approval_steps(
 /// Source: `ref/orca/src/shared/native-chat/native-chat-agent-support.ts:45-48`
 pub fn plan_interrupt_keys(agent_kind: Option<&str>) -> (&'static [&'static str], u64) {
     let canonical = agent_kind
-        .and_then(crate::cmux::agents::spec_for)
+        .and_then(crate::domain::agents::spec_for)
         .map(|s| s.kind)
         .or_else(|| {
             agent_kind

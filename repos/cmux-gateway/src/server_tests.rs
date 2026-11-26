@@ -482,7 +482,6 @@ async fn ws_1rtt_auth_bootstrap_pushes_workspaces_and_initial_chat_update() {
     });
     std::fs::write(dir.join("claude-hook-sessions.json"), hook.to_string()).unwrap();
     unsafe { std::env::set_var("CMUX_HOOK_SESSIONS_DIR", &dir) };
-    crate::scanner::workspace_tree::WorkspaceTreeBuilder::invalidate_tree_cache();
 
     let uds_listener = UnixListener::bind(&sock_path).unwrap();
     let uds_srv = tokio::spawn(async move {

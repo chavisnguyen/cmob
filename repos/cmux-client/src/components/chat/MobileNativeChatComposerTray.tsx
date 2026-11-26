@@ -9,7 +9,7 @@ import {
   taskDisplayLabel,
   type ActiveBackgroundWork,
   type ChatTaskList,
-} from "./taskList";
+} from "../../domain/chat/taskList";
 
 export { BackgroundKindIcon, LiveElapsedText, TaskChecklistRows } from "./ChatWorkPrimitives";
 

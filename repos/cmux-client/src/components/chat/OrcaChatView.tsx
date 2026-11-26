@@ -9,7 +9,7 @@ import { ChatTurnRow } from "./ChatTimelineRow";
 import { ChatVirtualizedTimeline } from "./ChatVirtualizedTimeline";
 import { isSupportedImageFile } from "./imageAttach";
 import type { QuestionAnswerPayload } from "./MobileNativeChatPromptCard";
-import { deriveConversationTasks } from "./taskList";
+import { deriveConversationTasks } from "../../domain/chat/taskList";
 import { latestUsage } from "./usageSummary";
 import { useChatScrollController } from "./useChatScrollController";
 

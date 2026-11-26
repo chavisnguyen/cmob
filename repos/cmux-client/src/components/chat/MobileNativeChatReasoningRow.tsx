@@ -1,7 +1,7 @@
 import { memo } from "react";
 import { Brain, ChevronDown, ChevronRight } from "lucide-react";
 import { useChatDisclosure } from "../../state/useChatDisclosure";
-import { formatChatDuration } from "./taskList";
+import { formatChatDuration } from "../../domain/chat/taskList";
 
 interface MobileNativeChatReasoningRowProps {
   id: string;

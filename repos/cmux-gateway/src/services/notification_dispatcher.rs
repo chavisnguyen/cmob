@@ -97,6 +97,7 @@ pub async fn emit_alert(
         let _ = state
             .cmux_bridge
             .notify_desktop(
+                Some(workspace_id),
                 surface_id,
                 &content.title,
                 content.subtitle.as_deref(),
@@ -104,7 +105,7 @@ pub async fn emit_alert(
             )
             .await;
     }
-    WorkspaceTreeBuilder::note_surface_unread(surface_id);
+    state.runtime.note_surface_unread(surface_id);
 }
 
 pub async fn emit_dismiss(state: &AppState, surface_id: &str, tags: &[String]) {
@@ -120,9 +121,13 @@ pub async fn emit_dismiss(state: &AppState, surface_id: &str, tags: &[String]) {
         });
     }
     if desktop_notifications_enabled() {
-        let _ = state.cmux_bridge.clear_notifications(surface_id).await;
+        let ws_id = state.runtime.workspace_for_surface(surface_id);
+        let _ = state
+            .cmux_bridge
+            .clear_notifications(ws_id.as_deref(), surface_id)
+            .await;
     }
-    WorkspaceTreeBuilder::invalidate_tree_cache();
+    state.runtime.invalidate_tree_cache();
 }
 
 /// Spawns the background monitor that scans ALL active top-level sessions (including OpenCode SQLite
@@ -146,18 +151,21 @@ pub fn spawn_push_dispatcher(state: AppState) -> tokio::task::JoinHandle<()> {
                 .await;
             }
 
-            let Ok(sessions) = tokio::task::spawn_blocking(collect_notification_sessions).await else {
+            let rt = state.runtime.clone();
+            let Ok(sessions) =
+                tokio::task::spawn_blocking(move || collect_notification_sessions(&rt)).await
+            else {
                 continue;
             };
             let session_refs: Vec<_> = sessions.iter().collect();
 
             if !baseline_done {
-                engine.seed(&session_refs);
+                engine.seed_in(&session_refs, &state.runtime);
                 baseline_done = true;
                 continue;
             }
 
-            for ev in engine.step(&session_refs, Instant::now()) {
+            for ev in engine.step_in(&session_refs, Instant::now(), &state.runtime) {
                 match ev {
                     EngineEvent::Dismiss { surface_id, tags } => {
                         emit_dismiss(&state, &surface_id, &tags).await;
@@ -231,7 +239,6 @@ fn terminal_surfaces(tree: &serde_json::Value) -> Vec<(String, String, String)> 
 /// Watches freshly started agents AND existing active dialogs for startup dialogs (trust, update...),
 /// keeping active dialogs alive past 5 minutes until they genuinely clear from the terminal.
 pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
-    use crate::cmux::startup_dialog::registry;
     tokio::spawn(async move {
         let mut interval = tokio::time::interval(Duration::from_secs(3));
         let mut active_dialogs: HashMap<String, (String, String)> = HashMap::new();
@@ -268,7 +275,7 @@ pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
                     .get_active_session_for_surface(&surface_id)
                     .is_some_and(|rec| rec.resolved_lifecycle() == AgentLifecycleState::Working)
                 {
-                    registry::set(&surface_id, None);
+                    state.runtime.set_dialog_waiting(&surface_id, None);
                     if active_dialogs.remove(&surface_id).is_some() {
                         emit_dismiss(&state, &surface_id, &[make_push_tag(&surface_id, "cmux-dialog")]).await;
                     }
@@ -277,7 +284,9 @@ pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
 
                 match state.cmux_bridge.current_dialog(Some(&surface_id)).await {
                     Some(d) => {
-                        registry::set(&surface_id, Some(&d.fingerprint));
+                        state
+                            .runtime
+                            .set_dialog_waiting(&surface_id, Some(&d.fingerprint));
                         seen_dialogs.insert(surface_id.clone());
                         let is_new_fp = active_dialogs
                             .get(&surface_id)
@@ -304,7 +313,7 @@ pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
                         }
                     }
                     None => {
-                        registry::set(&surface_id, None);
+                        state.runtime.set_dialog_waiting(&surface_id, None);
                         if active_dialogs.remove(&surface_id).is_some() {
                             emit_dismiss(&state, &surface_id, &[make_push_tag(&surface_id, "cmux-dialog")]).await;
                         }
@@ -318,7 +327,7 @@ pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
                 .cloned()
                 .collect();
             for sid in gone {
-                registry::set(&sid, None);
+                state.runtime.set_dialog_waiting(&sid, None);
                 active_dialogs.remove(&sid);
                 emit_dismiss(&state, &sid, &[make_push_tag(&sid, "cmux-dialog")]).await;
             }

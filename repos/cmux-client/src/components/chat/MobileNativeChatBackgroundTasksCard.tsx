@@ -3,7 +3,7 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import type { BackgroundTaskEntry } from "../../protocol/event";
 import { useChatDisclosure } from "../../state/useChatDisclosure";
 import { BackgroundKindIcon, LiveElapsedText } from "./ChatWorkPrimitives";
-import { formatWorkTokens } from "./taskList";
+import { formatWorkTokens } from "../../domain/chat/taskList";
 
 export const MobileNativeChatBackgroundTasksCard = memo(
   function MobileNativeChatBackgroundTasksCard({

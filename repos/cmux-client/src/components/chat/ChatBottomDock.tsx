@@ -9,7 +9,7 @@ import {
   MobileNativeChatPromptCard,
   type QuestionAnswerPayload,
 } from "./MobileNativeChatPromptCard";
-import type { ActiveBackgroundWork, ChatTaskList } from "./taskList";
+import type { ActiveBackgroundWork, ChatTaskList } from "../../domain/chat/taskList";
 import type { UsageEvent } from "./usageSummary";
 
 export function ChatBottomDock({

@@ -8,7 +8,7 @@
  */
 
 import { describeTaskToolCall, isTaskListToolName } from "./taskList";
-import type { ToolCallItem } from "../../domain/chat/types";
+import type { ToolCallItem } from "./types";
 
 export type { ToolCallItem };
 

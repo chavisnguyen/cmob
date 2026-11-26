@@ -82,18 +82,20 @@ pub async fn lookup_surface_context(
 
 /// Collects all active top-level sessions per surface (hook-backed, OpenCode SQLite, and Kiro TTY)
 /// for `NotificationEngine`. Blocking: run inside `tokio::task::spawn_blocking`.
-pub fn collect_notification_sessions() -> Vec<HookSessionRecord> {
+pub fn collect_notification_sessions(
+    runtime: &liveness::WorkspaceRuntimeStore,
+) -> Vec<HookSessionRecord> {
     let dir = HookStoreIndex::default_cmuxterm_dir();
     let hook_index = HookStoreIndex::scan_dir(&dir);
     let (pid_ttys, live_agents_by_tty) = WorkspaceTreeBuilder::scan_processes_snapshot();
-    liveness::store_proc_scan(&live_agents_by_tty);
+    runtime.store_proc_scan(&live_agents_by_tty);
     let kiro_by_tty = KiroSessionIndex::scan_default_by_pid_map(&pid_ttys);
 
     let mut sessions = Vec::new();
     let mut covered_surfaces = HashSet::new();
 
     for surface_id in hook_index.sessions_by_surface.keys() {
-        let live_kinds = liveness::surface_live_agent_kinds(surface_id);
+        let live_kinds = runtime.surface_live_agent_kinds(surface_id);
         let Some(rec) =
             hook_index.get_active_session_for_surface_filtered(surface_id, live_kinds.as_ref())
         else {
@@ -103,7 +105,7 @@ pub fn collect_notification_sessions() -> Vec<HookSessionRecord> {
             continue;
         }
         let mut rec = rec.clone();
-        let canonical_kind = crate::cmux::agents::spec_for(rec.resolved_agent_kind())
+        let canonical_kind = crate::domain::agents::spec_for(rec.resolved_agent_kind())
             .map(|s| s.kind)
             .unwrap_or_else(|| rec.resolved_agent_kind());
 
@@ -125,7 +127,7 @@ pub fn collect_notification_sessions() -> Vec<HookSessionRecord> {
         {
             continue;
         }
-        let Some((surface_id, workspace_id, cwd)) = liveness::surface_for_tty(&tty) else {
+        let Some((surface_id, workspace_id, cwd)) = runtime.surface_for_tty(&tty) else {
             continue;
         };
         if covered_surfaces.contains(&surface_id) {

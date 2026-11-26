@@ -89,11 +89,6 @@ impl DualTransportCmuxBridge {
     }
 
     async fn resolve_workspace_for_surface(&self, surface_id: &str) -> Option<String> {
-        if let Some(ws) =
-            crate::scanner::liveness::workspace_for_surface(surface_id).filter(|w| !w.is_empty())
-        {
-            return Some(ws);
-        }
         let tree = self
             .rpc("system.tree", serde_json::json!({ "all_windows": true }))
             .await
@@ -533,6 +528,7 @@ impl DualTransportCmuxBridge {
     /// Posts a native macOS desktop banner and cmux panel entry bound to `surface_id` via `notification.create`.
     pub async fn notify_desktop(
         &self,
+        workspace_id: Option<&str>,
         surface_id: &str,
         title: &str,
         subtitle: Option<&str>,
@@ -544,9 +540,7 @@ impl DualTransportCmuxBridge {
             "body": body,
             "effects": { "desktop": true },
         });
-        if let Some(ws_id) =
-            crate::scanner::liveness::workspace_for_surface(surface_id).filter(|w| !w.is_empty())
-        {
+        if let Some(ws_id) = workspace_id.filter(|w| !w.is_empty()) {
             params["workspace_id"] = serde_json::json!(ws_id);
         }
         if let Some(sub) = subtitle.filter(|s| !s.trim().is_empty()) {
@@ -556,11 +550,19 @@ impl DualTransportCmuxBridge {
     }
 
     /// Clears cmux notifications for `surface_id` via `notification.clear`.
-    pub async fn clear_notifications(&self, surface_id: &str) -> Result<String, CmuxBridgeError> {
+    pub async fn clear_notifications(
+        &self,
+        workspace_id: Option<&str>,
+        surface_id: &str,
+    ) -> Result<String, CmuxBridgeError> {
         let mut params = serde_json::json!({
             "surface_id": surface_id,
         });
-        if let Some(ws_id) = self.resolve_workspace_for_surface(surface_id).await {
+        let ws = match workspace_id.filter(|w| !w.is_empty()) {
+            Some(w) => Some(w.to_string()),
+            None => self.resolve_workspace_for_surface(surface_id).await,
+        };
+        if let Some(ws_id) = ws {
             params["workspace_id"] = serde_json::json!(ws_id);
         }
         self.rpc_call("notification.clear", Some(params)).await

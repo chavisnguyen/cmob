@@ -1,16 +1,14 @@
 pub mod cmux;
 pub mod domain;
-pub mod git_view;
 pub mod io;
-pub mod loopback;
-pub mod notifications;
-pub mod pairing_store;
 pub mod protocol;
 pub mod providers;
-pub mod push;
 pub mod scanner;
 pub mod server;
 pub mod services;
 pub mod transport;
-pub mod uploads;
-pub mod usage;
+
+// Clean crate-root aliases for external binaries and integration tests.
+pub use io::{git_view, uploads};
+pub use services::{notifications, pairing_store, push, usage};
+pub use transport::loopback;

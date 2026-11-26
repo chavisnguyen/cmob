@@ -198,18 +198,26 @@ transport/ (http_routes.rs, http_guard.rs, ws_session.rs, client_registry.rs,
     │
     ▼
 services/  (session_state.rs [SessionStateService — Single Source of Truth],
+            workspace_service.rs [WorkspaceService — transport-facing workspace & session facade],
             agent_control.rs, chat_stream.rs, terminal_stream.rs,
-            notification_dispatcher.rs, notification_sources.rs)
+            notification_dispatcher.rs, notification_sources.rs, notifications.rs,
+            pairing_store.rs, push.rs, usage.rs, WorkspaceRuntimeStore [instance-scoped on AppState])
     │
     ▼
-domain/    (Pure zero-I/O: lifecycle.rs, canonical_turn.rs, noise_filter.rs,
-            receipt_normalizer.rs, dialog.rs [box-aware TUI dialog & menu planners])
+domain/    (100% pure zero-I/O, zero outward imports: workspace_model.rs, notification_text.rs,
+            agents.rs, agent_profile.rs, agent_options.rs, startup_dialog.rs,
+            lifecycle.rs, canonical_turn.rs, noise_filter.rs, receipt_normalizer.rs, dialog.rs)
     ▲
     │
-providers/ & io/ (providers/{claude, codex, antigravity, kiro, opencode, common}.rs
-                  + io/jsonl_window.rs [safe \n-bounded 64 KiB window + 64B boundary digest])
+providers/ & io/ & cmux/ & scanner/
+           (providers/{claude, codex, antigravity, kiro, opencode, common}.rs,
+            io/{file_watch, jsonl_window, git_view, uploads}.rs,
+            cmux/{uds_client, bridge, agent_options}.rs,
+            scanner/{workspace_tree, liveness [WorkspaceRuntimeStore], macos_proc, hook_store, kiro_store, opencode_store, transcript, turn_marks}.rs)
 ```
 * **Invariants:**
+  - **Strict Dependency Rule (Verified via `rg`):** `domain/` has **0** imports from `transport`, `services`, `scanner`, `cmux`, `io`, or `server`; `transport/` (`http_routes.rs`, `http_guard.rs`, `loopback.rs`, `ws_session.rs`, `rpc/*`) has **0** imports from `scanner/` (all workspace/session queries flow through `WorkspaceService` and `SessionStateService`); `cmux/` has **0** imports from `scanner/`.
+  - **Instance-Scoped Runtime State (`WorkspaceRuntimeStore` in `scanner/liveness.rs`, owned by `AppState.runtime` in `server.rs:36`):** Replaces mutable process-global `static LazyLock` caches (`remembered_surfaces`, `last_tree_snapshot`, `unread_surfaces`, `surface_meta`, `proc_cache`, `waiting_dialogs`) so every `AppState` instance in production and parallel tests owns isolated state.
   - `SessionStateService` (`services/session_state.rs`) is the single authority for surface agent resolution (requiring live TTY `agent_kind` match), lifecycle state (`Working | Waiting | Done | Error | Idle`), awaiting prompts, and notifications across all 5 agents (including Kiro and OpenCode).
   - `io/jsonl_window.rs`, `providers/*`, and `domain/canonical_turn.rs` enforce stable byte-offset/row-anchored turn IDs (`turn-@<offset>`, `turn-oc-<seq>`), FIFO tool pairing (`VecDeque` in `providers/antigravity.rs`), `clean_agy_args_json` unquoting, harness noise stripping (`domain/noise_filter.rs`), and structural `turn_digest` hashing so `services/chat_stream.rs` pushes every in-place mutation over `delta` frames.
 
@@ -223,12 +231,13 @@ state/     (Focused hooks/controllers: useHostSession, useWorkspaceStore, useNav
             useNotificationController, useChatSessionController, useTerminalController)
     │
     ▼
-domain/    (100% pure reducers & scoped stores: chat/{transcriptReducer, toolPairing,
-            workRunGrouping, liveStatus, dockSelector, disclosureStore, composerStore, chatViewModel},
+domain/    (100% pure zero-JSX reducers, selectors & formatters: chat/{transcriptReducer, toolPairing,
+            workRunGrouping, taskList, toolRunSentence, liveStatus, dockSelector,
+            disclosureStore, composerStore, chatViewModel},
             workspaceTree, notificationCenter, terminalState)
     │
     ▼
-transport/ (tokenVault, pairingClient, wsClient) ──▶ protocol/ (wire types)
+transport/ (tokenVault, pairingClient, wsBootstrap, wsLifecycle, wsClient) ──▶ protocol/ (wire types)
 ```
 
 ---

@@ -3,9 +3,11 @@
 use std::sync::Arc;
 
 use crate::cmux::DualTransportCmuxBridge;
-use crate::pairing_store::{ct_eq, DeviceRegistry};
 use crate::protocol::PairingOffer;
-use crate::push::PushService;
+use crate::services::pairing_store::{ct_eq, DeviceRegistry};
+use crate::services::push::PushService;
+use crate::services::usage::UsageService;
+use crate::services::WorkspaceRuntimeStore;
 use crate::transport::ws_session::MAX_WS_CONNECTIONS;
 
 pub use crate::services::chat_stream::EVENT_CHAT_UPDATE;
@@ -30,7 +32,8 @@ pub struct AppState {
     pub conn_limit: Arc<tokio::sync::Semaphore>,
     pub clients: ClientRegistry,
     pub notif_tx: tokio::sync::broadcast::Sender<NotificationBroadcast>,
-    pub usage_service: crate::usage::UsageService,
+    pub usage_service: UsageService,
+    pub runtime: WorkspaceRuntimeStore,
 }
 
 impl AppState {
@@ -47,7 +50,8 @@ impl AppState {
             conn_limit: Arc::new(tokio::sync::Semaphore::new(MAX_WS_CONNECTIONS)),
             clients: ClientRegistry::default(),
             notif_tx: tokio::sync::broadcast::channel(128).0,
-            usage_service: crate::usage::UsageService::new(),
+            usage_service: UsageService::new(),
+            runtime: WorkspaceRuntimeStore::new(),
         }
     }
 

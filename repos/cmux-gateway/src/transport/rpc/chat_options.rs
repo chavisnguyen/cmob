@@ -5,8 +5,8 @@ use crate::protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_AGENT_OPTIONS, METHOD_CHAT_ANSWER_DIALOG,
     METHOD_CHAT_ANSWER_QUESTION, METHOD_CHAT_FORK, METHOD_CHAT_SET_OPTION,
 };
-use crate::scanner::hook_store::HookStoreIndex;
 use crate::server::AppState;
+use crate::services::workspace_service::WorkspaceService;
 use crate::transport::rpc::workspace::workspace_dir;
 
 pub async fn try_dispatch(req: &JsonRpcRequest, state: &AppState) -> Option<JsonRpcResponse> {
@@ -220,20 +220,15 @@ async fn handle_fork(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse 
     if let Err(e) = workspace_dir(state, &req.params).await {
         return JsonRpcResponse::error(Some(req.id.clone()), e);
     }
-    let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
-    let Some(record) = hook_index.sessions_by_id.get(session) else {
+    let Some(cwd) = WorkspaceService::lookup_session_cwd(session).await else {
         return JsonRpcResponse::error(
             Some(req.id.clone()),
             JsonRpcError::invalid_params("Unknown session"),
         );
     };
-    let cwd = record
-        .cwd
-        .as_deref()
-        .filter(|c| std::path::Path::new(c).is_absolute() && std::path::Path::new(c).is_dir());
     match state
         .cmux_bridge
-        .new_surface_with_cwd(Some(ws), Some(&command), cwd)
+        .new_surface_with_cwd(Some(ws), Some(&command), cwd.as_deref())
         .await
     {
         Ok(out) => JsonRpcResponse::result(

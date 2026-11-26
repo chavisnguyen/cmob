@@ -494,10 +494,25 @@ impl HookSessionRecord {
             return base;
         }
         let age = self.updated_at.map(|u| unix_now() - u);
+        self.live_lifecycle_with_liveness_and_age(base, age, None)
+    }
+
+    pub fn live_lifecycle_in(
+        &self,
+        runtime: &crate::scanner::liveness::WorkspaceRuntimeStore,
+    ) -> AgentLifecycleState {
+        let base = self.resolved_lifecycle();
+        if matches!(
+            base,
+            AgentLifecycleState::Idle | AgentLifecycleState::Error | AgentLifecycleState::Done
+        ) {
+            return base;
+        }
+        let age = self.updated_at.map(|u| unix_now() - u);
         let process_alive = if base == AgentLifecycleState::Waiting
             && age.is_some_and(|a| a > STALE_AFTER_SECS)
         {
-            crate::scanner::liveness::surface_has_agent_process(&self.surface_id)
+            runtime.surface_has_agent_process(&self.surface_id)
         } else {
             None
         };
@@ -883,7 +898,9 @@ impl HookStoreIndex {
         for s in sorted {
             if let Some(body) = s.last_body.as_deref() {
                 let trimmed = body.trim();
-                if !trimmed.is_empty() && !crate::notifications::is_generic_placeholder(trimmed) {
+                if !trimmed.is_empty()
+                    && !crate::domain::notification_text::is_generic_placeholder(trimmed)
+                {
                     return Some(trimmed.to_string());
                 }
             }

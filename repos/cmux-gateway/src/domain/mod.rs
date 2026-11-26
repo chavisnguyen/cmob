@@ -1,5 +1,11 @@
+pub mod agent_options;
+pub mod agent_profile;
+pub mod agents;
 pub mod canonical_turn;
 pub mod dialog;
 pub mod lifecycle;
 pub mod noise_filter;
+pub mod notification_text;
 pub mod receipt_normalizer;
+pub mod startup_dialog;
+pub mod workspace_model;

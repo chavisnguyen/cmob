@@ -2,9 +2,11 @@
 
 use std::collections::HashSet;
 
-use crate::notifications::{is_generic_placeholder, normalize_text, strip_markdown_for_notification, BODY_MAX_CHARS};
+use crate::domain::notification_text::{
+    is_generic_placeholder, normalize_text, strip_markdown_for_notification, BODY_MAX_CHARS,
+};
+use crate::domain::workspace_model::SurfaceNode;
 use crate::protocol::event::{AgentEvent, AgentLifecycleState, AgentTurn};
-use crate::scanner::workspace_tree::SurfaceNode;
 
 pub const STALE_AFTER_SECS: f64 = 30.0 * 60.0;
 
@@ -278,8 +280,8 @@ pub fn extract_transcript_preview_from_turns(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::domain::workspace_model::SurfaceAgentInfo;
     use crate::protocol::event::{AgentRole, AwaitingInput};
-    use crate::scanner::workspace_tree::SurfaceAgentInfo;
 
     #[test]
     fn workspace_status_reflects_live_surfaces_including_kiro() {

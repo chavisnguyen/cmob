@@ -9,11 +9,10 @@ import {
   stripPairingCodeFromAddressBar,
   type PairingOffer,
 } from "../protocol/pairing";
-import {
-  RPC_EVENTS,
-  type AuthBootstrapRequest,
-  type JsonRpcResponse,
-  type WorkspaceBootstrapPayload,
+import type {
+  AuthBootstrapRequest,
+  JsonRpcResponse,
+  WorkspaceBootstrapPayload,
 } from "../protocol/rpc";
 import {
   exchangePairingTicket,
@@ -26,6 +25,7 @@ import {
   persistEndpoint,
   persistStoredToken,
 } from "./tokenVault";
+import { BootstrapStateTracker } from "./wsBootstrap";
 import {
   RpcRequestTracker,
   computeReconnectDelayMs,
@@ -64,12 +64,7 @@ export class GatewayWsClient {
   private hostNameHint: string | null;
   private fallbackTokens: string[];
   private lastErrorMessage: string | null = null;
-  private bootstrapProvider: (() => AuthBootstrapRequest | null) | null = null;
-  private serverCapabilities = new Set<string>();
-  private awaitingBootstrapTree = false;
-  private bufferedBootstrapPayload: WorkspaceBootstrapPayload | null = null;
-  private bootstrappedSurfaceId: string | null = null;
-  private bufferedBootstrapChatFrame: unknown = null;
+  private bootstrap = new BootstrapStateTracker();
 
   constructor() {
     const init = resolveInitialPairingState();
@@ -142,42 +137,22 @@ export class GatewayWsClient {
   }
 
   public setBootstrapProvider(provider: (() => AuthBootstrapRequest | null) | null): void {
-    this.bootstrapProvider = provider;
+    this.bootstrap.setProvider(provider);
   }
 
   public isAwaitingBootstrapTree(): boolean {
-    return this.awaitingBootstrapTree && this.serverCapabilities.has("bootstrap.v1");
+    return this.bootstrap.isAwaitingTree();
   }
 
   public consumeBufferedBootstrapPayload(): WorkspaceBootstrapPayload | null {
-    const payload = this.bufferedBootstrapPayload;
-    this.bufferedBootstrapPayload = null;
-    return payload;
+    return this.bootstrap.consumeBufferedPayload();
   }
 
   public consumeBootstrappedChatSubscription(
     surfaceId?: string,
     surfaceRef?: string,
   ): { subscribed: boolean; initialFrame: unknown } {
-    const target = this.bootstrappedSurfaceId;
-    if (!target) {
-      return { subscribed: false, initialFrame: null };
-    }
-    if ((surfaceId && surfaceId === target) || (surfaceRef && surfaceRef === target)) {
-      this.bootstrappedSurfaceId = null;
-      const frame = this.bufferedBootstrapChatFrame;
-      this.bufferedBootstrapChatFrame = null;
-      return { subscribed: true, initialFrame: frame };
-    }
-    return { subscribed: false, initialFrame: null };
-  }
-
-  private resetBootstrapState(): void {
-    this.serverCapabilities.clear();
-    this.awaitingBootstrapTree = false;
-    this.bufferedBootstrapPayload = null;
-    this.bootstrappedSurfaceId = null;
-    this.bufferedBootstrapChatFrame = null;
+    return this.bootstrap.consumeChatSubscription(surfaceId, surfaceRef);
   }
 
   private setState(state: ConnectionState): void {
@@ -367,7 +342,7 @@ export class GatewayWsClient {
     }
 
     this.shouldReconnect = true;
-    this.resetBootstrapState();
+    this.bootstrap.reset();
     this.setState("connecting");
     try {
       const socket = new WebSocket(wsUrl);
@@ -375,18 +350,13 @@ export class GatewayWsClient {
       socket.onopen = () => {
         if (this.ws !== socket) return;
         this.setState("authenticating");
-        const bootstrap = this.bootstrapProvider?.() ?? null;
-        this.awaitingBootstrapTree = Boolean(bootstrap?.workspace_tree);
-        const authFrame = bootstrap
-          ? { type: "auth", token: this.token, bootstrap }
-          : { type: "auth", token: this.token };
-        this.ws?.send(JSON.stringify(authFrame));
+        this.ws?.send(JSON.stringify(this.bootstrap.buildAuthFrame(this.token)));
       };
       socket.onmessage = (event) => this.handleMessage(socket, event.data);
       socket.onclose = (ev) => {
         if (this.ws !== socket) return;
         this.ws = null;
-        this.resetBootstrapState();
+        this.bootstrap.reset();
         this.rpcTracker.rejectAll();
         if (ev.code === 1008) {
           if (this.useNextToken()) return;
@@ -414,12 +384,7 @@ export class GatewayWsClient {
         this.lastErrorMessage = null;
         this.reconnectAttempts = 0;
         this.fallbackTokens = [];
-        this.serverCapabilities = new Set(
-          Array.isArray(raw.capabilities) ? (raw.capabilities as string[]) : [],
-        );
-        if (!this.serverCapabilities.has("bootstrap.v1")) {
-          this.awaitingBootstrapTree = false;
-        }
+        this.bootstrap.onAuthOk(raw.capabilities);
         persistStoredToken(this.token);
         recordAuthenticatedHost(this.getEndpoint(), this.token, this.hostNameHint);
         return this.setState("connected");
@@ -433,21 +398,7 @@ export class GatewayWsClient {
       const resp = raw as JsonRpcResponse;
       if (this.rpcTracker.settleResponse(resp)) return;
       if (resp.event) {
-        if (resp.event === RPC_EVENTS.WORKSPACE_BOOTSTRAP && resp.data) {
-          const payload = resp.data as WorkspaceBootstrapPayload;
-          this.awaitingBootstrapTree = false;
-          this.bootstrappedSurfaceId = payload.subscribed_surface_id ?? null;
-          this.bufferedBootstrapChatFrame = null;
-          this.bufferedBootstrapPayload = payload;
-        } else if (
-          resp.event === RPC_EVENTS.CHAT_UPDATE &&
-          this.bootstrappedSurfaceId &&
-          resp.data &&
-          typeof resp.data === "object" &&
-          (resp.data as { surface_id?: string }).surface_id === this.bootstrappedSurfaceId
-        ) {
-          this.bufferedBootstrapChatFrame = resp.data;
-        }
+        this.bootstrap.onEvent(resp.event, resp.data);
         for (const listener of this.eventListeners) listener(resp.event, resp.data);
       }
     } catch (err) {
@@ -467,7 +418,7 @@ export class GatewayWsClient {
       old.close();
     }
     this.rpcTracker.rejectAll();
-    this.resetBootstrapState();
+    this.bootstrap.reset();
     this.setState("disconnected");
   }
 

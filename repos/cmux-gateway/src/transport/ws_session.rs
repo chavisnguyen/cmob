@@ -17,6 +17,7 @@ use tokio::task::JoinHandle;
 use tokio::time::timeout;
 use tracing::{error, info, warn};
 
+use crate::domain::workspace_model::{SurfaceNode, WorkspaceNode};
 use crate::protocol::{
     AuthBootstrapRequest, AuthError, AuthOk, AuthRequest, JsonRpcError, JsonRpcRequest,
     JsonRpcResponse, EVENT_WORKSPACE_BOOTSTRAP, METHOD_CHAT_SUBSCRIBE, METHOD_CHAT_UNSUBSCRIBE,
@@ -24,9 +25,6 @@ use crate::protocol::{
     METHOD_TERMINAL_PASTE, METHOD_TERMINAL_SCROLL, METHOD_TERMINAL_SEND, METHOD_TERMINAL_SUBSCRIBE,
     METHOD_TERMINAL_UNSUBSCRIBE, METHOD_TERMINAL_VIEWPORT, WS_CLOSE_AUTH_FAILED,
 };
-use crate::scanner::hook_store::HookStoreIndex;
-use crate::scanner::liveness;
-use crate::scanner::workspace_tree::{SurfaceNode, WorkspaceNode, WorkspaceTreeBuilder};
 use crate::server::AppState;
 use crate::services::chat_stream::{chat_watcher_stream, handle_subscription, MAX_SUBSCRIPTIONS};
 use crate::services::notification_dispatcher::NotificationBroadcast;
@@ -35,6 +33,7 @@ use crate::services::terminal_stream::{
     apply_terminal_viewport, handle_terminal_subscription, trigger_terminal_wakeup,
     TerminalSubscriptionHandle,
 };
+use crate::services::workspace_service::WorkspaceService;
 pub use crate::transport::client_registry::{ClientInfo, ClientRegistry};
 use crate::transport::rpc::dispatch_rpc;
 
@@ -317,7 +316,10 @@ fn handle_client_viewing(
     let visible = rpc_req.params.get("visible").and_then(|v| v.as_bool()).unwrap_or(true);
 
     match raw_surface {
-        Some(raw) if raw.starts_with("surface:") && liveness::resolve_cached_surface_ref(&raw).is_none() => {
+        Some(raw)
+            if raw.starts_with("surface:")
+                && WorkspaceService::resolve_cached_surface_ref(state, &raw).is_none() =>
+        {
             let (state_cl, out_tx_cl, sem_cl, sess_cl, req_id) = (
                 state.clone(),
                 out_tx.clone(),
@@ -330,11 +332,7 @@ fn handle_client_viewing(
                 let canonical = SessionStateService::canonicalize_surface_id(&state_cl, &raw).await;
                 state_cl.clients.set_viewing(&sess_cl, Some(canonical.clone()), visible);
                 if visible {
-                    crate::scanner::workspace_tree::WorkspaceTreeBuilder::mark_surface_notifications_read(
-                        &state_cl.cmux_bridge,
-                        &canonical,
-                    )
-                    .await;
+                    WorkspaceService::mark_surface_notifications_read(&state_cl, &canonical).await;
                 }
                 let resp = JsonRpcResponse::result(
                     req_id,
@@ -348,16 +346,14 @@ fn handle_client_viewing(
             None
         }
         other => {
-            let canonical = other.map(|raw| liveness::resolve_cached_surface_ref(&raw).unwrap_or(raw));
+            let canonical = other.map(|raw| {
+                WorkspaceService::resolve_cached_surface_ref(state, &raw).unwrap_or(raw)
+            });
             if visible && let Some(ref cid) = canonical {
-                let bridge = state.cmux_bridge.clone();
+                let state_cl = state.clone();
                 let cid_owned = cid.clone();
                 tokio::spawn(async move {
-                    crate::scanner::workspace_tree::WorkspaceTreeBuilder::mark_surface_notifications_read(
-                        &bridge,
-                        &cid_owned,
-                    )
-                    .await;
+                    WorkspaceService::mark_surface_notifications_read(&state_cl, &cid_owned).await;
                 });
             }
             state.clients.set_viewing(session_id, canonical.clone(), visible);
@@ -459,11 +455,10 @@ async fn push_auth_bootstrap(
     subs: &mut HashMap<String, JoinHandle<()>>,
     boot: &AuthBootstrapRequest,
 ) -> bool {
-    let built = timeout(Duration::from_millis(1500), async {
-        let hook_index =
-            HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
-        WorkspaceTreeBuilder::build_tree(&state.cmux_bridge, &hook_index).await
-    })
+    let built = timeout(
+        Duration::from_millis(1500),
+        WorkspaceService::build_tree(state),
+    )
     .await;
 
     let Ok(Ok(workspaces)) = built else {

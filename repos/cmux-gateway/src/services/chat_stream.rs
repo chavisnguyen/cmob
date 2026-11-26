@@ -12,7 +12,6 @@ use crate::io::file_watch::TranscriptFileWatcher;
 use crate::protocol::event::{AgentEvent, AgentLifecycleState, AgentTurn, SubagentState};
 use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_CHAT_UNSUBSCRIBE};
 use crate::scanner::kiro_store::KiroSessionIndex;
-use crate::scanner::liveness;
 use crate::scanner::opencode_store;
 use crate::server::AppState;
 use crate::services::session_state::{ResolvedSession, SessionStateService};
@@ -38,8 +37,10 @@ pub fn handle_subscription(
             JsonRpcError::invalid_params("Missing surface_id parameter"),
         );
     };
-    let canonical_key =
-        liveness::resolve_cached_surface_ref(&raw_surface_id).unwrap_or_else(|| raw_surface_id.clone());
+    let canonical_key = state
+        .runtime
+        .resolve_cached_surface_ref(&raw_surface_id)
+        .unwrap_or_else(|| raw_surface_id.clone());
 
     if let Some(old) = subs.remove(&canonical_key) {
         old.abort();
@@ -288,13 +289,13 @@ pub async fn chat_watcher_stream(
             .and_then(|r| r.transcript_path.as_deref())
             .map(std::path::PathBuf::from);
         let has_transcript = watched_transcript_path.is_some();
-        let known_dialog_waiting = crate::cmux::startup_dialog::registry::is_waiting(&target_surface_id);
+        let known_dialog_waiting = state.runtime.is_dialog_waiting(&target_surface_id);
         let defer_screen_probes = first_tick && has_transcript && !known_dialog_waiting;
 
         let working = resolved.as_ref().is_some_and(|r| r.lifecycle == AgentLifecycleState::Working);
         if working {
             dialog = (serde_json::Value::Null, None);
-            crate::cmux::startup_dialog::registry::set(&target_surface_id, None);
+            state.runtime.set_dialog_waiting(&target_surface_id, None);
         } else if !defer_screen_probes && dialog.1.is_none_or(|at| at.elapsed() >= DIALOG_POLL) {
             dialog = (
                 SessionStateService::startup_dialog_value(&state, &target_surface_id).await,

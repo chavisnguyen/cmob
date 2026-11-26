@@ -19,14 +19,14 @@ import type { ThoughtStepItem, ToolCallItem, WorkRunStepItem } from "../../domai
 import { useChatDisclosure } from "../../state/useChatDisclosure";
 import { TaskChecklistRows } from "./ChatWorkPrimitives";
 import { MobileNativeChatDiffCard } from "./MobileNativeChatDiffCard";
-import { describeTaskToolCall, formatChatDuration } from "./taskList";
+import { describeTaskToolCall, formatChatDuration } from "../../domain/chat/taskList";
 import {
   classifyToolCategory,
   deriveToolRunSentence,
   formatSingleToolMemberLabel,
   parseEditDetails,
   type ToolCategory,
-} from "./toolRunSentence";
+} from "../../domain/chat/toolRunSentence";
 
 export type { ToolCallItem } from "../../domain/chat/types";
 

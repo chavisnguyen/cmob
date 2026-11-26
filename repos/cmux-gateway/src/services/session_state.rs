@@ -7,7 +7,6 @@ use crate::domain::lifecycle::derive_awaiting_prompt_from_parts;
 use crate::protocol::event::{AgentLifecycleState, AgentTurn};
 use crate::scanner::hook_store::{HookSessionRecord, HookStoreIndex};
 use crate::scanner::kiro_store::KiroSessionIndex;
-use crate::scanner::liveness;
 use crate::scanner::opencode_store;
 use crate::scanner::transcript::{TranscriptPage, TranscriptReader};
 use crate::scanner::workspace_tree::WorkspaceTreeBuilder;
@@ -39,12 +38,17 @@ impl SessionStateService {
         if raw_id.is_empty() || !raw_id.starts_with("surface:") {
             return raw_id.to_string();
         }
-        if let Some(cached) = liveness::resolve_cached_surface_ref(raw_id) {
+        if let Some(cached) = state.runtime.resolve_cached_surface_ref(raw_id) {
             return cached;
         }
         let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
-        if let Ok(Some(surf)) =
-            WorkspaceTreeBuilder::get_surface(&state.cmux_bridge, &hook_index, raw_id).await
+        if let Ok(Some(surf)) = WorkspaceTreeBuilder::get_surface_in(
+            &state.cmux_bridge,
+            &hook_index,
+            raw_id,
+            &state.runtime,
+        )
+        .await
         {
             return surf.id;
         }
@@ -89,13 +93,14 @@ impl SessionStateService {
         let surface_id = Self::canonicalize_surface_id(state, raw_surface_id).await;
         let sid_owned = surface_id.clone();
         let req_session_id = session_id.to_string();
+        let runtime = state.runtime.clone();
 
         // Coalesce HookStore scan, TTY liveness check, transcript tail lifecycle, and OpenCode SQLite
         // status into a single blocking hop instead of 3-4 sequential thread-pool round-trips.
         let (hook_index, live_kinds, hook_resolved) = tokio::task::spawn_blocking(move || {
             let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
             let live_kinds = if check_liveness && !sid_owned.is_empty() {
-                liveness::surface_live_agent_kinds(&sid_owned)
+                runtime.surface_live_agent_kinds(&sid_owned)
             } else {
                 None
             };
@@ -115,7 +120,7 @@ impl SessionStateService {
 
             let resolved = hook_record.map(|rec| {
                 let mut lifecycle = if check_liveness {
-                    rec.live_lifecycle()
+                    rec.live_lifecycle_with_liveness(live_kinds.as_ref().map(|k| !k.is_empty()))
                 } else {
                     rec.resolved_lifecycle()
                 };
@@ -174,10 +179,15 @@ impl SessionStateService {
             return None;
         }
 
-        let surface = WorkspaceTreeBuilder::get_surface(&state.cmux_bridge, &hook_index, &surface_id)
-            .await
-            .ok()
-            .flatten()?;
+        let surface = WorkspaceTreeBuilder::get_surface_in(
+            &state.cmux_bridge,
+            &hook_index,
+            &surface_id,
+            &state.runtime,
+        )
+        .await
+        .ok()
+        .flatten()?;
         let agent = surface.agent?;
         let path = agent.transcript_path.clone()?;
         let path_for_kiro = path.clone();
@@ -305,11 +315,16 @@ impl SessionStateService {
         Ok((val, page))
     }
 
+    pub fn is_dialog_waiting(state: &AppState, surface_id: &str) -> bool {
+        state.runtime.is_dialog_waiting(surface_id)
+    }
+
     pub async fn startup_dialog_value(state: &AppState, surface_id: &str) -> serde_json::Value {
-        use crate::cmux::startup_dialog::registry;
         match state.cmux_bridge.current_dialog(Some(surface_id)).await {
             Some(d) => {
-                registry::set(surface_id, Some(&d.fingerprint));
+                state
+                    .runtime
+                    .set_dialog_waiting(surface_id, Some(&d.fingerprint));
                 serde_json::json!({
                     "kind": d.kind.label(),
                     "title": d.title,
@@ -320,13 +335,15 @@ impl SessionStateService {
                 })
             }
             None => {
-                registry::set(surface_id, None);
+                state.runtime.set_dialog_waiting(surface_id, None);
                 serde_json::Value::Null
             }
         }
     }
 
-    pub fn collect_notification_sessions() -> Vec<HookSessionRecord> {
-        crate::services::notification_sources::collect_notification_sessions()
+    pub fn collect_notification_sessions(
+        runtime: &crate::scanner::liveness::WorkspaceRuntimeStore,
+    ) -> Vec<HookSessionRecord> {
+        crate::services::notification_sources::collect_notification_sessions(runtime)
     }
 }

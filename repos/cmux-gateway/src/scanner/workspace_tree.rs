@@ -1,91 +1,15 @@
-use serde::{Deserialize, Serialize};
+use serde::Deserialize;
 use std::collections::{HashMap, HashSet};
-use std::sync::{LazyLock, RwLock};
 
 use crate::cmux::bridge::{CmuxBridgeError, DualTransportCmuxBridge};
 use crate::protocol::event::AgentLifecycleState;
 use crate::scanner::hook_store::HookStoreIndex;
 use crate::scanner::kiro_store::KiroSessionIndex;
+use crate::scanner::liveness::WorkspaceRuntimeStore;
 
-/// In-memory durable identity latching cache: surface_id -> SurfaceAgentInfo
-/// Matches Orca's `withRememberedNativeChatIdentity` (ref/orca/mobile/src/session/native-chat/mobile-native-chat-eligibility.ts:88-113)
-/// "Missing status is not proof of pane change: retain identity until a new PTY handle replaces it."
-static REMEMBERED_SURFACES: LazyLock<RwLock<HashMap<String, SurfaceAgentInfo>>> =
-    LazyLock::new(|| RwLock::new(HashMap::new()));
-
-/// Level 1: Workspace Node matching cmux macOS Sidebar
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkspaceNode {
-    pub id: String,
-    pub r#ref: String,
-    pub title: String,
-    pub pinned: bool,
-    pub selected: bool,
-    /// Status badge: "running" (⚡ Running) or "idle" (⚪ Idle)
-    pub status: String,
-    pub current_directory: String,
-    /// User-chosen sidebar color from cmux (`workspace.list` -> `custom_color`), `#RRGGBB`.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
-    /// Latest notification or turn summary snippet
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snippet: Option<String>,
-    /// Unread notification count for this workspace (from `cmux rpc notification.list`).
-    #[serde(default)]
-    pub unread_count: usize,
-    /// Level 2 surfaces inside this workspace
-    pub surfaces: Vec<SurfaceNode>,
-}
-
-/// Summary item for mobile.workspace.list
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct WorkspaceSummary {
-    pub id: String,
-    pub r#ref: String,
-    pub title: String,
-    pub pinned: bool,
-    pub selected: bool,
-    pub status: String,
-    pub current_directory: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub color: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub snippet: Option<String>,
-    #[serde(default)]
-    pub unread_count: usize,
-    pub surface_count: usize,
-    pub has_running_agent: bool,
-}
-
-/// Level 2: Surface Node (Terminal, Markdown, or Browser tab)
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
-pub struct SurfaceNode {
-    pub id: String,
-    pub r#ref: String,
-    pub title: String,
-    /// "terminal" | "markdown" | "browser"
-    pub surface_type: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub tty: Option<String>,
-    pub selected: bool,
-    pub focused: bool,
-    /// Unread notification count targeting this surface (`cmux rpc notification.list`).
-    #[serde(default)]
-    pub unread_count: usize,
-    /// Level 3 Agent metadata if active on this surface
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub agent: Option<SurfaceAgentInfo>,
-}
-
-/// Level 3: Active AI Agent metadata
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct SurfaceAgentInfo {
-    pub session_id: String,
-    pub agent_kind: String,
-    pub status: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub transcript_path: Option<String>,
-}
+pub use crate::domain::workspace_model::{
+    sanitize_hex_color, SurfaceAgentInfo, SurfaceNode, WorkspaceNode, WorkspaceSummary,
+};
 
 // Internal raw deserialization structs from cmux CLI output
 #[derive(Debug, Deserialize)]
@@ -209,76 +133,49 @@ fn parse_etime_secs(etime: &str) -> Option<u64> {
     Some(days * 86_400 + secs)
 }
 
-/// Short-lived cache of the last built workspace tree so Kiro / hook-miss `get_surface` calls
-/// during conversation open and concurrent multi-device polls reuse the recent tree instead of
-/// re-spawning `cmux tree` + `ps`.
-static LAST_TREE_SNAPSHOT: LazyLock<RwLock<Option<(Vec<WorkspaceNode>, std::time::Instant)>>> =
-    LazyLock::new(|| RwLock::new(None));
-/// Set of canonical surface UUIDs known to have unread cmux notifications in the latest scan.
-static UNREAD_SURFACES: LazyLock<RwLock<HashSet<String>>> =
-    LazyLock::new(|| RwLock::new(HashSet::new()));
 const SURFACE_LOOKUP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4);
 const TREE_POLL_COALESCE_TTL: std::time::Duration = std::time::Duration::from_millis(150);
 
-/// Builder responsible for merging cmux CLI output with HookStoreIndex
+/// Builder responsible for merging cmux UDS output with `HookStoreIndex` and `WorkspaceRuntimeStore`.
 pub struct WorkspaceTreeBuilder;
 
 impl WorkspaceTreeBuilder {
-    /// Invalidates the short-lived tree snapshot after surface CRUD or notification state changes.
-    pub fn invalidate_tree_cache() {
-        if let Ok(mut snap) = LAST_TREE_SNAPSHOT.write() {
-            *snap = None;
-        }
-    }
-
-    /// Marks `surface_id` as having unread notifications and invalidates the tree cache so immediate
-    /// toast-tap / `mobile.client.viewing` events clear `cmux` notifications even before the next poll.
-    pub fn note_surface_unread(surface_id: &str) {
-        if !surface_id.is_empty()
-            && let Ok(mut set) = UNREAD_SURFACES.write()
-        {
-            set.insert(surface_id.to_string());
-        }
-        Self::invalidate_tree_cache();
-    }
-
     /// Marks notifications for a viewed surface read in `cmux` (no-op if surface had 0 unreads).
     pub async fn mark_surface_notifications_read(
         bridge: &DualTransportCmuxBridge,
+        runtime: &WorkspaceRuntimeStore,
         surface_id: &str,
     ) {
-        if surface_id.is_empty() {
+        if !runtime.clear_surface_unread(surface_id) {
             return;
         }
-        let had_unread = UNREAD_SURFACES
-            .read()
-            .ok()
-            .is_some_and(|set| set.contains(surface_id));
-        if !had_unread {
-            return;
-        }
-        let Some(ws_id) = crate::scanner::liveness::workspace_for_surface(surface_id)
+        let Some(ws_id) = runtime
+            .workspace_for_surface(surface_id)
             .filter(|w| !w.is_empty())
         else {
             return;
         };
-        if let Ok(mut set) = UNREAD_SURFACES.write() {
-            set.remove(surface_id);
-        }
         let _ = bridge.mark_notifications_read(&ws_id, surface_id).await;
-        Self::invalidate_tree_cache();
+        runtime.invalidate_tree_cache();
     }
 
-    /// Build the full 3-level tree from live cmux instance and hook index
+    /// Stateless convenience wrapper around `build_tree_in` (used by standalone mock tests).
     pub async fn build_tree(
         bridge: &DualTransportCmuxBridge,
         hook_index: &HookStoreIndex,
     ) -> Result<Vec<WorkspaceNode>, CmuxBridgeError> {
-        if let Ok(guard) = LAST_TREE_SNAPSHOT.read()
-            && let Some((cached, built_at)) = guard.as_ref()
-            && built_at.elapsed() < TREE_POLL_COALESCE_TTL
-        {
-            return Ok(cached.clone());
+        let ephemeral = WorkspaceRuntimeStore::new();
+        Self::build_tree_in(bridge, hook_index, &ephemeral).await
+    }
+
+    /// Build the full 3-level tree from live cmux instance, hook index, and injected `WorkspaceRuntimeStore`.
+    pub async fn build_tree_in(
+        bridge: &DualTransportCmuxBridge,
+        hook_index: &HookStoreIndex,
+        runtime: &WorkspaceRuntimeStore,
+    ) -> Result<Vec<WorkspaceNode>, CmuxBridgeError> {
+        if let Some(cached) = runtime.cached_tree(TREE_POLL_COALESCE_TTL) {
+            return Ok(cached);
         }
 
         // Run `system.tree`, `workspace.list`, `notification.list` (over persistent UDS pool),
@@ -300,9 +197,7 @@ impl WorkspaceTreeBuilder {
             .as_deref()
             .map(parse_unread_notification_counts)
             .unwrap_or_default();
-        if let Ok(mut set) = UNREAD_SURFACES.write() {
-            *set = unread_by_surf.keys().cloned().collect();
-        }
+        runtime.replace_unread_surfaces(unread_by_surf.keys().cloned().collect());
 
         let tree_output = tree_res?;
         let tree_data: RawCmuxTreeOutput = serde_json::from_str(&tree_output).map_err(|e| {
@@ -333,9 +228,8 @@ impl WorkspaceTreeBuilder {
         }
 
         let (live_agents_by_tty, kiro_by_tty) = proc_kiro_res.unwrap_or((None, HashMap::new()));
-        crate::scanner::liveness::store_proc_scan(&live_agents_by_tty);
+        runtime.store_proc_scan(&live_agents_by_tty);
 
-        // Step 3: Combine raw tree, workspace dirs, and hook store index
         let mut result_workspaces = Vec::new();
         let mut all_surface_ids = HashSet::new();
 
@@ -353,7 +247,6 @@ impl WorkspaceTreeBuilder {
                     .cloned()
                     .unwrap_or_else(|| "~".to_string());
 
-                // Build surface list
                 let mut surfaces = Vec::new();
                 for pane in raw_ws.panes {
                     for raw_surf in pane.surfaces {
@@ -365,19 +258,16 @@ impl WorkspaceTreeBuilder {
                         let surf_focused = raw_surf.focused.unwrap_or(false);
 
                         all_surface_ids.insert(surf_id.clone());
-                        crate::scanner::liveness::record_surface_meta(
+                        runtime.record_surface_meta(
                             &surf_id,
                             &surf_ref,
                             &ws_id,
                             Some(&current_directory),
                         );
                         if let Some(tty) = raw_surf.tty.as_deref() {
-                            crate::scanner::liveness::record_surface_tty(&surf_id, tty);
+                            runtime.record_surface_tty(&surf_id, tty);
                         }
 
-                        // Compute live agent kinds on this TTY FIRST so stale hook records from an
-                        // exited agent (e.g. Claude exited, Kiro/Codex/zsh now running) are ignored
-                        // and NEVER shadow Kiro's live session!
                         let live_kinds = if surf_type == "terminal" {
                             Self::live_kinds_for(&live_agents_by_tty, raw_surf.tty.as_deref())
                         } else {
@@ -403,23 +293,19 @@ impl WorkspaceTreeBuilder {
                         );
 
                         let agent_info = if let Some(info) = discovered_info {
-                            if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
-                                cache.insert(surf_id.clone(), info.clone());
-                            }
+                            runtime.remember_surface_agent(&surf_id, info.clone());
                             Some(info)
                         } else if live_kinds.as_ref().is_some_and(|k| k.is_empty()) {
-                            if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
-                                cache.remove(&surf_id);
-                            }
+                            runtime.forget_remembered_agent(&surf_id);
                             None
-                        } else if let Ok(cache) = REMEMBERED_SURFACES.read() {
-                            cache.get(&surf_id).cloned().filter(|i| still_alive(i))
                         } else {
-                            None
+                            runtime
+                                .remembered_surface_agent(&surf_id)
+                                .filter(still_alive)
                         };
 
                         let agent_info = agent_info.map(|mut a| {
-                            if crate::cmux::startup_dialog::registry::is_waiting(&surf_id) {
+                            if runtime.is_dialog_waiting(&surf_id) {
                                 a.status = "waiting".to_string();
                             }
                             a
@@ -440,8 +326,6 @@ impl WorkspaceTreeBuilder {
                     }
                 }
 
-                // Derive workspace status AFTER surface resolution so closed/crashed tabs don't keep
-                // workspace "running" for 30m, and Kiro/OpenCode tabs mark workspace "running"/"waiting"!
                 let status = crate::domain::lifecycle::derive_workspace_status(&surfaces);
                 let surf_unread_sum: usize = surfaces.iter().map(|s| s.unread_count).sum();
                 let ws_unread = unread_by_ws.get(&ws_id).copied().unwrap_or(0).max(surf_unread_sum);
@@ -462,10 +346,6 @@ impl WorkspaceTreeBuilder {
             }
         }
 
-        // Resolve workspace snippets on a blocking worker (cached by `(path, mtime, len)`):
-        // 1. Newest hook session `lastBody` or its `transcriptPath`
-        // 2. Discovered surface `agent.transcript_path` (covers hook-less agents like Kiro)
-        // 3. Fallback to `cmux rpc workspace.list`'s `latest_conversation_message`
         let hook_for_snippets = hook_index.clone();
         let result_workspaces = tokio::task::spawn_blocking(move || {
             let mut workspaces = result_workspaces;
@@ -489,15 +369,9 @@ impl WorkspaceTreeBuilder {
         .await
         .unwrap_or_default();
 
-        // Prune remembered surfaces and tty cache that no longer exist in cmux
-        if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
-            cache.retain(|k, _| all_surface_ids.contains(k));
-        }
-        crate::scanner::liveness::prune_surfaces(&all_surface_ids);
-
-        if let Ok(mut snap) = LAST_TREE_SNAPSHOT.write() {
-            *snap = Some((result_workspaces.clone(), std::time::Instant::now()));
-        }
+        runtime.prune_remembered_surfaces(&all_surface_ids);
+        runtime.prune_surfaces(&all_surface_ids);
+        runtime.store_tree_snapshot(result_workspaces.clone());
 
         Ok(result_workspaces)
     }
@@ -586,27 +460,23 @@ impl WorkspaceTreeBuilder {
         Ok(summaries)
     }
 
-    /// Retrieve detail for a single surface (reuses recent tree snapshot when fresh to avoid
-    /// redundant `cmux tree` + `ps` + Kiro directory scans on conversation open).
-    pub async fn get_surface(
+    /// Retrieve detail for a single surface using an injected `WorkspaceRuntimeStore`.
+    pub async fn get_surface_in(
         bridge: &DualTransportCmuxBridge,
         hook_index: &HookStoreIndex,
         surface_id: &str,
+        runtime: &WorkspaceRuntimeStore,
     ) -> Result<Option<SurfaceNode>, CmuxBridgeError> {
-        if let Ok(guard) = LAST_TREE_SNAPSHOT.read() {
-            if let Some((cached_tree, built_at)) = guard.as_ref() {
-                if built_at.elapsed() < SURFACE_LOOKUP_CACHE_TTL {
-                    for ws in cached_tree {
-                        for surf in &ws.surfaces {
-                            if surf.id == surface_id || surf.r#ref == surface_id {
-                                return Ok(Some(surf.clone()));
-                            }
-                        }
+        if let Some(cached_tree) = runtime.cached_tree(SURFACE_LOOKUP_CACHE_TTL) {
+            for ws in cached_tree {
+                for surf in ws.surfaces {
+                    if surf.id == surface_id || surf.r#ref == surface_id {
+                        return Ok(Some(surf));
                     }
                 }
             }
         }
-        let tree = Self::build_tree(bridge, hook_index).await?;
+        let tree = Self::build_tree_in(bridge, hook_index, runtime).await?;
         for ws in tree {
             for surf in ws.surfaces {
                 if surf.id == surface_id || surf.r#ref == surface_id {
@@ -616,17 +486,23 @@ impl WorkspaceTreeBuilder {
         }
         Ok(None)
     }
-    /// Map an executable name to an agent kind, matching Orca's
-    /// `recognizeAgentProcessFromCommandLine` (ref/orca/src/shared/agent-status/process/agent-process-recognition.ts:53-71).
-    fn kind_from_bin(bin_name: &str) -> Option<&'static str> {
-        crate::cmux::agents::kind_from_bin(bin_name)
+
+    /// Stateless convenience wrapper around `get_surface_in`.
+    pub async fn get_surface(
+        bridge: &DualTransportCmuxBridge,
+        hook_index: &HookStoreIndex,
+        surface_id: &str,
+    ) -> Result<Option<SurfaceNode>, CmuxBridgeError> {
+        let ephemeral = WorkspaceRuntimeStore::new();
+        Self::get_surface_in(bridge, hook_index, surface_id, &ephemeral).await
     }
 
-    /// Accept only `#RRGGBB` (the client puts it into CSS); anything else is dropped.
+    fn kind_from_bin(bin_name: &str) -> Option<&'static str> {
+        crate::domain::agents::kind_from_bin(bin_name)
+    }
+
     pub fn sanitize_hex_color(raw: &str) -> Option<String> {
-        let t = raw.trim();
-        let hex = t.strip_prefix('#')?;
-        (hex.len() == 6 && hex.chars().all(|c| c.is_ascii_hexdigit())).then(|| format!("#{}", hex.to_uppercase()))
+        crate::domain::workspace_model::sanitize_hex_color(raw)
     }
 
     fn standby_info(agent_kind: &str) -> SurfaceAgentInfo {
@@ -635,16 +511,6 @@ impl WorkspaceTreeBuilder {
             agent_kind: agent_kind.to_string(),
             status: "ready".to_string(),
             transcript_path: None,
-        }
-    }
-
-    /// Immediately purges a closed surface from `REMEMBERED_SURFACES` and invalidates `LAST_TREE_SNAPSHOT`.
-    pub fn forget_surface(surface_id: &str) {
-        if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
-            cache.remove(surface_id);
-        }
-        if let Ok(mut snap) = LAST_TREE_SNAPSHOT.write() {
-            *snap = None;
         }
     }
 
@@ -659,13 +525,14 @@ impl WorkspaceTreeBuilder {
         live_kinds: &Option<HashSet<&'static str>>,
     ) -> Option<SurfaceAgentInfo> {
         let clean_tty = raw_tty.map(|t| t.trim_start_matches("/dev/"));
+        let proc_alive = live_kinds.as_ref().map(|k| !k.is_empty());
         hook_index
             .get_active_session_for_surface_filtered(surf_id, live_kinds.as_ref())
             .map(|s| {
-                let canonical_kind = crate::cmux::agents::spec_for(s.resolved_agent_kind())
+                let canonical_kind = crate::domain::agents::spec_for(s.resolved_agent_kind())
                     .map(|sp| sp.kind)
                     .unwrap_or_else(|| s.resolved_agent_kind());
-                let mut lc = s.live_lifecycle();
+                let mut lc = s.live_lifecycle_with_liveness(proc_alive);
                 if canonical_kind == "opencode"
                     && lc != AgentLifecycleState::Waiting
                     && let Some(path) = s.transcript_path.as_deref()
@@ -1001,23 +868,18 @@ mod tests {
 
     #[test]
     fn test_remembered_surface_identity_latching() {
+        let store = WorkspaceRuntimeStore::new();
         let surf_id = "test-surface-latching-1";
-        // Latch an identity
         let info = SurfaceAgentInfo {
             session_id: "sess-1".to_string(),
             agent_kind: "antigravity".to_string(),
             status: "ready".to_string(),
             transcript_path: None,
         };
-        if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
-            cache.insert(surf_id.to_string(), info.clone());
-        }
-
-        // Check that cache retains it even if title would no longer match (e.g. renamed to "git commit")
-        if let Ok(cache) = REMEMBERED_SURFACES.read() {
-            let remembered = cache.get(surf_id);
-            assert_eq!(remembered, Some(&info));
-        }
+        store.remember_surface_agent(surf_id, info.clone());
+        assert_eq!(store.remembered_surface_agent(surf_id), Some(info));
+        store.forget_surface(surf_id);
+        assert_eq!(store.remembered_surface_agent(surf_id), None);
     }
 
     #[test]

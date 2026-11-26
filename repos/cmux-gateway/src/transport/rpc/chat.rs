@@ -6,10 +6,10 @@ use crate::protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_CHAT_APPROVE, METHOD_CHAT_INTERRUPT,
     METHOD_CHAT_READ_SESSION, METHOD_CHAT_SEND, METHOD_CHAT_SESSIONS,
 };
-use crate::scanner::hook_store::HookStoreIndex;
 use crate::server::AppState;
 use crate::services::agent_control::interrupt_surface;
 use crate::services::session_state::SessionStateService;
+use crate::services::workspace_service::WorkspaceService;
 
 pub async fn try_dispatch(req: &JsonRpcRequest, state: &AppState) -> Option<JsonRpcResponse> {
     let resp = match req.method.as_str() {
@@ -88,8 +88,7 @@ async fn handle_interrupt(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResp
 }
 
 async fn handle_sessions(req: &JsonRpcRequest) -> JsonRpcResponse {
-    let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
-    let sessions: Vec<_> = hook_index.sessions_by_id.values().cloned().collect();
+    let sessions = WorkspaceService::list_hook_sessions().await;
     JsonRpcResponse::result(req.id.clone(), serde_json::json!({ "sessions": sessions })).unwrap()
 }
 
@@ -153,7 +152,7 @@ async fn handle_read_session(req: &JsonRpcRequest, state: &AppState) -> JsonRpcR
                     Ok(Ok((mut v, page))) => {
                         let needs_dialog_probe = res_lifecycle != AgentLifecycleState::Working
                             && (page.turns.is_empty()
-                                || crate::cmux::startup_dialog::registry::is_waiting(&res_surface_id));
+                                || SessionStateService::is_dialog_waiting(state, &res_surface_id));
                         v["startup_dialog"] = if needs_dialog_probe {
                             SessionStateService::startup_dialog_value(state, &res_surface_id).await
                         } else {

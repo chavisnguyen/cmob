@@ -4,8 +4,8 @@ import type { AgentTurn } from "../../protocol/event";
 import { MobileNativeChatBackgroundTasksCard } from "./MobileNativeChatBackgroundTasksCard";
 import { MobileNativeChatComposerTray } from "./MobileNativeChatComposerTray";
 import { MobileNativeChatToolRun } from "./MobileNativeChatToolRun";
-import { deriveConversationTasks, parseSnapshotTaskList } from "./taskList";
-import { deriveToolRunSentence } from "./toolRunSentence";
+import { deriveConversationTasks, parseSnapshotTaskList } from "../../domain/chat/taskList";
+import { deriveToolRunSentence } from "../../domain/chat/toolRunSentence";
 
 describe("multi-agent taskList & background work normalization", () => {
   it("parses Claude TodoWrite, OpenCode todowrite, Codex update_plan, and Antigravity update_steps", () => {
