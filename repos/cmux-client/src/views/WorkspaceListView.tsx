@@ -174,7 +174,18 @@ export function WorkspaceListView({
           </div>
         )}
 
-        {!hasNoHosts && workspaces.length === 0 && !loading && (
+        {workspaces.length === 0 && (loading || isConnecting) && (
+          <div
+            role="status"
+            aria-live="polite"
+            className="px-6 py-12 flex flex-col items-center justify-center gap-2 text-center text-muted text-[13px]"
+          >
+            <Loader2 className="w-4 h-4 animate-spin text-muted" />
+            <span>{isConnecting ? "Connecting…" : "Loading workspaces…"}</span>
+          </div>
+        )}
+
+        {!hasNoHosts && workspaces.length === 0 && !loading && !isConnecting && (
           <div className="px-6 py-12 text-center text-muted text-[13.5px]">
             No active workspaces found in cmux.
           </div>

@@ -45,22 +45,18 @@ export function useChatSubscription({
     subscribedRef.current = subscribed;
   }, [subscribed]);
 
-  // Persist confirmed turns to the two-tier session cache.
+  // Keep confirmed turns in the session-scoped RAM cache for instant tab-to-tab switching.
   useEffect(() => {
     if (!state.snapshotConfirmed || !hasAgent) return;
-    writeCachedChatTranscript(
-      cacheIdentity,
-      {
-        turns: state.turns,
-        hasMore: state.hasMoreHistory,
-        beforeOffset: state.beforeOffset,
-        lifecycleState: state.lifecycleState,
-        isWorking: state.isWorking,
-        activityText: state.activityText,
-        savedAt: Date.now(),
-      },
-      !state.isWorking,
-    );
+    writeCachedChatTranscript(cacheIdentity, {
+      turns: state.turns,
+      hasMore: state.hasMoreHistory,
+      beforeOffset: state.beforeOffset,
+      lifecycleState: state.lifecycleState,
+      isWorking: state.isWorking,
+      activityText: state.activityText,
+      savedAt: Date.now(),
+    });
   }, [
     cacheIdentity,
     hasAgent,

@@ -1,5 +1,4 @@
 import { describe, expect, it } from "vite-plus/test";
-import { trimTurnForStorage } from "../../components/chat/chatTranscriptCache";
 import type { AgentTurn } from "../../protocol/event";
 import {
   MAX_TURN_LIMIT,
@@ -29,11 +28,14 @@ function makeTurn(
 }
 
 describe("transcriptReducer & turnMerge", () => {
-  it("never reuses localStorage-truncated turns over untrimmed live wire turns", () => {
+  it("never reuses truncated turns over untrimmed live wire turns", () => {
     const fullText = "A".repeat(9_000);
     const fullTurn = makeTurn("t-1", "assistant", fullText);
-    const trimmed = trimTurnForStorage(fullTurn);
-    expect(trimmed.truncated).toBe(true);
+    const trimmed: AgentTurn = {
+      ...fullTurn,
+      events: [{ kind: "assistant", text: `${fullText.slice(0, 8_000)}…` }],
+      truncated: true,
+    };
 
     const t2 = makeTurn("t-2", "user", "next");
     const merged = mergeIncomingSessionFrame({

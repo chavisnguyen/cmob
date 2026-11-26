@@ -135,4 +135,5 @@ gh api repos/chavisnguyen/homebrew-cmob/contents/Formula/cmob.rb --jq '.content'
 | v0.1.15 | 2026-11-25 | ✓ |
 | v0.2.0 | 2026-11-26 | ✓ |
 | v0.2.1 | 2026-11-26 | ✓ |
-| v0.2.2 | 2026-11-26 | pending |
+| v0.2.2 | 2026-11-26 | ✓ |
+| v0.2.3 | 2026-11-26 | pending |

@@ -15,90 +15,21 @@ export interface CachedChatTranscript {
   savedAt: number;
 }
 
-const STORED_VERSION = 1;
-const STORAGE_KEY = "cmux.chat.transcriptCache.v1";
-const MAX_MEMORY_ENTRIES = 12;
-const MAX_PERSISTED_ENTRIES = 8;
-const MAX_PERSISTED_TURNS = 30;
-const MAX_PERSISTED_TEXT_CHARS = 8_000;
+const LEGACY_STORAGE_KEY = "cmux.chat.transcriptCache.v1";
+const MAX_MEMORY_ENTRIES = 16;
 
 const memoryCache = new Map<string, CachedChatTranscript>();
-let hydratedFromStorage = false;
+let purgedLegacyDiskCache = false;
 
-function safeLocalStorage(): Storage | null {
+function purgeLegacyDiskCacheOnce(): void {
+  if (purgedLegacyDiskCache) return;
+  purgedLegacyDiskCache = true;
   try {
-    if (typeof window === "undefined" || !window.localStorage) return null;
-    if (typeof window.localStorage.getItem !== "function") return null;
-    return window.localStorage;
-  } catch {
-    return null;
-  }
-}
-
-function hydrateStorageOnce(): void {
-  if (hydratedFromStorage) return;
-  hydratedFromStorage = true;
-  const storage = safeLocalStorage();
-  if (!storage) return;
-  try {
-    const raw = storage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const parsed = JSON.parse(raw) as {
-      v?: number;
-      entries?: [string, CachedChatTranscript][];
-    };
-    if (parsed?.v !== STORED_VERSION || !Array.isArray(parsed.entries)) return;
-    for (const [key, value] of parsed.entries) {
-      if (typeof key === "string" && value && Array.isArray(value.turns) && !memoryCache.has(key)) {
-        memoryCache.set(key, value);
-      }
+    if (typeof window !== "undefined" && typeof window.localStorage?.removeItem === "function") {
+      window.localStorage.removeItem(LEGACY_STORAGE_KEY);
     }
   } catch {
-    // Ignore malformed or unavailable storage.
-  }
-}
-
-export function trimTurnForStorage(turn: AgentTurn): AgentTurn {
-  let mutated = false;
-  const events = turn.events.map((ev) => {
-    if (
-      (ev.kind === "assistant" ||
-        ev.kind === "delta" ||
-        ev.kind === "thinking" ||
-        ev.kind === "user") &&
-      ev.text.length > MAX_PERSISTED_TEXT_CHARS
-    ) {
-      mutated = true;
-      return { ...ev, text: `${ev.text.slice(0, MAX_PERSISTED_TEXT_CHARS)}…` };
-    }
-    return ev;
-  });
-  return mutated ? { ...turn, events, truncated: true } : turn;
-}
-
-function persistMemoryCache(): void {
-  const storage = safeLocalStorage();
-  if (!storage) return;
-  try {
-    const all = Array.from(memoryCache.entries());
-    const recent = all.slice(Math.max(0, all.length - MAX_PERSISTED_ENTRIES)).map(([k, v]) => {
-      const sliced =
-        v.turns.length > MAX_PERSISTED_TURNS
-          ? v.turns.slice(v.turns.length - MAX_PERSISTED_TURNS)
-          : v.turns;
-      const trimmedSelected = sliced.length < v.turns.length;
-      const persisted: CachedChatTranscript = {
-        ...v,
-        turns: sliced.map(trimTurnForStorage),
-        hasMore: v.hasMore || trimmedSelected,
-        // Trimming older turns from the persisted copy invalidates the earlier byte cursor.
-        beforeOffset: trimmedSelected ? null : v.beforeOffset,
-      };
-      return [k, persisted] as const;
-    });
-    storage.setItem(STORAGE_KEY, JSON.stringify({ v: STORED_VERSION, entries: recent }));
-  } catch {
-    // Quota or private-mode failures are non-fatal; Tier-1 memory cache remains active.
+    // Ignore restricted storage environments.
   }
 }
 
@@ -116,8 +47,13 @@ export function buildTranscriptCacheKey(args: {
   return `${host}|${args.surfaceKey}|${agent}|${sid}|${path}`;
 }
 
+/**
+ * Session-scoped in-memory transcript cache (Orca Web pattern: zero localStorage I/O).
+ * Switching back and forth between open tabs in the current session is 0ms with untrimmed turns,
+ * while reloads/cold launches always fetch clean live truth without 5MB Safari quota stalls.
+ */
 export function peekCachedChatTranscript(identity: string): CachedChatTranscript | null {
-  hydrateStorageOnce();
+  purgeLegacyDiskCacheOnce();
   const hit = memoryCache.get(identity);
   if (!hit) return null;
   memoryCache.delete(identity);
@@ -125,12 +61,8 @@ export function peekCachedChatTranscript(identity: string): CachedChatTranscript
   return hit;
 }
 
-export function writeCachedChatTranscript(
-  identity: string,
-  entry: CachedChatTranscript,
-  persistToDisk: boolean = true,
-): void {
-  hydrateStorageOnce();
+export function writeCachedChatTranscript(identity: string, entry: CachedChatTranscript): void {
+  purgeLegacyDiskCacheOnce();
   memoryCache.delete(identity);
   memoryCache.set(identity, entry);
   while (memoryCache.size > MAX_MEMORY_ENTRIES) {
@@ -138,13 +70,9 @@ export function writeCachedChatTranscript(
     if (oldest === undefined) break;
     memoryCache.delete(oldest);
   }
-  if (persistToDisk) {
-    persistMemoryCache();
-  }
 }
 
 export function clearChatTranscriptCacheForTests(): void {
   memoryCache.clear();
-  hydratedFromStorage = true;
-  safeLocalStorage()?.removeItem(STORAGE_KEY);
+  purgedLegacyDiskCache = false;
 }

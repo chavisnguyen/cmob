@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vite-plus/test";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { AgentTurn } from "../../protocol/event";
 import {
   buildTranscriptCacheKey,
@@ -18,32 +18,32 @@ function turn(id: string, role: "user" | "assistant", text: string): AgentTurn {
   };
 }
 
-describe("chatTranscriptCache", () => {
+describe("chatTranscriptCache (in-memory only)", () => {
   beforeEach(() => {
     clearChatTranscriptCacheForTests();
   });
 
+  afterEach(() => {
+    vi.unstubAllGlobals();
+  });
+
   it("caches and evicts least-recently-used sessions in memory", () => {
-    for (let i = 0; i < 14; i += 1) {
+    for (let i = 0; i < 18; i += 1) {
       const key = buildTranscriptCacheKey({
         endpoint: "ws://local",
         surfaceKey: `s-${i}`,
         agentKind: "claude",
         sessionId: `sid-${i}`,
       });
-      writeCachedChatTranscript(
-        key,
-        {
-          turns: [turn(`t-${i}`, "user", `hi ${i}`)],
-          hasMore: false,
-          beforeOffset: null,
-          lifecycleState: "idle",
-          isWorking: false,
-          activityText: null,
-          savedAt: i,
-        },
-        false,
-      );
+      writeCachedChatTranscript(key, {
+        turns: [turn(`t-${i}`, "user", `hi ${i}`)],
+        hasMore: false,
+        beforeOffset: null,
+        lifecycleState: "idle",
+        isWorking: false,
+        activityText: null,
+        savedAt: i,
+      });
     }
 
     const evicted = buildTranscriptCacheKey({
@@ -54,13 +54,52 @@ describe("chatTranscriptCache", () => {
     });
     const newest = buildTranscriptCacheKey({
       endpoint: "ws://local",
-      surfaceKey: "s-13",
+      surfaceKey: "s-17",
       agentKind: "claude",
-      sessionId: "sid-13",
+      sessionId: "sid-17",
     });
 
     expect(peekCachedChatTranscript(evicted)).toBeNull();
-    expect(peekCachedChatTranscript(newest)?.turns[0]?.id).toBe("t-13");
+    expect(peekCachedChatTranscript(newest)?.turns[0]?.id).toBe("t-17");
+  });
+
+  it("purges legacy cmux.chat.transcriptCache.v1 from localStorage and never writes back to disk", () => {
+    const store = new Map<string, string>([
+      ["cmux.chat.transcriptCache.v1", '{"v":1,"entries":[]}'],
+    ]);
+    vi.stubGlobal("window", {
+      localStorage: {
+        getItem: (k: string) => store.get(k) ?? null,
+        setItem: (k: string, v: string) => {
+          store.set(k, v);
+        },
+        removeItem: (k: string) => {
+          store.delete(k);
+        },
+      },
+    });
+
+    const key = buildTranscriptCacheKey({
+      endpoint: "ws://local",
+      surfaceKey: "surf-1",
+      agentKind: "antigravity",
+      sessionId: "sid-1",
+    });
+
+    expect(peekCachedChatTranscript(key)).toBeNull();
+    expect(store.has("cmux.chat.transcriptCache.v1")).toBe(false);
+
+    writeCachedChatTranscript(key, {
+      turns: [turn("t-1", "user", "in-memory only")],
+      hasMore: false,
+      beforeOffset: null,
+      lifecycleState: "working",
+      isWorking: true,
+      activityText: "Thinking…",
+      savedAt: 1_000,
+    });
+    expect(store.size).toBe(0);
+    expect(peekCachedChatTranscript(key)?.turns[0]?.id).toBe("t-1");
   });
 
   it("applies incremental delta frames in O(1) while preserving historical turn references", () => {
@@ -92,7 +131,6 @@ describe("chatTranscriptCache", () => {
       "turn-@400",
       "turn-@500",
     ]);
-    // Unchanged historical turns keep exact object identity for React.memo.
     expect(res!.turns[0]).toBe(t1);
     expect(res!.turns[1]).toBe(t2);
     expect(res!.turns[2]).toBe(t3);
