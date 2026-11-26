@@ -1,13 +1,15 @@
 import { useEffect, useRef, useState } from "react";
-import { Pin, RefreshCw, Terminal, ChevronRight, FolderGit2, QrCode } from "lucide-react";
+import { Pin, RefreshCw, Terminal, ChevronRight, FolderGit2, QrCode, Loader2 } from "lucide-react";
 import type { WorkspaceNode } from "../protocol/rpc";
 import type { ConnectionState } from "../transport/wsClient";
 import { Pressable } from "../components/common/Pressable";
+import { UnreadCountBadge } from "../components/common/UnreadCountBadge";
 import { plainSnippet, shortPath } from "../components/chat/textUtils";
 
 interface WorkspaceListViewProps {
   workspaces: WorkspaceNode[];
   loading: boolean;
+  syncing?: boolean;
   onRefresh: () => void;
   onSelectWorkspace: (workspace: WorkspaceNode) => void;
   hostsCount?: number;
@@ -20,6 +22,7 @@ interface WorkspaceListViewProps {
 export function WorkspaceListView({
   workspaces,
   loading,
+  syncing = false,
   onRefresh,
   onSelectWorkspace,
   hostsCount,
@@ -67,11 +70,22 @@ export function WorkspaceListView({
   return (
     <div className="flex flex-col h-full w-full max-w-3xl mx-auto bg-bg text-fg">
       <header className="flex items-center justify-between px-4 min-h-[52px] bg-surface border-b border-line w-full shrink-0">
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center gap-2.5 min-w-0">
           <h1 className="text-[16px] font-semibold tracking-tight text-fg">Workspaces</h1>
           <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-raised text-[12px] font-medium text-muted font-mono">
             {workspaces.length}
           </span>
+          {workspaces.length > 0 && (syncing || isConnecting) && (
+            <span
+              role="status"
+              aria-live="polite"
+              data-testid="workspaces-syncing-pill"
+              className="inline-flex items-center gap-1.5 px-2.5 h-6 rounded-full bg-accent/12 border border-accent/20 text-[11.5px] font-medium text-accent-soft shrink-0"
+            >
+              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
+              <span>{isConnecting ? "Connecting…" : "Syncing…"}</span>
+            </span>
+          )}
         </div>
         <button
           type="button"
@@ -171,9 +185,10 @@ export function WorkspaceListView({
                 </div>
 
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <h2 className="text-[15px] font-semibold text-fg truncate">{ws.title}</h2>
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <UnreadCountBadge count={ws.unread_count} />
                     {ws.pinned && <Pin className="w-3.5 h-3.5 text-muted shrink-0" />}
+                    <h2 className="text-[15px] font-semibold text-fg truncate">{ws.title}</h2>
                     <span
                       className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-medium shrink-0 ${
                         isRunning ? "bg-accent/15 text-accent-soft" : "bg-white/[0.06] text-muted"

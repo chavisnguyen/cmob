@@ -429,20 +429,8 @@ function isWorkingState(state: SubagentState): boolean {
   return state === "working";
 }
 
-function buildActiveBackgroundWork(
-  turns: readonly AgentTurn[],
-  isSessionWorking: boolean,
-): ActiveBackgroundWork | null {
+function buildActiveBackgroundWork(turns: readonly AgentTurn[]): ActiveBackgroundWork | null {
   if (turns.length === 0) return null;
-
-  // Collect all background tasks across the loaded window, plus subagents that are either
-  // currently `working` OR belong to the active latest assistant turn while `isSessionWorking`.
-  const lastAssistantIdx = (() => {
-    for (let i = turns.length - 1; i >= 0; i--) {
-      if (turns[i].role === "assistant") return i;
-    }
-    return -1;
-  })();
 
   const byKey = new Map<string, { item: UnifiedWorkItem; turnIdx: number }>();
 
@@ -488,26 +476,17 @@ function buildActiveBackgroundWork(
 
   const allEntries = Array.from(byKey.values());
   const hasAnyLive = allEntries.some((e) => isWorkingState(e.item.state));
-  const activeTurnEntries =
-    isSessionWorking && lastAssistantIdx >= 0
-      ? allEntries.filter((e) => e.turnIdx === lastAssistantIdx || isWorkingState(e.item.state))
-      : allEntries.filter((e) => isWorkingState(e.item.state));
+  if (!hasAnyLive) return null;
 
   // Keep siblings from the same turn visible alongside any still-working item so progress like
-  // "2 subagents — 1 working, 1 done" reads coherently instead of dropping finished siblings.
-  let visibleItems: UnifiedWorkItem[];
-  if (hasAnyLive) {
-    const liveTurns = new Set(
-      allEntries.filter((e) => isWorkingState(e.item.state)).map((e) => e.turnIdx),
-    );
-    visibleItems = allEntries
-      .filter((e) => isWorkingState(e.item.state) || liveTurns.has(e.turnIdx))
-      .map((e) => e.item);
-  } else if (activeTurnEntries.length > 0) {
-    visibleItems = activeTurnEntries.map((e) => e.item);
-  } else {
-    return null;
-  }
+  // "2 subagents — 1 working, 1 done" reads coherently while in flight, then auto-hide the entire
+  // strip immediately once all subagents and background jobs finish.
+  const liveTurns = new Set(
+    allEntries.filter((e) => isWorkingState(e.item.state)).map((e) => e.turnIdx),
+  );
+  const visibleItems = allEntries
+    .filter((e) => isWorkingState(e.item.state) || liveTurns.has(e.turnIdx))
+    .map((e) => e.item);
 
   if (visibleItems.length === 0) return null;
 
@@ -578,19 +557,16 @@ function buildActiveBackgroundWork(
  */
 export function deriveConversationTasks(
   turns: readonly AgentTurn[],
-  isSessionWorking = false,
+  _isSessionWorking = false,
 ): ConversationTasksSnapshot {
   const inlineSummaries = new Map<string, InlineTaskSummary>();
   let latestSnapshot: ChatTaskList | null = null;
-  let latestTaskTurnIdx = -1;
-  let lastAssistantTurnIdx = -1;
   let incrementalItems: ChatTaskItem[] = [];
   let incrementalSeq = 0;
 
   for (let tIdx = 0; tIdx < turns.length; tIdx++) {
     const turn = turns[tIdx];
     if (turn.role === "user" || turn.role === "system") continue;
-    lastAssistantTurnIdx = tIdx;
 
     // Pair ToolEnd results by tool_id within this turn so rejected/failed calls are skipped.
     const endById = new Map<string, { ok: boolean; detail?: string }>();
@@ -636,20 +612,19 @@ export function deriveConversationTasks(
         const summary = summarizeTaskTransition(latestSnapshot, nextList);
         inlineSummaries.set(ev.tool_id, summary);
         latestSnapshot = nextList;
-        latestTaskTurnIdx = tIdx;
       }
     }
   }
 
-  // Auto-retire a 100%-completed checklist once a newer assistant turn has moved on without tasks.
+  // Auto-hide 100%-completed checklists from the composer tray immediately once finished;
+  // inline tool summaries inside the conversation timeline still preserve the 3/3 record.
   const allCompleted =
     latestSnapshot !== null &&
     latestSnapshot.tasks.length > 0 &&
     completedTaskCount(latestSnapshot) >= latestSnapshot.tasks.length;
-  const retired = allCompleted && lastAssistantTurnIdx > latestTaskTurnIdx;
   const dockedTaskList =
-    latestSnapshot && latestSnapshot.tasks.length > 0 && !retired ? latestSnapshot : null;
-  const backgroundWork = buildActiveBackgroundWork(turns, isSessionWorking);
+    latestSnapshot && latestSnapshot.tasks.length > 0 && !allCompleted ? latestSnapshot : null;
+  const backgroundWork = buildActiveBackgroundWork(turns);
 
   return {
     dockedTaskList,

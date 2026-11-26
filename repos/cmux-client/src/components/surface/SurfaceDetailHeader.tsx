@@ -3,6 +3,7 @@ import {
   ChevronDown,
   ChevronLeft,
   GitFork,
+  Loader2,
   MessageSquare,
   MoreHorizontal,
   Pencil,
@@ -13,6 +14,7 @@ import {
 } from "lucide-react";
 import type { SurfaceNode, WorkspaceNode } from "../../protocol/rpc";
 import type { ConnectionState } from "../../transport/wsClient";
+import { UnreadCountBadge } from "../common/UnreadCountBadge";
 import { displaySurfaceTitle } from "./surfaceTitle";
 
 const FORKABLE_AGENTS = new Set(["claude"]);
@@ -21,6 +23,7 @@ export interface SurfaceDetailHeaderProps {
   surface: SurfaceNode;
   workspace: WorkspaceNode;
   connState: ConnectionState;
+  isSyncing?: boolean;
   desktopLayout: boolean;
   chatAvailable: boolean;
   activeMode: "chat" | "terminal";
@@ -85,6 +88,7 @@ export function SurfaceDetailHeader({
   surface,
   workspace,
   connState,
+  isSyncing = false,
   desktopLayout,
   chatAvailable,
   activeMode,
@@ -105,6 +109,11 @@ export function SurfaceDetailHeader({
 
   const canFork = Boolean(
     surface.agent?.session_id && FORKABLE_AGENTS.has(surface.agent.agent_kind),
+  );
+  const currentKey = surface.id || surface.ref;
+  const otherUnreadCount = (allSurfaces ?? []).reduce(
+    (sum, item) => ((item.id || item.ref) === currentKey ? sum : sum + (item.unread_count ?? 0)),
+    0,
   );
 
   const handleForceReload = () => {
@@ -132,6 +141,12 @@ export function SurfaceDetailHeader({
             />
           )}
           <span className="text-[12px] text-dim truncate">· {workspace.title}</span>
+          {isSyncing && (
+            <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-accent-soft shrink-0">
+              <Loader2 className="w-3 h-3 animate-spin" />
+              <span>{connState === "connected" ? "Syncing…" : "Reconnecting…"}</span>
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -209,6 +224,7 @@ export function SurfaceDetailHeader({
                 <span className="text-[11px] font-medium text-muted shrink-0">
                   {allSurfaces.length}
                 </span>
+                <UnreadCountBadge count={otherUnreadCount} size="sm" />
               </>
             )}
           </h1>
@@ -221,6 +237,12 @@ export function SurfaceDetailHeader({
               />
             )}
             <p className="text-[12px] text-muted truncate leading-none">{workspace.title}</p>
+            {isSyncing && (
+              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-accent-soft shrink-0 leading-none">
+                <Loader2 className="w-2.5 h-2.5 animate-spin" />
+                <span>{connState === "connected" ? "Syncing…" : "Reconnecting…"}</span>
+              </span>
+            )}
           </div>
         </button>
       </div>

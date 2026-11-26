@@ -86,22 +86,39 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
     let session_id = uuid::Uuid::new_v4().to_string();
     info!("New WebSocket connection: session {}", session_id);
 
-    let first_msg = match timeout(Duration::from_secs(5), socket.next()).await {
-        Ok(Some(Ok(msg))) => msg,
+    let auth_text = match timeout(Duration::from_secs(5), async {
+        loop {
+            match socket.next().await {
+                Some(Ok(Message::Text(text))) => return Ok(text),
+                // Reverse proxies (e.g. Tailscale Funnel) and mobile Safari may send WebSocket
+                // Ping/Pong control frames immediately after Upgrade before the client's `auth`
+                // text frame arrives; answer Ping and continue waiting for the first Text frame.
+                Some(Ok(Message::Ping(payload))) => {
+                    let _ = socket.send(Message::Pong(payload)).await;
+                }
+                Some(Ok(Message::Pong(_))) => {}
+                Some(Ok(Message::Close(_))) | None => return Err("closed"),
+                Some(Ok(_)) => return Err("non_text"),
+                Some(Err(_)) => return Err("io_error"),
+            }
+        }
+    })
+    .await
+    {
+        Ok(Ok(text)) => text,
+        Ok(Err("non_text")) => {
+            warn!("Session {} rejected: non-text first frame", session_id);
+            send_auth_close(&mut socket, Some(AuthError::unauthenticated()), "Unauthenticated").await;
+            return;
+        }
         _ => {
-            warn!("Session {} handshake timed out", session_id);
+            warn!("Session {} handshake timed out or closed", session_id);
             send_auth_close(&mut socket, None, "Handshake timeout").await;
             return;
         }
     };
 
-    let Message::Text(text) = first_msg else {
-        warn!("Session {} rejected: non-text first frame", session_id);
-        send_auth_close(&mut socket, Some(AuthError::unauthenticated()), "Unauthenticated").await;
-        return;
-    };
-
-    let session_token = match serde_json::from_str::<AuthRequest>(&text) {
+    let session_token = match serde_json::from_str::<AuthRequest>(&auth_text) {
         Ok(req) if req.r#type == "auth" && state.token_valid(&req.token) => {
             let ok_json = serde_json::to_string(&AuthOk::new(&session_id)).unwrap();
             if socket.send(Message::Text(ok_json.into())).await.is_err() {
@@ -301,6 +318,13 @@ fn handle_client_viewing(
                 let Ok(_permit) = sem_cl.acquire_owned().await else { return };
                 let canonical = SessionStateService::canonicalize_surface_id(&state_cl, &raw).await;
                 state_cl.clients.set_viewing(&sess_cl, Some(canonical.clone()), visible);
+                if visible {
+                    crate::scanner::workspace_tree::WorkspaceTreeBuilder::mark_surface_notifications_read(
+                        &state_cl.cmux_bridge,
+                        &canonical,
+                    )
+                    .await;
+                }
                 let resp = JsonRpcResponse::result(
                     req_id,
                     serde_json::json!({ "ok": true, "surface_id": canonical, "visible": visible }),
@@ -314,6 +338,17 @@ fn handle_client_viewing(
         }
         other => {
             let canonical = other.map(|raw| liveness::resolve_cached_surface_ref(&raw).unwrap_or(raw));
+            if visible && let Some(ref cid) = canonical {
+                let bridge = state.cmux_bridge.clone();
+                let cid_owned = cid.clone();
+                tokio::spawn(async move {
+                    crate::scanner::workspace_tree::WorkspaceTreeBuilder::mark_surface_notifications_read(
+                        &bridge,
+                        &cid_owned,
+                    )
+                    .await;
+                });
+            }
             state.clients.set_viewing(session_id, canonical.clone(), visible);
             Some(
                 JsonRpcResponse::result(

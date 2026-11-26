@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import type { SurfaceNode, WorkspaceNode } from "../../protocol/rpc";
 import { AgentIcon } from "../common/AgentIcon";
+import { UnreadCountBadge } from "../common/UnreadCountBadge";
 import { displaySurfaceTitle } from "../surface/surfaceTitle";
 
 interface DesktopTabStripProps {
@@ -94,6 +95,7 @@ export function DesktopTabStrip({
                         <Terminal className="w-3.5 h-3.5 text-muted" />
                       )}
                     </span>
+                    <UnreadCountBadge count={surf.unread_count} size="sm" />
                     <span className="truncate">{displaySurfaceTitle(surf.title)}</span>
                     {status === "running" && (
                       <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />

@@ -31,7 +31,8 @@ export function sameSurface(a: SurfaceNode, b: SurfaceNode): boolean {
     a.surface_type !== b.surface_type ||
     a.tty !== b.tty ||
     a.selected !== b.selected ||
-    a.focused !== b.focused
+    a.focused !== b.focused ||
+    (a.unread_count ?? 0) !== (b.unread_count ?? 0)
   ) {
     return false;
   }
@@ -58,6 +59,7 @@ export function sameWorkspace(a: WorkspaceNode, b: WorkspaceNode): boolean {
     a.current_directory !== b.current_directory ||
     a.snippet !== b.snippet ||
     a.color !== b.color ||
+    (a.unread_count ?? 0) !== (b.unread_count ?? 0) ||
     a.surfaces.length !== b.surfaces.length
   ) {
     return false;
@@ -66,6 +68,56 @@ export function sameWorkspace(a: WorkspaceNode, b: WorkspaceNode): boolean {
     if (!sameSurface(a.surfaces[i], b.surfaces[i])) return false;
   }
   return true;
+}
+
+/** Sum of unread notifications across all workspaces. */
+export function totalUnreadNotifications(workspaces: readonly WorkspaceNode[]): number {
+  let total = 0;
+  for (const ws of workspaces) {
+    total += ws.unread_count ?? 0;
+  }
+  return total;
+}
+
+/**
+ * Optimistically zeroes `unread_count` on a viewed surface and decrements its parent workspace's
+ * `unread_count` so badge updates feel instant while `cmux mark-notification-read` runs on host.
+ */
+export function clearSurfaceUnreadInWorkspaces(
+  workspaces: WorkspaceNode[],
+  target: Pick<SurfaceNode, "id" | "ref"> | string,
+): WorkspaceNode[] {
+  const matchTarget = (surf: SurfaceNode): boolean => {
+    if (typeof target === "string") return matchesSurfaceId(surf, target);
+    return (
+      matchesSurfaceId(surf, target.id) ||
+      matchesSurfaceId(surf, target.ref) ||
+      surfaceIdentity(surf) === surfaceIdentity(target)
+    );
+  };
+
+  let anyChanged = false;
+  const next = workspaces.map((ws) => {
+    let clearedInWs = 0;
+    let wsSurfacesChanged = false;
+    const nextSurfaces = ws.surfaces.map((surf) => {
+      const unread = surf.unread_count ?? 0;
+      if (unread > 0 && matchTarget(surf)) {
+        clearedInWs += unread;
+        wsSurfacesChanged = true;
+        return { ...surf, unread_count: 0 };
+      }
+      return surf;
+    });
+    if (!wsSurfacesChanged) return ws;
+    anyChanged = true;
+    return {
+      ...ws,
+      unread_count: Math.max(0, (ws.unread_count ?? 0) - clearedInWs),
+      surfaces: nextSurfaces,
+    };
+  });
+  return anyChanged ? next : workspaces;
 }
 
 /**

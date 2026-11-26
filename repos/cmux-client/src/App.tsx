@@ -5,6 +5,7 @@ import { AppTopHeader } from "./components/shell/AppTopHeader";
 import { DesktopWorkspaceShell } from "./components/shell/DesktopWorkspaceShell";
 import { MobileWorkspaceShell } from "./components/shell/MobileWorkspaceShell";
 import { useUsageSnapshot } from "./components/usage/useUsageSnapshot";
+import { totalUnreadNotifications } from "./domain/workspaceTree";
 import { peekCachedWorkspaces } from "./hosts/workspaceCache";
 import { installGlobalButtonHaptics } from "./native/haptics";
 import { useIsDesktop } from "./native/useMediaQuery";
@@ -72,9 +73,11 @@ export function App() {
     workspaces,
     workspacesRef,
     loading,
+    syncing,
     hasPendingSurfaceJump,
     fetchWorkspaces,
     resetWorkspacesForHost,
+    markSurfaceRead,
     createSurface,
     renameSurface,
     closeSurface,
@@ -90,6 +93,12 @@ export function App() {
     fetchWorkspacesRef.current = fetchWorkspaces;
   }, [workspaces, resetWorkspacesForHost, fetchWorkspaces]);
 
+  useEffect(() => {
+    if (nav.isViewingSurface && nav.selectedSurface) {
+      markSurfaceRead(nav.selectedSurface);
+    }
+  }, [nav.isViewingSurface, nav.selectedSurface, workspaces, markSurfaceRead]);
+
   const { syncBreakpoint } = nav;
   useEffect(() => {
     syncBreakpoint(workspaces, hasPendingSurfaceJump());
@@ -104,6 +113,7 @@ export function App() {
     isViewingSurface: nav.isViewingSurface,
     viewingSurfaceId: nav.viewingSurfaceId,
     onJumpToSurface: (surfaceId) => void handleJumpToSurface(surfaceId),
+    onNotificationStateChange: () => void fetchWorkspaces(false),
   });
 
   useEffect(() => {
@@ -124,6 +134,7 @@ export function App() {
   const hasNoHosts =
     hostSession.hosts.length === 0 && hostSession.connState !== "connected" && !isConnecting;
   const errorMessage = wsClient.getLastErrorMessage();
+  const totalUnread = totalUnreadNotifications(workspaces);
 
   const topBrandHeader = (
     <AppTopHeader
@@ -188,6 +199,8 @@ export function App() {
             onToggleSidebar={() => nav.setSidebarCollapsed((v) => !v)}
             workspaces={workspaces}
             loading={loading}
+            syncing={syncing}
+            totalUnread={totalUnread}
             selectedWorkspace={nav.selectedWorkspace}
             selectedSurface={nav.selectedSurface}
             hosts={hostSession.hosts}
@@ -219,6 +232,8 @@ export function App() {
             activeView={nav.activeView}
             workspaces={workspaces}
             loading={loading}
+            syncing={syncing}
+            totalUnread={totalUnread}
             selectedWorkspace={nav.selectedWorkspace}
             selectedSurface={nav.selectedSurface}
             hosts={hostSession.hosts}

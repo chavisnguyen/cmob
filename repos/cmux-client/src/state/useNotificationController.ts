@@ -33,6 +33,7 @@ export interface UseNotificationControllerOptions {
   isViewingSurface: boolean;
   viewingSurfaceId: string | null;
   onJumpToSurface: (surfaceId: string) => void;
+  onNotificationStateChange?: () => void;
 }
 
 export function useNotificationController({
@@ -43,6 +44,7 @@ export function useNotificationController({
   isViewingSurface,
   viewingSurfaceId,
   onJumpToSurface,
+  onNotificationStateChange,
 }: UseNotificationControllerOptions) {
   const [localPrefs, setLocalPrefs] = useState<LocalNotificationPrefs>(() =>
     loadLocalNotificationPrefs(),
@@ -56,6 +58,7 @@ export function useNotificationController({
   const localPrefsRef = useRef(localPrefs);
   const selectedSurfaceRef = useRef(selectedSurface);
   const isViewingSurfaceRef = useRef(isViewingSurface);
+  const onNotificationStateChangeRef = useRef(onNotificationStateChange);
 
   useEffect(() => {
     localPrefsRef.current = localPrefs;
@@ -68,6 +71,10 @@ export function useNotificationController({
   useEffect(() => {
     isViewingSurfaceRef.current = isViewingSurface;
   }, [isViewingSurface]);
+
+  useEffect(() => {
+    onNotificationStateChangeRef.current = onNotificationStateChange;
+  }, [onNotificationStateChange]);
 
   useEffect(() => subscribeLocalNotificationPrefs(setLocalPrefs), []);
 
@@ -194,6 +201,7 @@ export function useNotificationController({
         }
 
         haptic(alert.urgent ? "medium" : "light");
+        onNotificationStateChangeRef.current?.();
       } else if (event === RPC_EVENTS.NOTIFICATION_DISMISS) {
         const payload = data as NotificationDismissPayload;
         if (payload?.tags) {
@@ -210,6 +218,7 @@ export function useNotificationController({
             }
           }
         }
+        onNotificationStateChangeRef.current?.();
       }
     });
   }, [dispatchToast, onJumpToSurface]);

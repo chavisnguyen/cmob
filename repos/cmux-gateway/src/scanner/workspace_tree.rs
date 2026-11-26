@@ -30,6 +30,9 @@ pub struct WorkspaceNode {
     /// Latest notification or turn summary snippet
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    /// Unread notification count for this workspace (from `cmux rpc notification.list`).
+    #[serde(default)]
+    pub unread_count: usize,
     /// Level 2 surfaces inside this workspace
     pub surfaces: Vec<SurfaceNode>,
 }
@@ -48,6 +51,8 @@ pub struct WorkspaceSummary {
     pub color: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snippet: Option<String>,
+    #[serde(default)]
+    pub unread_count: usize,
     pub surface_count: usize,
     pub has_running_agent: bool,
 }
@@ -64,6 +69,9 @@ pub struct SurfaceNode {
     pub tty: Option<String>,
     pub selected: bool,
     pub focused: bool,
+    /// Unread notification count targeting this surface (`cmux rpc notification.list`).
+    #[serde(default)]
+    pub unread_count: usize,
     /// Level 3 Agent metadata if active on this surface
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub agent: Option<SurfaceAgentInfo>,
@@ -150,6 +158,42 @@ struct RawWorkspaceEntry {
     custom_color: Option<String>,
 }
 
+#[derive(Debug, Deserialize)]
+struct RawNotificationListOutput {
+    #[serde(default)]
+    notifications: Vec<RawCmuxNotification>,
+}
+
+#[derive(Debug, Deserialize)]
+struct RawCmuxNotification {
+    #[serde(default)]
+    workspace_id: Option<String>,
+    #[serde(default)]
+    surface_id: Option<String>,
+    #[serde(default)]
+    is_read: bool,
+}
+
+fn parse_unread_notification_counts(raw: &str) -> (HashMap<String, usize>, HashMap<String, usize>) {
+    let mut by_ws = HashMap::new();
+    let mut by_surf = HashMap::new();
+    let Ok(parsed) = serde_json::from_str::<RawNotificationListOutput>(raw) else {
+        return (by_ws, by_surf);
+    };
+    for n in parsed.notifications {
+        if n.is_read {
+            continue;
+        }
+        if let Some(ws_id) = n.workspace_id.filter(|s| !s.is_empty()) {
+            *by_ws.entry(ws_id).or_insert(0) += 1;
+        }
+        if let Some(surf_id) = n.surface_id.filter(|s| !s.is_empty()) {
+            *by_surf.entry(surf_id).or_insert(0) += 1;
+        }
+    }
+    (by_ws, by_surf)
+}
+
 /// `ps` elapsed time: `[[dd-]hh:]mm:ss` -> seconds.
 fn parse_etime_secs(etime: &str) -> Option<u64> {
     let (days, rest) = match etime.split_once('-') {
@@ -166,32 +210,104 @@ fn parse_etime_secs(etime: &str) -> Option<u64> {
 }
 
 /// Short-lived cache of the last built workspace tree so Kiro / hook-miss `get_surface` calls
-/// during conversation open reuse the recent tree instead of re-spawning `cmux tree` + `ps`.
+/// during conversation open and concurrent multi-device polls reuse the recent tree instead of
+/// re-spawning `cmux tree` + `ps`.
 static LAST_TREE_SNAPSHOT: LazyLock<RwLock<Option<(Vec<WorkspaceNode>, std::time::Instant)>>> =
     LazyLock::new(|| RwLock::new(None));
+/// Set of canonical surface UUIDs known to have unread cmux notifications in the latest scan.
+static UNREAD_SURFACES: LazyLock<RwLock<HashSet<String>>> =
+    LazyLock::new(|| RwLock::new(HashSet::new()));
 const SURFACE_LOOKUP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4);
+const TREE_POLL_COALESCE_TTL: std::time::Duration = std::time::Duration::from_millis(750);
 
 /// Builder responsible for merging cmux CLI output with HookStoreIndex
 pub struct WorkspaceTreeBuilder;
 
 impl WorkspaceTreeBuilder {
+    /// Invalidates the short-lived tree snapshot after surface CRUD or notification state changes.
+    pub fn invalidate_tree_cache() {
+        if let Ok(mut snap) = LAST_TREE_SNAPSHOT.write() {
+            *snap = None;
+        }
+    }
+
+    /// Marks `surface_id` as having unread notifications and invalidates the tree cache so immediate
+    /// toast-tap / `mobile.client.viewing` events clear `cmux` notifications even before the next poll.
+    pub fn note_surface_unread(surface_id: &str) {
+        if !surface_id.is_empty()
+            && let Ok(mut set) = UNREAD_SURFACES.write()
+        {
+            set.insert(surface_id.to_string());
+        }
+        Self::invalidate_tree_cache();
+    }
+
+    /// Marks notifications for a viewed surface read in `cmux` (no-op if surface had 0 unreads).
+    pub async fn mark_surface_notifications_read(
+        bridge: &DualTransportCmuxBridge,
+        surface_id: &str,
+    ) {
+        if surface_id.is_empty() {
+            return;
+        }
+        let had_unread = UNREAD_SURFACES
+            .read()
+            .ok()
+            .is_some_and(|set| set.contains(surface_id));
+        if !had_unread {
+            return;
+        }
+        let Some(ws_id) = crate::scanner::liveness::workspace_for_surface(surface_id)
+            .filter(|w| !w.is_empty())
+        else {
+            return;
+        };
+        if let Ok(mut set) = UNREAD_SURFACES.write() {
+            set.remove(surface_id);
+        }
+        let _ = bridge
+            .run_command(
+                "mark-notification-read",
+                &["--workspace", &ws_id, "--surface", surface_id],
+            )
+            .await;
+        Self::invalidate_tree_cache();
+    }
+
     /// Build the full 3-level tree from live cmux instance and hook index
     pub async fn build_tree(
         bridge: &DualTransportCmuxBridge,
         hook_index: &HookStoreIndex,
     ) -> Result<Vec<WorkspaceNode>, CmuxBridgeError> {
-        // Run `cmux tree`, `cmux rpc workspace.list`, and `ps` + Kiro lease scan concurrently
-        // instead of sequentially so cold-boot tree latency equals max(...) rather than sum(...).
+        if let Ok(guard) = LAST_TREE_SNAPSHOT.read()
+            && let Some((cached, built_at)) = guard.as_ref()
+            && built_at.elapsed() < TREE_POLL_COALESCE_TTL
+        {
+            return Ok(cached.clone());
+        }
+
+        // Run `cmux tree`, `cmux rpc workspace.list`, `cmux rpc notification.list`, and `ps` + Kiro
+        // lease scan concurrently so cold-boot tree latency equals max(...) rather than sum(...).
         let tree_fut = bridge.run_command("tree", &["--json", "--id-format", "both"]);
         let ws_list_fut = bridge.rpc_call("workspace.list", None);
+        let notif_list_fut = bridge.rpc_call("notification.list", None);
         let proc_kiro_fut = tokio::task::spawn_blocking(|| {
             let (pid_ttys, live_agents_by_tty) = Self::scan_processes_snapshot();
             let kiro_by_tty = KiroSessionIndex::scan_default_by_pid_map(&pid_ttys);
             (live_agents_by_tty, kiro_by_tty)
         });
 
-        let (tree_res, ws_list_res, proc_kiro_res) =
-            tokio::join!(tree_fut, ws_list_fut, proc_kiro_fut);
+        let (tree_res, ws_list_res, notif_list_res, proc_kiro_res) =
+            tokio::join!(tree_fut, ws_list_fut, notif_list_fut, proc_kiro_fut);
+
+        let (unread_by_ws, unread_by_surf) = notif_list_res
+            .ok()
+            .as_deref()
+            .map(parse_unread_notification_counts)
+            .unwrap_or_default();
+        if let Ok(mut set) = UNREAD_SURFACES.write() {
+            *set = unread_by_surf.keys().cloned().collect();
+        }
 
         let tree_output = tree_res?;
         let tree_data: RawCmuxTreeOutput = serde_json::from_str(&tree_output).map_err(|e| {
@@ -314,6 +430,7 @@ impl WorkspaceTreeBuilder {
                             a
                         });
 
+                        let surf_unread = unread_by_surf.get(&surf_id).copied().unwrap_or(0);
                         surfaces.push(SurfaceNode {
                             id: surf_id,
                             r#ref: surf_ref,
@@ -322,6 +439,7 @@ impl WorkspaceTreeBuilder {
                             tty: raw_surf.tty,
                             selected: surf_selected,
                             focused: surf_focused,
+                            unread_count: surf_unread,
                             agent: agent_info,
                         });
                     }
@@ -330,6 +448,8 @@ impl WorkspaceTreeBuilder {
                 // Derive workspace status AFTER surface resolution so closed/crashed tabs don't keep
                 // workspace "running" for 30m, and Kiro/OpenCode tabs mark workspace "running"/"waiting"!
                 let status = crate::domain::lifecycle::derive_workspace_status(&surfaces);
+                let surf_unread_sum: usize = surfaces.iter().map(|s| s.unread_count).sum();
+                let ws_unread = unread_by_ws.get(&ws_id).copied().unwrap_or(0).max(surf_unread_sum);
 
                 result_workspaces.push(WorkspaceNode {
                     id: ws_id,
@@ -341,6 +461,7 @@ impl WorkspaceTreeBuilder {
                     current_directory,
                     color: color_by_id.get(&ws_id_for_color).cloned(),
                     snippet: None,
+                    unread_count: ws_unread,
                     surfaces,
                 });
             }
@@ -391,14 +512,25 @@ impl WorkspaceTreeBuilder {
         bridge: &DualTransportCmuxBridge,
         hook_index: &HookStoreIndex,
     ) -> Result<Vec<WorkspaceSummary>, CmuxBridgeError> {
-        let tree_output = bridge.run_command("tree", &["--json", "--id-format", "both"]).await?;
+        let (tree_res, ws_list_res, notif_res) = tokio::join!(
+            bridge.run_command("tree", &["--json", "--id-format", "both"]),
+            bridge.rpc_call("workspace.list", None),
+            bridge.rpc_call("notification.list", None),
+        );
+        let tree_output = tree_res?;
         let tree_data: RawCmuxTreeOutput = serde_json::from_str(&tree_output)
             .map_err(|e| CmuxBridgeError::JsonParseError(format!("cmux tree: {e}")))?;
+
+        let (unread_by_ws, _) = notif_res
+            .ok()
+            .as_deref()
+            .map(parse_unread_notification_counts)
+            .unwrap_or_default();
 
         let mut dirs_by_id: HashMap<String, String> = HashMap::new();
         let mut latest_msg_by_id: HashMap<String, String> = HashMap::new();
         let mut color_by_id: HashMap<String, String> = HashMap::new();
-        if let Ok(ws_list) = bridge.rpc_call("workspace.list", None).await.and_then(|out| {
+        if let Ok(ws_list) = ws_list_res.and_then(|out| {
             serde_json::from_str::<RawWorkspaceListOutput>(&out)
                 .map_err(|e| CmuxBridgeError::JsonParseError(e.to_string()))
         }) {
@@ -435,6 +567,7 @@ impl WorkspaceTreeBuilder {
                     let has_running = hook_for_summaries.is_workspace_running(&ws_id);
                     let status = if has_running { "running" } else { "idle" }.to_string();
                     let surface_count: usize = raw_ws.panes.iter().map(|p| p.surfaces.len()).sum();
+                    let unread_count = unread_by_ws.get(&ws_id).copied().unwrap_or(0);
                     out.push(WorkspaceSummary {
                         id: ws_id.clone(),
                         r#ref: ws_ref,
@@ -445,6 +578,7 @@ impl WorkspaceTreeBuilder {
                         current_directory,
                         color: color_by_id.get(&ws_id).cloned(),
                         snippet,
+                        unread_count,
                         surface_count,
                         has_running_agent: has_running,
                     });
@@ -984,5 +1118,23 @@ mod tests {
             )
             .is_none()
         );
+    }
+
+    #[test]
+    fn test_parse_unread_notification_counts() {
+        let raw = r#"{
+            "notifications": [
+                {"id": "n1", "workspace_id": "ws-1", "surface_id": "s-1", "is_read": false},
+                {"id": "n2", "workspace_id": "ws-1", "surface_id": "s-2", "is_read": false},
+                {"id": "n3", "workspace_id": "ws-1", "surface_id": "s-1", "is_read": true},
+                {"id": "n4", "workspace_id": "ws-2", "surface_id": "s-9", "is_read": true}
+            ]
+        }"#;
+        let (by_ws, by_surf) = parse_unread_notification_counts(raw);
+        assert_eq!(by_ws.get("ws-1"), Some(&2));
+        assert_eq!(by_ws.get("ws-2"), None);
+        assert_eq!(by_surf.get("s-1"), Some(&1));
+        assert_eq!(by_surf.get("s-2"), Some(&1));
+        assert_eq!(by_surf.get("s-9"), None);
     }
 }

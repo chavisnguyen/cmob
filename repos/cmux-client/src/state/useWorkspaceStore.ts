@@ -1,8 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { CreateSurfaceParams } from "../components/surface/NewSurfaceModal";
-import { matchesSurfaceId, mergeWorkspaces } from "../domain/workspaceTree";
+import {
+  clearSurfaceUnreadInWorkspaces,
+  matchesSurfaceId,
+  mergeWorkspaces,
+} from "../domain/workspaceTree";
 import { peekCachedWorkspaces, writeCachedWorkspaces } from "../hosts/workspaceCache";
-import { RPC_METHODS, type WorkspaceNode } from "../protocol/rpc";
+import { RPC_METHODS, type SurfaceNode, type WorkspaceNode } from "../protocol/rpc";
 import { wsClient, type ConnectionState } from "../transport/wsClient";
 
 export function stripResolvedQueryParams(paramNames: readonly string[]): void {
@@ -39,6 +43,7 @@ export function useWorkspaceStore({
     peekCachedWorkspaces(wsClient.getEndpoint()),
   );
   const [loading, setLoading] = useState(false);
+  const [liveConfirmed, setLiveConfirmed] = useState(false);
 
   const workspacesRef = useRef(workspaces);
   const fetchSeqRef = useRef(0);
@@ -48,6 +53,12 @@ export function useWorkspaceStore({
   useEffect(() => {
     workspacesRef.current = workspaces;
   }, [workspaces]);
+
+  useEffect(() => {
+    if (connState !== "connected") {
+      setLiveConfirmed(false);
+    }
+  }, [connState]);
 
   // Seed initial cold-start `?surface=<id>` deep-link target.
   useEffect(() => {
@@ -88,6 +99,7 @@ export function useWorkspaceStore({
             workspacesRef.current = merged;
             setWorkspaces(merged);
           }
+          setLiveConfirmed(true);
           writeCachedWorkspaces(reqEndpoint, merged);
           onWorkspacesReconcile(merged, Boolean(pendingSurfaceJumpRef.current));
         }
@@ -109,9 +121,19 @@ export function useWorkspaceStore({
     fetchSeqRef.current += 1;
     inFlightEndpointRef.current = null;
     setLoading(false);
+    setLiveConfirmed(false);
     const seeded = nextEndpoint ? peekCachedWorkspaces(nextEndpoint) : [];
     workspacesRef.current = seeded;
     setWorkspaces(seeded);
+  }, []);
+
+  const markSurfaceRead = useCallback((target: Pick<SurfaceNode, "id" | "ref"> | string) => {
+    const next = clearSurfaceUnreadInWorkspaces(workspacesRef.current, target);
+    if (next !== workspacesRef.current) {
+      workspacesRef.current = next;
+      setWorkspaces(next);
+      writeCachedWorkspaces(wsClient.getEndpoint(), next);
+    }
   }, []);
 
   useEffect(() => {
@@ -187,13 +209,17 @@ export function useWorkspaceStore({
 
   const hasPendingSurfaceJump = useCallback(() => Boolean(pendingSurfaceJumpRef.current), []);
 
+  const syncing = loading || (!liveConfirmed && workspaces.length > 0);
+
   return {
     workspaces,
     workspacesRef,
     loading,
+    syncing,
     hasPendingSurfaceJump,
     fetchWorkspaces,
     resetWorkspacesForHost,
+    markSurfaceRead,
     createSurface,
     renameSurface,
     closeSurface,

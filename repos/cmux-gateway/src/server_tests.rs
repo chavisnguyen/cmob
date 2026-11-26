@@ -341,3 +341,75 @@ async fn interrupt_rpc_sends_single_escape_or_double_escape_for_opencode() {
     assert_eq!(std::fs::read_to_string(&log_file).unwrap().lines().count(), 2);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[tokio::test]
+async fn ws_handshake_tolerates_leading_ping_and_pong_before_auth_frame() {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    let state = AppState::new("127.0.0.1".into(), 0, "ws-tok".into());
+    let router = create_router(state);
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let srv = tokio::spawn(async move {
+        let _ = axum::serve(listener, router).await;
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let upgrade_req = format!(
+        "GET /ws HTTP/1.1\r\nHost: {addr}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream.write_all(upgrade_req.as_bytes()).await.unwrap();
+
+    let mut hdr = vec![0u8; 512];
+    let n = stream.read(&mut hdr).await.unwrap();
+    let hdr_str = String::from_utf8_lossy(&hdr[..n]);
+    assert!(hdr_str.starts_with("HTTP/1.1 101"), "unexpected upgrade: {hdr_str}");
+
+    let write_masked_frame = |opcode: u8, payload: &[u8]| -> Vec<u8> {
+        let mask = [0x12u8, 0x34, 0x56, 0x78];
+        let mut frame = vec![0x80 | opcode];
+        assert!(payload.len() < 126);
+        frame.push(0x80 | (payload.len() as u8));
+        frame.extend_from_slice(&mask);
+        for (i, b) in payload.iter().enumerate() {
+            frame.push(b ^ mask[i % 4]);
+        }
+        frame
+    };
+
+    // Send a masked Ping frame (opcode 0x9) + masked Pong frame (opcode 0xA) BEFORE the auth Text frame!
+    stream.write_all(&write_masked_frame(0x9, b"hi")).await.unwrap();
+    stream.write_all(&write_masked_frame(0xA, b"ok")).await.unwrap();
+
+    let auth_json = br#"{"type":"auth","token":"ws-tok","client_id":"safari-test"}"#;
+    stream.write_all(&write_masked_frame(0x1, auth_json)).await.unwrap();
+
+    // Read server frames until we observe the `auth_ok` Text frame (opcode 0x1).
+    let mut saw_pong = false;
+    let mut auth_ok_body = String::new();
+    for _ in 0..4 {
+        let mut head = [0u8; 2];
+        stream.read_exact(&mut head).await.unwrap();
+        let opcode = head[0] & 0x0f;
+        let len = (head[1] & 0x7f) as usize;
+        let actual_len = if len == 126 {
+            let mut ext = [0u8; 2];
+            stream.read_exact(&mut ext).await.unwrap();
+            u16::from_be_bytes(ext) as usize
+        } else {
+            len
+        };
+        let mut body = vec![0u8; actual_len];
+        stream.read_exact(&mut body).await.unwrap();
+        if opcode == 0xA {
+            saw_pong = true;
+        } else if opcode == 0x1 {
+            auth_ok_body = String::from_utf8_lossy(&body).into_owned();
+            break;
+        }
+    }
+    assert!(saw_pong, "expected gateway to reply with Pong");
+    assert!(auth_ok_body.contains("\"auth_ok\""), "expected auth_ok, got: {auth_ok_body}");
+
+    srv.abort();
+}

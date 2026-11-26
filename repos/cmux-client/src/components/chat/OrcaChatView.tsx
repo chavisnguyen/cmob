@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildChatViewModel } from "../../domain/chat/chatViewModel";
 import type { PendingSendItem } from "../../domain/chat/types";
 import type { AgentLifecycleState, AgentTurn, StartupDialogInfo } from "../../protocol/event";
+import type { ConnectionState } from "../../transport/wsClient";
 import { ChatBottomDock } from "./ChatBottomDock";
 import type { ChatComposerHandle } from "./ChatComposer";
 import { ChatTurnRow } from "./ChatTimelineRow";
@@ -19,6 +20,8 @@ interface OrcaChatViewProps {
   pendingSends?: readonly PendingSendItem[];
   withinGrace?: boolean;
   snapshotConfirmed?: boolean;
+  isSyncing?: boolean;
+  connState?: ConnectionState;
   agentKind: string;
   isLoading?: boolean;
   isWorking?: boolean;
@@ -47,6 +50,8 @@ export function OrcaChatView({
   pendingSends,
   withinGrace = false,
   snapshotConfirmed = true,
+  isSyncing = false,
+  connState = "connected",
   agentKind,
   isLoading = false,
   isWorking = false,
@@ -219,6 +224,8 @@ export function OrcaChatView({
         liveActivity={viewModel.liveActivity}
         hasEarlier={hasEarlier}
         isLoading={isLoading}
+        isSyncing={isSyncing}
+        connState={connState}
         isLoadingOlder={isLoadingOlder}
         isScrolledUp={isScrolledUp}
         onScroll={handleScroll}

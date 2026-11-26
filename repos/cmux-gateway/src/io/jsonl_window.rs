@@ -111,12 +111,26 @@ fn compute_boundary_digest(file: &mut File, byte_offset: u64) -> Result<u64, std
     Ok(fnv1a_64(&buf))
 }
 
-/// Fast byte-level check for records that may open a new `User` turn while scanning 64 KiB chunks backwards.
+/// Fast header-only check for records that genuinely open a new `User` turn while scanning 64 KiB
+/// chunks backwards. Inspecting only the leading record header (`<= 320` bytes) prevents multi-KB
+/// tool outputs containing `"user"` strings in source code from triggering $O(K^2)$ false boundaries!
 fn is_likely_user_turn_record(line: &str) -> bool {
-    line.contains("\"USER_INPUT\"")
-        || line.contains("\"REQUEST\"")
-        || line.contains("\"UserMessage\"")
-        || (line.contains("\"user\"") && !line.contains("\"tool_result\""))
+    let head_len = line.floor_char_boundary(line.len().min(320));
+    let head = &line[..head_len];
+    if head.contains("\"USER_INPUT\"")
+        || head.contains("\"REQUEST\"")
+        || head.contains("\"UserMessage\"")
+        || head.contains("\"user_message\"")
+    {
+        return true;
+    }
+    if head.contains("\"response_item\"") && head.contains("\"role\":\"user\"") {
+        return true;
+    }
+    (head.contains("\"type\":\"user\"") || head.contains("\"type\": \"user\""))
+        && !head.contains("\"isSidechain\":true")
+        && !head.contains("\"isMeta\":true")
+        && !line.contains("\"tool_result\"")
 }
 
 /// Read line 1 (up to 4 KiB) to detect Codex `session_meta.history_mode == "paginated"` and `model` when tail-seeking.
@@ -326,7 +340,7 @@ fn read_tail_window(
         return read_forward_from_zero(file, surface_id, consumed_to, false, base_state);
     }
 
-    let target_user_boundaries = (needed_turns / 2).saturating_add(3);
+    let mut target_user_boundaries = (needed_turns / 2).saturating_add(3);
     let mut cursor = consumed_to;
     let mut last_byte = [0u8; 1];
     file.seek(SeekFrom::Start(consumed_to - 1))?;
@@ -496,7 +510,11 @@ fn read_tail_window(
             });
         }
 
-        user_boundaries = 0;
+        // Double the cumulative boundary target instead of resetting `user_boundaries = 0` by a
+        // tiny constant step, guaranteeing at most O(log N) passes even on heavy harness noise.
+        target_user_boundaries = user_boundaries
+            .max(target_user_boundaries)
+            .saturating_mul(2);
     }
 }
 
@@ -687,4 +705,68 @@ pub fn read_jsonl_turns_page(
         before_offset: has_more.then_some(first_offset),
         total_turns,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+    use std::time::Instant;
+
+    #[test]
+    fn user_turn_boundary_check_ignores_large_tool_outputs_with_user_strings() {
+        let agy_user = r#"{"idx":1,"type":"USER_INPUT","step":{"timestamp":"2026-11-26T04:00:00Z","userInput":{"userResponse":"fix bug"}}}"#;
+        assert!(is_likely_user_turn_record(agy_user));
+
+        let claude_user = r#"{"type":"user","message":{"role":"user","content":"hello"}}"#;
+        assert!(is_likely_user_turn_record(claude_user));
+
+        // Large Antigravity GENERIC tool output containing `"type":"user"` inside read_file output body:
+        let padding = "x".repeat(400);
+        let generic_tool_output = format!(
+            r#"{{"idx":42,"type":"GENERIC","step":{{"timestamp":"2026-11-26T04:01:00Z","generic":{{"output":"{padding} \"type\":\"user\" \"USER_INPUT\" \"UserMessage\""}}}}}}"#
+        );
+        assert!(!is_likely_user_turn_record(&generic_tool_output));
+    }
+
+    #[test]
+    fn multi_mb_transcript_with_noisy_tool_outputs_parses_in_milliseconds() {
+        let path = std::env::temp_dir().join(format!("cmux-perf-{}.jsonl", uuid::Uuid::new_v4()));
+        {
+            let mut f = File::create(&path).unwrap();
+            writeln!(
+                f,
+                r#"{{"idx":0,"type":"USER_INPUT","step":{{"timestamp":"2026-11-26T04:00:00Z","userInput":{{"userResponse":"initial prompt"}}}}}}"#
+            )
+            .unwrap();
+            let noisy_chunk = "const role = {\"type\":\"user\",\"USER_INPUT\":true}; ".repeat(650);
+            for i in 1..=110 {
+                writeln!(
+                    f,
+                    r#"{{"idx":{i},"type":"GENERIC","step":{{"timestamp":"2026-11-26T04:00:01Z","generic":{{"toolCall":{{"id":"c-{i}","name":"read_file","argsJson":"{{\"Path\":\"/tmp/a.ts\"}}"}},"output":"{noisy_chunk}"}}}}}}"#
+                )
+                .unwrap();
+            }
+            writeln!(
+                f,
+                r#"{{"idx":111,"type":"PLANNER_RESPONSE","step":{{"timestamp":"2026-11-26T04:00:05Z","plannerResponse":{{"response":"All done!"}}}}}}"#
+            )
+            .unwrap();
+        }
+
+        let meta_len = std::fs::metadata(&path).unwrap().len();
+        assert!(meta_len > 3_000_000, "expected >3MB transcript, got {meta_len}");
+
+        let t0 = Instant::now();
+        let page = read_jsonl_turns_page(&path, "surf-perf", 15, None).unwrap();
+        let elapsed = t0.elapsed();
+        let _ = std::fs::remove_file(&path);
+
+        assert!(!page.turns.is_empty());
+        assert!(
+            elapsed.as_millis() < 500,
+            "expected fast O(log N) tail window read (<500ms), took {}ms",
+            elapsed.as_millis()
+        );
+    }
 }

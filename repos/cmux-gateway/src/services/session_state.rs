@@ -87,88 +87,87 @@ impl SessionStateService {
         check_liveness: bool,
     ) -> Option<ResolvedSession> {
         let surface_id = Self::canonicalize_surface_id(state, raw_surface_id).await;
-        let hook_index = HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
+        let sid_owned = surface_id.clone();
+        let req_session_id = session_id.to_string();
 
-        let live_kinds = if check_liveness && !surface_id.is_empty() {
-            let sid = surface_id.clone();
-            tokio::task::spawn_blocking(move || liveness::surface_live_agent_kinds(&sid))
-                .await
-                .ok()
-                .flatten()
-        } else {
-            None
-        };
-
-        let hook_record = if !session_id.is_empty() {
-            hook_index.sessions_by_id.get(session_id).filter(|rec| {
-                if !check_liveness || surface_id.is_empty() || rec.surface_id != surface_id {
-                    return true;
-                }
-                live_kinds
-                    .as_ref()
-                    .is_none_or(|kinds| Self::kind_matches_live(kinds, rec.resolved_agent_kind()))
-            })
-        } else {
-            hook_index.get_active_session_for_surface_filtered(&surface_id, live_kinds.as_ref())
-        };
-
-        if let Some(rec) = hook_record {
-            let rec_clone = rec.clone();
-            let mut lifecycle = if check_liveness {
-                tokio::task::spawn_blocking(move || rec_clone.live_lifecycle())
-                    .await
-                    .unwrap_or_else(|_| rec.resolved_lifecycle())
+        // Coalesce HookStore scan, TTY liveness check, transcript tail lifecycle, and OpenCode SQLite
+        // status into a single blocking hop instead of 3-4 sequential thread-pool round-trips.
+        let (hook_index, live_kinds, hook_resolved) = tokio::task::spawn_blocking(move || {
+            let hook_index = HookStoreIndex::scan_dir(&HookStoreIndex::default_cmuxterm_dir());
+            let live_kinds = if check_liveness && !sid_owned.is_empty() {
+                liveness::surface_live_agent_kinds(&sid_owned)
             } else {
-                rec.resolved_lifecycle()
+                None
             };
 
-            if check_liveness
-                && matches!(lifecycle, AgentLifecycleState::Working | AgentLifecycleState::Waiting)
-                && live_kinds.as_ref().is_some_and(HashSet::is_empty)
-            {
-                lifecycle = AgentLifecycleState::Idle;
-            }
-
-            let canonical_kind = crate::cmux::agents::spec_for(rec.resolved_agent_kind())
-                .map(|s| s.kind)
-                .unwrap_or_else(|| rec.resolved_agent_kind())
-                .to_string();
-
-            let mut last_subtitle = rec.last_subtitle.clone();
-            let mut live_activity = None;
-
-            if canonical_kind == "opencode"
-                && lifecycle != AgentLifecycleState::Waiting
-                && let Some(path) = rec.transcript_path.clone()
-            {
-                let status = tokio::task::spawn_blocking(move || {
-                    opencode_store::status_for_path(Path::new(&path))
+            let hook_record = if !req_session_id.is_empty() {
+                hook_index.sessions_by_id.get(&req_session_id).filter(|rec| {
+                    if !check_liveness || sid_owned.is_empty() || rec.surface_id != sid_owned {
+                        return true;
+                    }
+                    live_kinds
+                        .as_ref()
+                        .is_none_or(|kinds| Self::kind_matches_live(kinds, rec.resolved_agent_kind()))
                 })
-                .await
-                .ok()
-                .flatten();
-                if let Some(st) = status {
+            } else {
+                hook_index.get_active_session_for_surface_filtered(&sid_owned, live_kinds.as_ref())
+            };
+
+            let resolved = hook_record.map(|rec| {
+                let mut lifecycle = if check_liveness {
+                    rec.live_lifecycle()
+                } else {
+                    rec.resolved_lifecycle()
+                };
+                if check_liveness
+                    && matches!(lifecycle, AgentLifecycleState::Working | AgentLifecycleState::Waiting)
+                    && live_kinds.as_ref().is_some_and(HashSet::is_empty)
+                {
+                    lifecycle = AgentLifecycleState::Idle;
+                }
+
+                let canonical_kind = crate::cmux::agents::spec_for(rec.resolved_agent_kind())
+                    .map(|s| s.kind)
+                    .unwrap_or_else(|| rec.resolved_agent_kind())
+                    .to_string();
+
+                let mut last_subtitle = rec.last_subtitle.clone();
+                let mut live_activity = None;
+
+                if canonical_kind == "opencode"
+                    && lifecycle != AgentLifecycleState::Waiting
+                    && let Some(path) = rec.transcript_path.as_deref()
+                    && let Some(st) = opencode_store::status_for_path(Path::new(path))
+                {
                     lifecycle = st.lifecycle;
                     if lifecycle == AgentLifecycleState::Working {
                         last_subtitle = st.last_subtitle.clone();
                         live_activity = st.last_subtitle;
                     }
                 }
-            }
 
-            return Some(ResolvedSession {
-                session_id: rec.session_id.clone(),
-                surface_id: rec.surface_id.clone(),
-                agent_kind: canonical_kind,
-                transcript_path: rec.transcript_path.clone(),
-                lifecycle,
-                last_event: rec.hook_event_name.clone(),
-                last_subtitle,
-                last_body: rec.last_body.clone(),
-                tool_name: rec.tool_name.clone(),
-                live_activity,
-                from_tree: false,
+                ResolvedSession {
+                    session_id: rec.session_id.clone(),
+                    surface_id: rec.surface_id.clone(),
+                    agent_kind: canonical_kind,
+                    transcript_path: rec.transcript_path.clone(),
+                    lifecycle,
+                    last_event: rec.hook_event_name.clone(),
+                    last_subtitle,
+                    last_body: rec.last_body.clone(),
+                    tool_name: rec.tool_name.clone(),
+                    live_activity,
+                    from_tree: false,
+                }
             });
+
+            (hook_index, live_kinds, resolved)
+        })
+        .await
+        .ok()?;
+
+        if let Some(resolved) = hook_resolved {
+            return Some(resolved);
         }
 
         if surface_id.is_empty() {

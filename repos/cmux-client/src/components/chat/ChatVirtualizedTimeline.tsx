@@ -1,6 +1,7 @@
 import type { VirtualItem } from "@tanstack/react-virtual";
 import { ChevronUp, Loader2 } from "lucide-react";
 import type { ChatTimelineItem, LiveActivityLineState } from "../../domain/chat/types";
+import type { ConnectionState } from "../../transport/wsClient";
 import { agentDisplayName } from "../common/agentBrand";
 import { AgentIcon } from "../common/AgentIcon";
 import { ChatTimelineItemView } from "./ChatTimelineRow";
@@ -23,6 +24,8 @@ export interface ChatVirtualizedTimelineProps {
   liveActivity: LiveActivityLineState;
   hasEarlier: boolean;
   isLoading: boolean;
+  isSyncing?: boolean;
+  connState?: ConnectionState;
   isLoadingOlder: boolean;
   isScrolledUp: boolean;
   onScroll: () => void;
@@ -46,6 +49,8 @@ export function ChatVirtualizedTimeline({
   liveActivity,
   hasEarlier,
   isLoading,
+  isSyncing = false,
+  connState = "connected",
   isLoadingOlder,
   isScrolledUp,
   onScroll,
@@ -72,6 +77,20 @@ export function ChatVirtualizedTimeline({
           <AgentIcon kind={agentKind} size={200} className="w-[min(46vw,200px)] h-auto" />
         </div>
       </div>
+
+      {timeline.length > 0 && isSyncing && (
+        <div
+          role="status"
+          aria-live="polite"
+          data-testid="chat-syncing-pill"
+          className="pointer-events-none absolute top-2.5 inset-x-0 z-20 flex justify-center px-3"
+        >
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface/95 backdrop-blur-md border border-white/[0.1] shadow-md text-[11.5px] font-medium text-fg-soft">
+            <Loader2 className="w-3 h-3 animate-spin text-accent-soft shrink-0" />
+            <span>{connState === "connected" ? "Syncing latest…" : "Reconnecting…"}</span>
+          </div>
+        </div>
+      )}
 
       <div
         ref={scrollContainerRef}

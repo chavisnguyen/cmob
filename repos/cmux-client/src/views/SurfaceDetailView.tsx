@@ -63,6 +63,13 @@ export function SurfaceDetailView({
     }
   };
 
+  const isSyncing =
+    chat.activeMode === "chat" &&
+    chat.chatAvailable &&
+    (!chat.snapshotConfirmed ||
+      chat.connState === "connecting" ||
+      chat.connState === "authenticating");
+
   return (
     <div
       className={`flex flex-col h-full w-full overflow-hidden bg-bg text-fg ${
@@ -73,6 +80,7 @@ export function SurfaceDetailView({
         surface={surface}
         workspace={workspace}
         connState={chat.connState}
+        isSyncing={isSyncing}
         desktopLayout={desktopLayout}
         chatAvailable={chat.chatAvailable}
         activeMode={chat.activeMode}
@@ -108,6 +116,8 @@ export function SurfaceDetailView({
             pendingSends={chat.pendingSends}
             withinGrace={chat.withinGrace}
             snapshotConfirmed={chat.snapshotConfirmed}
+            isSyncing={isSyncing}
+            connState={chat.connState}
             isLoading={chat.initialLoading}
             agentKind={surface.agent?.agent_kind || "agent"}
             startupDialog={chat.startupDialog}

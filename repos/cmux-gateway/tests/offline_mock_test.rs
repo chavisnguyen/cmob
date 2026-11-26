@@ -110,6 +110,7 @@ fn test_offline_fixture_tree_and_hook_merge() {
                                         tty: s_tty,
                                         selected: s_sel,
                                         focused: s_foc,
+                                        unread_count: 0,
                                         agent,
                                     });
                                 }
@@ -127,6 +128,7 @@ fn test_offline_fixture_tree_and_hook_merge() {
                         current_directory: cwd,
                         color: None,
                         snippet,
+                        unread_count: 0,
                         surfaces,
                     });
                 }

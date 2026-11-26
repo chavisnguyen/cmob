@@ -1,13 +1,16 @@
 import { FolderGit2, Gauge, Server } from "lucide-react";
 import type { MainTab } from "../../domain/workspaceTree";
 import { haptic } from "../../native/haptics";
+import { UnreadCountBadge } from "../common/UnreadCountBadge";
 
 export function PrimaryTabNav({
   mainTab,
   onSelectTab,
+  unreadCount = 0,
 }: {
   mainTab: MainTab;
   onSelectTab: (tab: MainTab) => void;
+  unreadCount?: number;
 }) {
   return (
     <nav
@@ -33,7 +36,16 @@ export function PrimaryTabNav({
               selected ? "text-fg" : "text-muted hover:text-fg-soft"
             }`}
           >
-            <Icon className={`w-5 h-5 ${selected ? "text-accent-soft" : ""}`} />
+            <span className="relative inline-flex items-center justify-center">
+              <Icon className={`w-5 h-5 ${selected ? "text-accent-soft" : ""}`} />
+              {id === "workspaces" && unreadCount > 0 && (
+                <UnreadCountBadge
+                  count={unreadCount}
+                  size="sm"
+                  className="absolute -top-1.5 -right-3.5"
+                />
+              )}
+            </span>
             <span className="text-[11px] font-medium">{label}</span>
           </button>
         );

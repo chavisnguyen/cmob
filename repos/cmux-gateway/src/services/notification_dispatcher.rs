@@ -104,6 +104,7 @@ pub async fn emit_alert(
             )
             .await;
     }
+    WorkspaceTreeBuilder::note_surface_unread(surface_id);
 }
 
 pub async fn emit_dismiss(state: &AppState, surface_id: &str, tags: &[String]) {
@@ -121,6 +122,7 @@ pub async fn emit_dismiss(state: &AppState, surface_id: &str, tags: &[String]) {
     if desktop_notifications_enabled() {
         let _ = state.cmux_bridge.clear_notifications(surface_id).await;
     }
+    WorkspaceTreeBuilder::invalidate_tree_cache();
 }
 
 /// Spawns the background monitor that scans ALL active top-level sessions (including OpenCode SQLite

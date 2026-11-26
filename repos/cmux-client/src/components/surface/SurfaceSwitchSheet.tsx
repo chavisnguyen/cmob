@@ -2,6 +2,7 @@ import { useEffect } from "react";
 import { Terminal, FileText, Globe, Plus, X } from "lucide-react";
 import { AgentIcon } from "../common/AgentIcon";
 import { Pressable } from "../common/Pressable";
+import { UnreadCountBadge } from "../common/UnreadCountBadge";
 import { agentDisplayName } from "../common/agentBrand";
 import type { SurfaceNode } from "../../protocol/rpc";
 import { displaySurfaceTitle } from "./surfaceTitle";
@@ -81,8 +82,11 @@ export function SurfaceSwitchSheet({
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14.5px] font-medium truncate">
-                    {displaySurfaceTitle(surf.title)}
+                  <div className="flex items-center gap-1.5 min-w-0">
+                    <UnreadCountBadge count={surf.unread_count} size="sm" />
+                    <div className="text-[14.5px] font-medium truncate">
+                      {displaySurfaceTitle(surf.title)}
+                    </div>
                   </div>
                   <div className="text-[12.5px] text-muted truncate">
                     {surf.agent

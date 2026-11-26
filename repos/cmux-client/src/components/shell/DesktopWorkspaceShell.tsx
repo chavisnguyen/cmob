@@ -21,6 +21,8 @@ export interface DesktopWorkspaceShellProps {
   onToggleSidebar: () => void;
   workspaces: WorkspaceNode[];
   loading: boolean;
+  syncing?: boolean;
+  totalUnread?: number;
   selectedWorkspace: WorkspaceNode | null;
   selectedSurface: SurfaceNode | null;
   hosts: SavedHost[];
@@ -62,6 +64,8 @@ export function DesktopWorkspaceShell({
   onToggleSidebar,
   workspaces,
   loading,
+  syncing = false,
+  totalUnread = 0,
   selectedWorkspace,
   selectedSurface,
   hosts,
@@ -98,6 +102,7 @@ export function DesktopWorkspaceShell({
             <WorkspaceListView
               workspaces={workspaces}
               loading={loading}
+              syncing={syncing}
               onRefresh={onRefreshWorkspaces}
               onSelectWorkspace={onSelectWorkspace}
               hostsCount={hosts.length}
@@ -107,7 +112,11 @@ export function DesktopWorkspaceShell({
               hideOnboarding
             />
           </div>
-          <PrimaryTabNav mainTab={mainTab} onSelectTab={onSelectMainTab} />
+          <PrimaryTabNav
+            mainTab={mainTab}
+            onSelectTab={onSelectMainTab}
+            unreadCount={totalUnread}
+          />
         </aside>
       )}
 

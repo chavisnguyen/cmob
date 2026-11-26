@@ -19,6 +19,7 @@ import { NewSurfaceModal } from "../components/surface/NewSurfaceModal";
 import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
 import { CloseSurfaceDialog } from "../components/surface/CloseSurfaceDialog";
 import { Pressable } from "../components/common/Pressable";
+import { UnreadCountBadge } from "../components/common/UnreadCountBadge";
 import { ChangesPanel } from "../components/git/ChangesPanel";
 import { AgentIcon } from "../components/common/AgentIcon";
 import { agentDisplayName } from "../components/common/agentBrand";
@@ -163,7 +164,8 @@ export function SurfaceListView({
                   </div>
 
                   <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-1.5 min-w-0">
+                      <UnreadCountBadge count={surf.unread_count} />
                       <h2 className="text-[15px] font-semibold text-fg truncate">
                         {displaySurfaceTitle(surf.title)}
                       </h2>

@@ -221,7 +221,7 @@ describe("multi-agent taskList & background work normalization", () => {
     expect(toolRunHtml).toContain("Step B (1/2)");
   });
 
-  it("formats Orca natural tool sentences and retires 100%-completed task lists on newer turns", () => {
+  it("formats Orca natural tool sentences and auto-hides finished tasks and finished background jobs immediately", () => {
     const sentence = deriveToolRunSentence(
       [
         {
@@ -243,7 +243,7 @@ describe("multi-agent taskList & background work normalization", () => {
     );
     expect(sentence).toBe("Read 2 files (md2pdf.sh, docker-compose.yml)");
 
-    const completedThenMovedOn: AgentTurn[] = [
+    const allFinishedTurn: AgentTurn[] = [
       {
         id: "t-done-tasks",
         surface_id: "s-1",
@@ -262,26 +262,35 @@ describe("multi-agent taskList & background work normalization", () => {
             }),
           },
           { kind: "tool-end", tool_id: "steps-1", detail: "OK", ok: true },
+          {
+            kind: "subagents",
+            group_id: "g-done",
+            agents: [
+              { id: "a-1", label: "Worker 1", state: "completed" },
+              { id: "a-2", label: "Worker 2", state: "completed" },
+            ],
+          },
+          {
+            kind: "background-tasks",
+            tasks: [
+              { id: "bg-1", kind: "command", label: "cargo test", state: "completed" },
+              { id: "bg-2", kind: "command", label: "pnpm build", state: "completed" },
+            ],
+          },
         ],
-      },
-      {
-        id: "t-user-next",
-        surface_id: "s-1",
-        role: "user",
-        events: [{ kind: "user", text: "tiếp tục quyết định 8" }],
-      },
-      {
-        id: "t-ast-next",
-        surface_id: "s-1",
-        role: "assistant",
-        events: [{ kind: "assistant", text: "Bạn chọn phương án nào?" }],
       },
     ];
 
-    // On the turn that completed 3/3, it stays visible; once a later assistant turn moves on, it retires.
-    expect(
-      deriveConversationTasks(completedThenMovedOn.slice(0, 1), false).dockedTaskList,
-    ).not.toBeNull();
-    expect(deriveConversationTasks(completedThenMovedOn, true).dockedTaskList).toBeNull();
+    // Both 100%-completed checklists and all-finished subagents/shell jobs auto-hide immediately
+    // from the docked composer tray (even while the turn itself is still wrapping up), while inline
+    // tool summaries remain intact for timeline rendering.
+    const whileWorking = deriveConversationTasks(allFinishedTurn, true);
+    expect(whileWorking.dockedTaskList).toBeNull();
+    expect(whileWorking.backgroundWork).toBeNull();
+    expect(whileWorking.inlineSummaries.get("steps-1")?.completedCount).toBe(3);
+
+    const afterIdle = deriveConversationTasks(allFinishedTurn, false);
+    expect(afterIdle.dockedTaskList).toBeNull();
+    expect(afterIdle.backgroundWork).toBeNull();
   });
 });

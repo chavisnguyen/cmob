@@ -149,11 +149,14 @@ async fn handle_surface_new(req: &JsonRpcRequest, state: &AppState) -> JsonRpcRe
     }
 
     match state.cmux_bridge.new_surface(ws, command.as_deref()).await {
-        Ok(out) => JsonRpcResponse::result(
-            req.id.clone(),
-            serde_json::json!({ "status": "created", "output": out }),
-        )
-        .unwrap(),
+        Ok(out) => {
+            WorkspaceTreeBuilder::invalidate_tree_cache();
+            JsonRpcResponse::result(
+                req.id.clone(),
+                serde_json::json!({ "status": "created", "output": out }),
+            )
+            .unwrap()
+        }
         Err(e) => JsonRpcResponse::error(
             Some(req.id.clone()),
             JsonRpcError::internal_error(e.to_string()),
@@ -187,16 +190,19 @@ async fn handle_surface_rename(req: &JsonRpcRequest, state: &AppState) -> JsonRp
     };
 
     match state.cmux_bridge.rename_tab(surface, title).await {
-        Ok(out) => JsonRpcResponse::result(
-            req.id.clone(),
-            serde_json::json!({
-                "status": "renamed",
-                "surface_id": surface,
-                "title": title,
-                "output": out
-            }),
-        )
-        .unwrap(),
+        Ok(out) => {
+            WorkspaceTreeBuilder::invalidate_tree_cache();
+            JsonRpcResponse::result(
+                req.id.clone(),
+                serde_json::json!({
+                    "status": "renamed",
+                    "surface_id": surface,
+                    "title": title,
+                    "output": out
+                }),
+            )
+            .unwrap()
+        }
         Err(err) => JsonRpcResponse::error(
             Some(req.id.clone()),
             JsonRpcError::internal_error(err.to_string()),
@@ -226,15 +232,18 @@ async fn handle_surface_close(req: &JsonRpcRequest, state: &AppState) -> JsonRpc
         .filter(|v| !v.is_empty());
 
     match close_surface_and_purge(state, surface, workspace, force).await {
-        Ok((canonical_id, out)) => JsonRpcResponse::result(
-            req.id.clone(),
-            serde_json::json!({
-                "status": "closed",
-                "surface_id": canonical_id,
-                "output": out
-            }),
-        )
-        .unwrap(),
+        Ok((canonical_id, out)) => {
+            WorkspaceTreeBuilder::invalidate_tree_cache();
+            JsonRpcResponse::result(
+                req.id.clone(),
+                serde_json::json!({
+                    "status": "closed",
+                    "surface_id": canonical_id,
+                    "output": out
+                }),
+            )
+            .unwrap()
+        }
         Err(e) => JsonRpcResponse::error(
             Some(req.id.clone()),
             JsonRpcError::internal_error(e.to_string()),

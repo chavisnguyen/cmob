@@ -291,6 +291,7 @@ mod tests {
             tty: Some("ttys001".into()),
             selected: true,
             focused: true,
+            unread_count: 0,
             agent: Some(SurfaceAgentInfo {
                 session_id: "sess_1".into(),
                 agent_kind: "kiro".into(),

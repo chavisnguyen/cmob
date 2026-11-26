@@ -21,7 +21,7 @@ export {
   turnsStructurallyEqual,
 };
 
-export const INITIAL_TURN_PAGE_SIZE = 25;
+export const INITIAL_TURN_PAGE_SIZE = 15;
 export const OLDER_TURN_PAGE_SIZE = 30;
 export const MAX_TURN_LIMIT = 500;
 const HARD_PAGED_RETENTION_CEILING = 5_000;

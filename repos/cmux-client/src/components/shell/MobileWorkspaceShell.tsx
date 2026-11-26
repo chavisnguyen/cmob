@@ -16,6 +16,8 @@ export interface MobileWorkspaceShellProps {
   activeView: AppView;
   workspaces: WorkspaceNode[];
   loading: boolean;
+  syncing?: boolean;
+  totalUnread?: number;
   selectedWorkspace: WorkspaceNode | null;
   selectedSurface: SurfaceNode | null;
   hosts: SavedHost[];
@@ -51,6 +53,8 @@ export function MobileWorkspaceShell({
   activeView,
   workspaces,
   loading,
+  syncing = false,
+  totalUnread = 0,
   selectedWorkspace,
   selectedSurface,
   hosts,
@@ -80,6 +84,7 @@ export function MobileWorkspaceShell({
               <WorkspaceListView
                 workspaces={workspaces}
                 loading={loading}
+                syncing={syncing}
                 onRefresh={onRefreshWorkspaces}
                 onSelectWorkspace={onSelectWorkspace}
                 hostsCount={hosts.length}
@@ -149,7 +154,7 @@ export function MobileWorkspaceShell({
       </div>
 
       {(mainTab !== "workspaces" || activeView === "workspaces") && (
-        <PrimaryTabNav mainTab={mainTab} onSelectTab={onSelectMainTab} />
+        <PrimaryTabNav mainTab={mainTab} onSelectTab={onSelectMainTab} unreadCount={totalUnread} />
       )}
     </div>
   );

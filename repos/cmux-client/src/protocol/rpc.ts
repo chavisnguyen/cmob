@@ -168,6 +168,8 @@ export interface WorkspaceNode {
   /** cmux sidebar color for this workspace (`#RRGGBB`). */
   color?: string;
   snippet?: string;
+  /** Unread cmux notifications in this workspace. */
+  unread_count?: number;
   surfaces: SurfaceNode[];
 }
 
@@ -181,6 +183,7 @@ export interface WorkspaceSummary {
   status: "running" | "idle" | (string & {});
   current_directory: string;
   snippet?: string;
+  unread_count?: number;
   surface_count: number;
   has_running_agent: boolean;
 }
@@ -194,6 +197,8 @@ export interface SurfaceNode {
   tty?: string;
   selected: boolean;
   focused: boolean;
+  /** Unread cmux notifications targeting this surface tab. */
+  unread_count?: number;
   agent?: SurfaceAgentInfo;
 }
 
