@@ -159,7 +159,7 @@ export function useWorkspaceStore({
 
     let bootstrapFallbackTimer: ReturnType<typeof setTimeout> | null = null;
     const buffered = wsClient.consumeBufferedBootstrapPayload();
-    if (buffered?.workspaces) {
+    if (buffered && Array.isArray(buffered.workspaces)) {
       applyWorkspaceSnapshot(buffered.workspaces, wsClient.getEndpoint());
     } else if (wsClient.isAwaitingBootstrapTree()) {
       if (workspacesRef.current.length === 0) setLoading(true);
@@ -182,6 +182,8 @@ export function useWorkspaceStore({
       const payload = data as WorkspaceBootstrapPayload;
       if (Array.isArray(payload.workspaces)) {
         applyWorkspaceSnapshot(payload.workspaces, wsClient.getEndpoint());
+      } else {
+        void fetchWorkspaces(false);
       }
     });
 

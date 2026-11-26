@@ -44,6 +44,8 @@ struct PooledStream {
 #[derive(Debug, Deserialize)]
 struct RawSocketResponse {
     #[serde(default)]
+    id: Option<String>,
+    #[serde(default)]
     ok: bool,
     #[serde(default)]
     result: Option<Value>,
@@ -245,7 +247,7 @@ impl CmuxUdsPool {
             None => self.slots[start_idx].lock().await,
         };
 
-        let raw_line = timeout(op_timeout, async {
+        let raw_line = match timeout(op_timeout, async {
             if let Some(existing) = slot_guard.as_mut() {
                 if existing.path.exists()
                     && let Ok(resp) = Self::send_once(existing, &line).await
@@ -265,7 +267,18 @@ impl CmuxUdsPool {
             }
         })
         .await
-        .map_err(|_| UdsCallError::Timeout)??;
+        {
+            Ok(Ok(resp)) => resp,
+            Ok(Err(err)) => {
+                *slot_guard = None;
+                return Err(err);
+            }
+            Err(_) => {
+                // Evict timed-out stream so a late daemon reply can never desynchronize the next call.
+                *slot_guard = None;
+                return Err(UdsCallError::Timeout);
+            }
+        };
 
         let trimmed = raw_line.trim();
         if let Some(err_msg) = trimmed.strip_prefix("ERROR:") {
@@ -277,6 +290,15 @@ impl CmuxUdsPool {
             *slot_guard = None;
             UdsCallError::ParseError(e.to_string())
         })?;
+
+        if let Some(resp_id) = parsed.id.as_deref()
+            && resp_id != req_id
+        {
+            *slot_guard = None;
+            return Err(UdsCallError::ParseError(format!(
+                "mismatched socket response id (expected {req_id}, got {resp_id})"
+            )));
+        }
 
         if parsed.ok {
             return Ok(parsed.result.unwrap_or(Value::Null));

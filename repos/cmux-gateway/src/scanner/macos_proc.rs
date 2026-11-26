@@ -14,6 +14,8 @@ use crate::scanner::workspace_tree::WorkspaceTreeBuilder;
 
 /// `NODEV` (`(dev_t)-1`) on Darwin indicates a process has no controlling terminal.
 const DARWIN_NODEV: u32 = u32::MAX;
+/// `SZOMB` (`5` in `<sys/proc.h>`) marks a `<defunct>` zombie process whose argv is gone.
+const DARWIN_SZOMB: u32 = 5;
 
 unsafe extern "C" {
     fn devname_r(
@@ -155,23 +157,33 @@ fn read_proc_command_line(pid: libc::pid_t, bsd: &libc::proc_bsdinfo) -> String 
     c_char_slice_to_string(&bsd.pbi_comm)
 }
 
-/// Enumerates all live processes attached to a controlling TTY in `< 1.5ms`.
+/// Enumerates all live processes attached to a controlling TTY via `<libproc.h>`.
+///
+/// Note: Unlike `proc_listpids` (which returns byte count), Apple's `proc_listallpids`
+/// wrapper in `libproc.c` divides by `sizeof(pid_t)` internally and returns the **PID count**
+/// directly, while `buffersize` is passed in **bytes**.
 pub fn list_tty_processes() -> Option<Vec<TtyProcessEntry>> {
-    // SAFETY: `proc_listallpids(null, 0)` returns estimated byte size for active PIDs.
-    let est_bytes = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
-    if est_bytes <= 0 {
+    // SAFETY: `proc_listallpids(null, 0)` returns active PID count estimate.
+    let est_pids = unsafe { libc::proc_listallpids(std::ptr::null_mut(), 0) };
+    if est_pids <= 0 {
         return None;
     }
-    let cap_pids = ((est_bytes as usize) / size_of::<libc::pid_t>()).saturating_add(128);
-    let mut pids = vec![0 as libc::pid_t; cap_pids];
-    let buf_bytes = (pids.len() * size_of::<libc::pid_t>()) as libc::c_int;
-    // SAFETY: `pids` is a valid buffer of `buf_bytes` bytes.
-    let actual_bytes =
-        unsafe { libc::proc_listallpids(pids.as_mut_ptr().cast::<libc::c_void>(), buf_bytes) };
-    if actual_bytes <= 0 {
-        return None;
-    }
-    let count = ((actual_bytes as usize) / size_of::<libc::pid_t>()).min(pids.len());
+    let mut cap_pids = (est_pids as usize).saturating_add(256);
+    let (pids, count) = loop {
+        let mut buf = vec![0 as libc::pid_t; cap_pids];
+        let buf_bytes = (buf.len() * size_of::<libc::pid_t>()).min(i32::MAX as usize) as libc::c_int;
+        // SAFETY: `buf` is a valid buffer of `buf_bytes` bytes; return value is PID count.
+        let got_pids =
+            unsafe { libc::proc_listallpids(buf.as_mut_ptr().cast::<libc::c_void>(), buf_bytes) };
+        if got_pids <= 0 {
+            return None;
+        }
+        let n = (got_pids as usize).min(buf.len());
+        if n < buf.len() || cap_pids >= 131_072 {
+            break (buf, n);
+        }
+        cap_pids = cap_pids.saturating_mul(2);
+    };
 
     let mut tty_cache: HashMap<u32, Option<String>> = HashMap::with_capacity(32);
     let mut entries = Vec::with_capacity(64);
@@ -192,7 +204,7 @@ pub fn list_tty_processes() -> Option<Vec<TtyProcessEntry>> {
                 bsd_size,
             )
         };
-        if got != bsd_size {
+        if got != bsd_size || bsd.pbi_status == DARWIN_SZOMB {
             continue;
         }
         let Some(tty) = resolve_tty_name(bsd.e_tdev, &mut tty_cache) else {
@@ -274,15 +286,26 @@ mod tests {
     }
 
     #[test]
-    fn native_macos_proc_snapshot_runs_under_15ms() {
+    fn native_macos_proc_snapshot_matches_ps_and_runs_under_25ms() {
         let start = std::time::Instant::now();
-        let (pid_ttys, agents) = scan_processes_snapshot().expect("libproc scan succeeded");
+        let (pid_ttys, native_agents) = scan_processes_snapshot().expect("libproc scan succeeded");
         let elapsed = start.elapsed();
-        let _ = (pid_ttys, agents);
-        // Verify reasonable output & latency well below subprocess `ps` (~70ms).
         assert!(
             elapsed < std::time::Duration::from_millis(25),
             "expected fast libproc scan, took {elapsed:?}"
         );
+
+        let ps_out = std::process::Command::new("ps")
+            .args(["-axo", "tty=,command="])
+            .output()
+            .expect("ps executed");
+        let ps_agents =
+            WorkspaceTreeBuilder::parse_agent_processes(&String::from_utf8_lossy(&ps_out.stdout));
+        assert_eq!(
+            native_agents, ps_agents,
+            "native libproc agent TTY map must match `ps -axo tty=,command=` 100%"
+        );
+        // Every shell/test TTY PID from `ps` that is still alive must also be present in `pid_ttys`.
+        assert!(!pid_ttys.is_empty());
     }
 }

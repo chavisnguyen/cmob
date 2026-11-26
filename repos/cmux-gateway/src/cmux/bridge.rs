@@ -82,9 +82,46 @@ impl DualTransportCmuxBridge {
         self.rpc("system.ping", serde_json::json!({})).await.is_ok()
     }
 
-    /// Fetches the full workspace/pane/surface JSON tree (`system.tree`).
+    /// Fetches the full workspace/pane/surface JSON tree across all windows (`system.tree`).
     pub async fn tree_json(&self) -> Result<String, CmuxBridgeError> {
-        self.rpc_call("system.tree", None).await
+        self.rpc_call("system.tree", Some(serde_json::json!({ "all_windows": true })))
+            .await
+    }
+
+    async fn resolve_workspace_for_surface(&self, surface_id: &str) -> Option<String> {
+        if let Some(ws) =
+            crate::scanner::liveness::workspace_for_surface(surface_id).filter(|w| !w.is_empty())
+        {
+            return Some(ws);
+        }
+        let tree = self
+            .rpc("system.tree", serde_json::json!({ "all_windows": true }))
+            .await
+            .ok()?;
+        for win in tree.get("windows")?.as_array()? {
+            for ws in win.get("workspaces")?.as_array()? {
+                let ws_id = ws.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                if ws_id.is_empty() {
+                    continue;
+                }
+                let Some(panes) = ws.get("panes").and_then(|v| v.as_array()) else {
+                    continue;
+                };
+                for pane in panes {
+                    let Some(surfaces) = pane.get("surfaces").and_then(|v| v.as_array()) else {
+                        continue;
+                    };
+                    for surf in surfaces {
+                        let sid = surf.get("id").and_then(|v| v.as_str()).unwrap_or("");
+                        let sref = surf.get("ref").and_then(|v| v.as_str()).unwrap_or("");
+                        if sid == surface_id || sref == surface_id {
+                            return Some(ws_id.to_string());
+                        }
+                    }
+                }
+            }
+        }
+        None
     }
 
     /// Dispatches a JSON-RPC call returning the serialized JSON result string.
@@ -446,9 +483,7 @@ impl DualTransportCmuxBridge {
             "force": false,
             "focus": false,
         });
-        if let Some(ws_id) =
-            crate::scanner::liveness::workspace_for_surface(surface_id).filter(|w| !w.is_empty())
-        {
+        if let Some(ws_id) = self.resolve_workspace_for_surface(surface_id).await {
             params["workspace_id"] = serde_json::json!(ws_id);
         }
         self.rpc_call("tab.action", Some(params)).await
@@ -461,10 +496,10 @@ impl DualTransportCmuxBridge {
         workspace_id: Option<&str>,
         force: bool,
     ) -> Result<String, CmuxBridgeError> {
-        let resolved_ws = workspace_id
-            .filter(|w| !w.is_empty())
-            .map(str::to_string)
-            .or_else(|| crate::scanner::liveness::workspace_for_surface(surface_id));
+        let resolved_ws = match workspace_id.filter(|w| !w.is_empty()) {
+            Some(ws) => Some(ws.to_string()),
+            None => self.resolve_workspace_for_surface(surface_id).await,
+        };
         let mut params = serde_json::json!({
             "surface_id": surface_id,
             "force": force,
@@ -525,9 +560,7 @@ impl DualTransportCmuxBridge {
         let mut params = serde_json::json!({
             "surface_id": surface_id,
         });
-        if let Some(ws_id) =
-            crate::scanner::liveness::workspace_for_surface(surface_id).filter(|w| !w.is_empty())
-        {
+        if let Some(ws_id) = self.resolve_workspace_for_surface(surface_id).await {
             params["workspace_id"] = serde_json::json!(ws_id);
         }
         self.rpc_call("notification.clear", Some(params)).await

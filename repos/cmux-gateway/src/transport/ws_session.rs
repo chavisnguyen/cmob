@@ -467,7 +467,14 @@ async fn push_auth_bootstrap(
     .await;
 
     let Ok(Ok(workspaces)) = built else {
-        // Non-fatal: client falls back to `mobile.workspace.tree` if bootstrap timed out/errored.
+        // Notify client immediately so it falls back to `mobile.workspace.tree` without waiting 1.5s.
+        let err_frame = JsonRpcResponse::event_value(
+            EVENT_WORKSPACE_BOOTSTRAP,
+            serde_json::json!({ "workspaces": serde_json::Value::Null }),
+        );
+        if let Ok(text) = serde_json::to_string(&err_frame) {
+            return socket.send(Message::Text(text.into())).await.is_ok();
+        }
         return true;
     };
 

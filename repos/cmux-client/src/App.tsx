@@ -5,6 +5,7 @@ import { AppTopHeader } from "./components/shell/AppTopHeader";
 import { DesktopWorkspaceShell } from "./components/shell/DesktopWorkspaceShell";
 import { MobileWorkspaceShell } from "./components/shell/MobileWorkspaceShell";
 import { useUsageSnapshot } from "./components/usage/useUsageSnapshot";
+import { INITIAL_TURN_PAGE_SIZE } from "./domain/chat/transcriptReducer";
 import { totalUnreadNotifications } from "./domain/workspaceTree";
 import { peekCachedWorkspaces } from "./hosts/workspaceCache";
 import { installGlobalButtonHaptics } from "./native/haptics";
@@ -56,7 +57,7 @@ export function App() {
       workspace_tree: true,
       ...(targetSurface ? { surface_id: targetSurface } : {}),
       is_desktop: isDesktopBootRef.current,
-      max_turns: 15,
+      max_turns: INITIAL_TURN_PAGE_SIZE,
       delta: true,
     };
   });
