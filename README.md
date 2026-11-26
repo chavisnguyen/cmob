@@ -72,7 +72,7 @@ graph TD
 ### Step 1: Install `cmob` on your Mac
 
 ```bash
-brew tap chavisnguyen/cmob
+brew tap chavisnguyen/cmob https://github.com/chavisnguyen/cmob
 brew install cmob
 ```
 

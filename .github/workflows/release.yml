@@ -1,16 +1,12 @@
 name: Release
 # User flow: create a GitHub Release with a tag such as v0.1.0.
-# gate -> binary (arm64 + x64) -> attach -> bump-tap, in this order in one workflow, so the Homebrew tap
-# can never point at assets that do not exist yet.
-# Requires the repo secret TAP_TOKEN: a personal access token with contents:write on the tap repository
-# (the default GITHUB_TOKEN cannot push to another repository).
+# gate -> binary (arm64 + x64) -> attach -> bump-formula, in this order in one workflow, so the in-repo
+# Homebrew Formula/cmob.rb never points at assets that do not exist yet.
 on:
   release:
     types: [published]
 permissions:
   contents: write
-env:
-  TAP_REPO: ${{ github.repository_owner }}/homebrew-cmob
 jobs:
   gate:
     runs-on: ubuntu-latest
@@ -89,14 +85,16 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh release upload "${{ github.ref_name }}" assets/* --clobber --repo "${{ github.repository }}"
 
-  bump-tap:
+  bump-formula:
     needs: attach
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Rewrite the tap formula from the template
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+      - name: Rewrite Formula/cmob.rb from the template
         env:
-          GH_TOKEN: ${{ secrets.TAP_TOKEN }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
           TAG="${{ github.ref_name }}"
@@ -106,17 +104,15 @@ jobs:
             --pattern cmob-macos-arm64 --pattern cmob-macos-x64 --dir "$WORK"
           SHA_ARM=$(sha256sum "$WORK/cmob-macos-arm64" | cut -d' ' -f1)
           SHA_X64=$(sha256sum "$WORK/cmob-macos-x64" | cut -d' ' -f1)
-          git clone "https://x-access-token:${GH_TOKEN}@github.com/${TAP_REPO}" tap --depth 1
-          mkdir -p tap/Formula
+          mkdir -p Formula
           sed -e "s|{{REPO}}|${{ github.repository }}|g" \
               -e "s|{{VERSION}}|${VERSION}|g" \
               -e "s|{{SHA_ARM}}|${SHA_ARM}|g" \
               -e "s|{{SHA_X64}}|${SHA_X64}|g" \
-              packaging/homebrew/cmob.rb.template > tap/Formula/cmob.rb
-          cd tap
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+              packaging/homebrew/cmob.rb.template > Formula/cmob.rb
+          git config user.name "cmob-bot"
+          git config user.email "cmob-bot@users.noreply.github.com"
           git add Formula/cmob.rb
           git diff --cached --quiet && { echo "formula unchanged"; exit 0; }
-          git commit -m "cmob ${VERSION}"
+          git commit -m "chore(formula): bump to ${TAG}"
           git push
