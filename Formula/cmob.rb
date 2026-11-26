@@ -1,11 +1,11 @@
 class Cmob < Formula
   desc "Watch and control your cmux terminals and coding agents from a phone"
   homepage "https://github.com/chavisnguyen/cmob"
-  version "0.2.2"
+  version "0.2.3"
   license "MIT"
 
   # This file is generated from packaging/homebrew/cmob.rb.template by the
-  # "bump-formula" job of .github/workflows/release.yml on every published Release.
+  # "bump-tap" job of .github/workflows/release.yml on every published Release.
   # Do not edit it by hand.
   livecheck do
     url :homepage
@@ -14,12 +14,12 @@ class Cmob < Formula
 
   on_macos do
     on_arm do
-      url "https://github.com/chavisnguyen/cmob/releases/download/v0.2.2/cmob-macos-arm64"
-      sha256 "80774ea4468bfaa9ae43d66a817ad8630a1784db62e4caf4ca65a49798587775"
+      url "https://github.com/chavisnguyen/cmob/releases/download/v0.2.3/cmob-macos-arm64"
+      sha256 "829dfcad8b7ab84ae2bf7aff8e5ef4cb0b9fd24c7f36722e8a18050929af2251"
     end
     on_intel do
-      url "https://github.com/chavisnguyen/cmob/releases/download/v0.2.2/cmob-macos-x64"
-      sha256 "0904c819e3341ddcd823381620f1d85342c64679332c08decf7af412ea59ebbc"
+      url "https://github.com/chavisnguyen/cmob/releases/download/v0.2.3/cmob-macos-x64"
+      sha256 "c4c639292276c3ccbc25daff0b4803226ffe263157a0cf60df95768f9e747b6f"
     end
   end
 
