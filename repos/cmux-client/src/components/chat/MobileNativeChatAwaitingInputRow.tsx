@@ -30,18 +30,18 @@ export const MobileNativeChatAwaitingInputRow = memo(function MobileNativeChatAw
     <div
       aria-live={pending ? "polite" : undefined}
       data-testid={pending ? "awaiting-question-row" : "resolved-question-row"}
-      className="my-1.5 py-1.5 px-2.5 rounded-xl border border-white/[0.07] bg-surface/60 space-y-1 min-w-0"
+      className="my-1.5 py-1.5 px-3 rounded-xl border border-white/[0.06] bg-white/[0.025] space-y-1 min-w-0"
     >
       <div className="flex items-center gap-1.5 text-xs text-muted">
         <MessageSquareMore
-          className={`w-3.5 h-3.5 shrink-0 ${pending ? "text-accent-soft" : "text-muted"}`}
+          className={`w-3.5 h-3.5 shrink-0 ${pending ? "text-accent-soft" : "text-dim"}`}
         />
-        <span className={pending ? "text-accent-soft font-medium" : "text-muted font-medium"}>
+        <span className={pending ? "text-fg-soft font-medium" : "text-muted font-medium"}>
           {pending ? "Asking a question" : "Asked a question"}
         </span>
         {!pending && (
-          <span className="ml-auto inline-flex items-center gap-1 text-[10px] text-emerald-400/90 font-medium">
-            <Check className="w-3 h-3" />
+          <span className="ml-auto inline-flex items-center gap-1 text-[10.5px] text-muted font-medium">
+            <Check className="w-3 h-3 text-emerald-400/80" />
             Answered
           </span>
         )}
@@ -55,8 +55,8 @@ export const MobileNativeChatAwaitingInputRow = memo(function MobileNativeChatAw
 
       {!pending && answerText && answerText !== "Answered" && (
         <div className="pl-5 pt-0.5 flex items-start gap-1.5 min-w-0">
-          <CornerDownRight className="w-3.5 h-3.5 text-emerald-400/80 shrink-0 mt-0.5" />
-          <div className="text-[12.5px] font-medium text-fg bg-raised/80 border border-white/[0.08] rounded-lg px-2.5 py-1 min-w-0 break-words">
+          <CornerDownRight className="w-3.5 h-3.5 text-dim shrink-0 mt-0.5" />
+          <div className="text-[12.5px] font-medium text-fg bg-white/[0.05] border border-white/[0.07] rounded-lg px-2.5 py-1 min-w-0 break-words">
             <NativeChatProse content={answerText} compact />
           </div>
         </div>

@@ -95,7 +95,7 @@ export function DesktopWorkspaceShell({
       {!sidebarCollapsed && (
         <aside
           aria-label="Workspaces sidebar"
-          className="w-[350px] xl:w-[380px] shrink-0 h-full flex flex-col bg-bg border-r border-line overflow-hidden"
+          className="w-[300px] xl:w-[320px] shrink-0 h-full flex flex-col bg-surface/40 border-r border-white/[0.06] overflow-hidden"
         >
           {topHeader}
           <div className="flex-1 min-h-0 overflow-hidden">

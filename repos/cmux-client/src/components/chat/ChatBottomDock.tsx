@@ -95,22 +95,22 @@ export function ChatBottomDock({
 
   return (
     <div
-      className={`shrink-0 z-30 px-3 ${
+      className={`shrink-0 z-30 px-3 sm:px-5 lg:px-8 xl:px-10 ${
         isKeyboardVisible ? "pt-1.5 pb-1.5" : "pt-2 safe-bottom"
-      } bg-bg border-t border-white/[0.08] min-w-0 max-w-full`}
+      } bg-bg border-t border-white/[0.06] min-w-0 max-w-full`}
     >
-      <div className="max-w-4xl mx-auto w-full space-y-1.5">
+      <div className="max-w-3xl lg:max-w-none mx-auto w-full space-y-1.5">
         {dock.kind === "startup-dialog" && (
           <div
             role="group"
             aria-label="Agent startup dialog"
-            className="mb-1.5 rounded-2xl border border-amber-500/30 bg-amber-500/[0.07] overflow-hidden"
+            className="mb-1.5 rounded-xl border border-white/[0.1] bg-surface overflow-hidden"
           >
             <div className="px-3.5 pt-3 pb-1.5">
-              <div className="text-[13px] font-semibold text-amber-200">
-                {agentDisplayName(agentKind)} is asking: {dock.dialog.title}
+              <div className="text-[13px] font-semibold text-fg">
+                {agentDisplayName(agentKind)} · {dock.dialog.title}
               </div>
-              <pre className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12.5px] leading-snug text-fg-soft">
+              <pre className="mt-1.5 max-h-40 overflow-y-auto whitespace-pre-wrap break-words font-sans text-[12.5px] leading-snug text-muted">
                 {dock.dialog.description}
               </pre>
             </div>
@@ -122,7 +122,7 @@ export function ChatBottomDock({
                     type="button"
                     disabled={answeringChoice !== null || !onAnswerDialog}
                     onClick={() => void handleDialogChoice(index)}
-                    className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line active:opacity-80 text-left text-[13.5px] text-fg disabled:opacity-50 flex items-center justify-between gap-2"
+                    className="w-full min-h-[38px] px-3 rounded-lg border border-white/[0.08] bg-raised/70 hover:bg-raised active:opacity-80 text-left text-[13px] text-fg disabled:opacity-50 flex items-center justify-between gap-2 transition-colors"
                   >
                     <span className="truncate">{choice.label}</span>
                     {answeringChoice === index && (
@@ -134,7 +134,7 @@ export function ChatBottomDock({
                 <button
                   type="button"
                   onClick={onOpenTerminal}
-                  className="w-full min-h-[40px] px-3 rounded-xl border border-white/[0.12] bg-raised hover:bg-line text-[13.5px] text-fg"
+                  className="w-full min-h-[38px] px-3 rounded-lg border border-white/[0.08] bg-raised/70 hover:bg-raised text-[13px] text-fg transition-colors"
                 >
                   Answer in the Terminal tab
                 </button>
@@ -154,10 +154,10 @@ export function ChatBottomDock({
         )}
 
         {dock.kind === "permission" && (
-          <div className="rounded-xl bg-emerald-950/30 border border-emerald-500/25 px-3 py-2.5 space-y-2">
+          <div className="rounded-xl bg-surface border border-white/[0.1] px-3.5 py-2.5 space-y-2">
             <div className="flex items-start gap-2 min-w-0">
-              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0 mt-0.5" />
-              <div className="min-w-0 flex-1 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-snug text-emerald-100">
+              <CheckCircle2 className="w-4 h-4 text-accent-soft shrink-0 mt-0.5" />
+              <div className="min-w-0 flex-1 max-h-36 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-snug text-fg-soft">
                 {dock.awaiting.prompt || "Agent requested approval"}
               </div>
             </div>
@@ -166,7 +166,7 @@ export function ChatBottomDock({
                 type="button"
                 onClick={() => void onInterrupt()}
                 disabled={isStopping || busyApproving}
-                className="h-9 px-3.5 bg-raised hover:bg-rose-950/50 hover:text-rose-300 text-fg-soft font-medium text-[13px] rounded-xl transition-colors flex items-center gap-1.5 disabled:opacity-50"
+                className="h-8 px-3 bg-white/[0.05] hover:bg-rose-500/15 hover:text-rose-300 text-muted font-medium text-[12.5px] rounded-lg transition-colors flex items-center gap-1.5 disabled:opacity-50"
                 title="Deny"
               >
                 <X className="w-3.5 h-3.5" />
@@ -176,7 +176,7 @@ export function ChatBottomDock({
                 type="button"
                 disabled={busyApproving || isStopping}
                 onClick={() => void handleApproveClick()}
-                className="h-9 px-3.5 bg-emerald-600 hover:bg-emerald-500 active:bg-emerald-700 disabled:opacity-60 text-white font-semibold text-[13px] rounded-xl transition-colors shadow-sm flex items-center gap-1.5"
+                className="h-8 px-3.5 bg-accent hover:bg-accent-strong disabled:opacity-60 text-white font-semibold text-[12.5px] rounded-lg transition-colors flex items-center gap-1.5"
               >
                 {busyApproving ? (
                   <Loader2 className="w-3.5 h-3.5 animate-spin" />

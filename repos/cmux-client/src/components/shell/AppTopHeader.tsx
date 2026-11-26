@@ -54,19 +54,19 @@ export function AppTopHeader({
 
   return (
     <div
-      className={`flex items-center justify-between px-4 ${
+      className={`flex items-center justify-between px-3.5 ${
         compactTopInset
-          ? "min-h-[52px]"
-          : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))]"
-      } relative bg-bg border-b border-line shrink-0`}
+          ? "min-h-[44px]"
+          : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3rem+env(safe-area-inset-top,0px))]"
+      } relative bg-transparent border-b border-white/[0.06] shrink-0`}
     >
-      <div className="flex items-center gap-2.5 min-w-0">
-        <span className="text-[17px] font-bold tracking-tight text-fg shrink-0">Cmob</span>
+      <div className="flex items-center gap-2 min-w-0">
+        <span className="text-[15px] font-semibold tracking-tight text-fg shrink-0">Cmob</span>
         <button
           type="button"
           onClick={onOpenHostSheet}
           aria-label={`Switch computer (${connState})`}
-          className="inline-flex items-center gap-1.5 min-w-0 max-w-[180px] pl-2.5 pr-2 py-1 rounded-full bg-raised hover:bg-line text-[12.5px] font-medium text-fg-soft transition-colors"
+          className="inline-flex items-center gap-1.5 min-w-0 max-w-[175px] pl-2 pr-1.5 py-0.5 rounded-md bg-white/[0.045] hover:bg-white/[0.08] border border-white/[0.06] text-[12px] font-medium text-fg-soft transition-colors"
         >
           <span
             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
@@ -78,22 +78,22 @@ export function AppTopHeader({
             }`}
           />
           <span className="truncate">{activeHost?.name ?? "No computer"}</span>
-          <ChevronDown className="w-3 h-3 shrink-0 text-muted" />
+          <ChevronDown className="w-3 h-3 shrink-0 text-dim" />
         </button>
         {isDemoMode() && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-accent/20 text-accent-soft border border-accent/30 shrink-0">
+          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-accent/15 text-accent-soft shrink-0">
             Demo
           </span>
         )}
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-1 shrink-0">
         <button
           type="button"
           onClick={onToggleNotifications}
-          className={`w-9 h-9 rounded-xl bg-raised hover:bg-line flex items-center justify-center transition-colors ${
+          className={`w-8 h-8 rounded-lg hover:bg-white/[0.06] flex items-center justify-center transition-colors ${
             notifPermission === "granted"
-              ? "text-emerald-400"
+              ? "text-muted hover:text-fg"
               : notifPermission === "denied"
                 ? "text-dim cursor-not-allowed"
                 : "text-amber-300"
@@ -102,21 +102,21 @@ export function AppTopHeader({
           aria-label="Notifications"
         >
           {notifPermission === "granted" ? (
-            <BellRing className="w-[18px] h-[18px]" />
+            <BellRing className="w-4 h-4" />
           ) : (
-            <Bell className="w-[18px] h-[18px]" />
+            <Bell className="w-4 h-4" />
           )}
         </button>
 
         <button
           type="button"
           onClick={() => setShowAppMenu((v) => !v)}
-          className="w-9 h-9 rounded-xl bg-raised hover:bg-line text-fg-soft flex items-center justify-center transition-colors"
+          className="w-8 h-8 rounded-lg hover:bg-white/[0.06] text-muted hover:text-fg flex items-center justify-center transition-colors"
           title="Menu"
           aria-label="Menu"
           aria-expanded={showAppMenu}
         >
-          <MoreHorizontal className="w-[18px] h-[18px]" />
+          <MoreHorizontal className="w-4 h-4" />
         </button>
 
         {showAppMenu && (

@@ -52,17 +52,17 @@ function ModeSegmentedToggle({
 }) {
   const btnCls = (selected: boolean) =>
     `flex items-center gap-1.5 ${
-      compact ? "h-6 px-2.5 rounded-md text-[12px]" : "h-7 px-2.5 rounded-lg text-[13px]"
+      compact ? "h-6 px-2.5 rounded-md text-[11.5px]" : "h-7 px-2.5 rounded-md text-[12.5px]"
     } font-medium transition-colors ${
-      selected ? "bg-accent text-white shadow-sm" : "text-muted hover:text-fg"
+      selected ? "bg-white/[0.1] text-fg shadow-xs" : "text-muted hover:text-fg-soft"
     }`;
   const iconCls = compact ? "w-3 h-3" : "w-3.5 h-3.5";
 
   return (
     <div
       className={`flex items-center ${
-        compact ? "p-0.5 rounded-lg" : "p-1 rounded-xl"
-      } bg-surface border border-white/[0.08] shrink-0`}
+        compact ? "p-0.5 rounded-lg" : "p-0.5 rounded-lg"
+      } bg-white/[0.04] border border-white/[0.07] shrink-0`}
     >
       <button
         type="button"
@@ -128,9 +128,9 @@ export function SurfaceDetailHeader({
 
   if (desktopLayout) {
     return (
-      <header className="flex items-center justify-between gap-3 px-4 h-10 bg-bg border-b border-white/[0.07] shrink-0 z-20 w-full select-none">
+      <header className="flex items-center justify-between gap-3 px-6 lg:px-8 h-9 bg-bg border-b border-white/[0.05] shrink-0 z-20 w-full select-none">
         <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-[13.5px] font-semibold text-fg truncate">
+          <h1 className="text-[13px] font-medium text-fg-soft truncate">
             {displaySurfaceTitle(surface.title)}
           </h1>
           {connState !== "connected" && (

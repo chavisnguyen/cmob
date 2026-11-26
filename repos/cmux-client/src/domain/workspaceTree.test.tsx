@@ -2,6 +2,7 @@ import { createRef } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import { ChatVirtualizedTimeline } from "../components/chat/ChatVirtualizedTimeline";
+import { AgentIcon } from "../components/common/AgentIcon";
 import { UnreadCountBadge } from "../components/common/UnreadCountBadge";
 import type { WorkspaceNode } from "../protocol/rpc";
 import {
@@ -103,7 +104,6 @@ describe("unread notification badges and cached syncing UI", () => {
         sizerRef={createRef()}
         bottomAnchorRef={createRef()}
         agentKind="antigravity"
-        effectivelyWorking={false}
         liveActivity={{ visible: false, activityText: null, stopping: false }}
         hasEarlier={false}
         isLoading={false}
@@ -119,5 +119,15 @@ describe("unread notification badges and cached syncing UI", () => {
 
     expect(html).toContain('data-testid="chat-syncing-pill"');
     expect(html).toContain("Syncing latest…");
+    expect(html).toContain('data-testid="chat-watermark"');
+    expect(html).not.toContain("<img");
+  });
+
+  it("renders crisp vector SVGs for all agents in monochrome mode (never stretched PNGs)", () => {
+    for (const kind of ["claude", "codex", "antigravity", "kiro", "opencode"]) {
+      const svgHtml = renderToStaticMarkup(<AgentIcon kind={kind} size={42} monochrome />);
+      expect(svgHtml).toContain("<svg");
+      expect(svgHtml).not.toContain("<img");
+    }
   });
 });

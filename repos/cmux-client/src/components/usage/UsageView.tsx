@@ -208,9 +208,11 @@ export function UsageBody({
           {error}
         </div>
       )}
-      {providers.map((p) => (
-        <ProviderUsageCard key={p.provider} provider={p} now={now} />
-      ))}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+        {providers.map((p) => (
+          <ProviderUsageCard key={p.provider} provider={p} now={now} />
+        ))}
+      </div>
     </div>
   );
 }
@@ -237,10 +239,10 @@ export function UsageView({
   onRefresh: () => void;
 }) {
   return (
-    <div className="flex flex-col h-full w-full max-w-3xl mx-auto bg-bg text-fg">
-      <header className="flex items-center justify-between px-4 min-h-[52px] bg-surface border-b border-line shrink-0">
+    <div className="flex flex-col h-full w-full max-w-3xl lg:max-w-none mx-auto bg-bg text-fg">
+      <header className="flex items-center justify-between px-4 lg:px-8 min-h-[48px] bg-bg border-b border-white/[0.06] shrink-0">
         <div className="min-w-0">
-          <h1 className="text-[16px] font-semibold tracking-tight text-fg">Usage</h1>
+          <h1 className="text-[15.5px] font-semibold tracking-tight text-fg">Usage</h1>
           <p className="text-[11.5px] text-muted truncate">
             {hostName}
             {snapshot ? ` · ${formatUpdatedAgo(snapshot.updated_at, now)}` : ""}
@@ -250,15 +252,15 @@ export function UsageView({
           type="button"
           onClick={onRefresh}
           disabled={connState !== "connected" || refreshing || loading}
-          className="w-9 h-9 rounded-xl bg-raised hover:bg-line active:opacity-75 text-fg-soft flex items-center justify-center transition-colors disabled:opacity-40"
+          className="w-8 h-8 rounded-lg hover:bg-white/[0.06] active:opacity-75 text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
           title="Refresh usage"
           aria-label="Refresh usage"
         >
-          <RefreshCw className={`w-4 h-4 ${refreshing || loading ? "animate-spin" : ""}`} />
+          <RefreshCw className={`w-3.5 h-3.5 ${refreshing || loading ? "animate-spin" : ""}`} />
         </button>
       </header>
 
-      <div className="flex-1 overflow-y-auto p-4 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] select-text">
+      <div className="flex-1 overflow-y-auto scrollbar-sleek px-4 lg:px-8 py-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] select-text">
         <UsageBody
           connState={connState}
           snapshot={snapshot}

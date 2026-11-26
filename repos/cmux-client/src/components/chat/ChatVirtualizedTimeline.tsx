@@ -20,7 +20,6 @@ export interface ChatVirtualizedTimelineProps {
   bottomAnchorRef: React.RefObject<HTMLDivElement | null>;
   agentKind: string;
   surfaceId?: string;
-  effectivelyWorking: boolean;
   liveActivity: LiveActivityLineState;
   hasEarlier: boolean;
   isLoading: boolean;
@@ -45,7 +44,6 @@ export function ChatVirtualizedTimeline({
   bottomAnchorRef,
   agentKind,
   surfaceId,
-  effectivelyWorking,
   liveActivity,
   hasEarlier,
   isLoading,
@@ -68,13 +66,10 @@ export function ChatVirtualizedTimeline({
     <div className="relative flex-1 min-h-0 min-w-0">
       <div
         aria-hidden="true"
-        className="absolute inset-0 flex items-center justify-center pointer-events-none select-none"
+        className="pointer-events-none select-none absolute bottom-3.5 right-4 lg:right-7 z-0"
       >
-        <div
-          className={`text-white opacity-[0.07] ${effectivelyWorking ? "cmux-watermark-breathe" : ""}`}
-          data-testid="chat-watermark"
-        >
-          <AgentIcon kind={agentKind} size={200} className="w-[min(46vw,200px)] h-auto" />
+        <div className="text-fg opacity-[0.045]" data-testid="chat-watermark">
+          <AgentIcon kind={agentKind} size={42} monochrome />
         </div>
       </div>
 
@@ -85,7 +80,7 @@ export function ChatVirtualizedTimeline({
           data-testid="chat-syncing-pill"
           className="pointer-events-none absolute top-2.5 inset-x-0 z-20 flex justify-center px-3"
         >
-          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-surface/95 backdrop-blur-md border border-white/[0.1] shadow-md text-[11.5px] font-medium text-fg-soft">
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface/95 backdrop-blur-md border border-white/[0.08] shadow-sm text-[11.5px] font-medium text-muted">
             <Loader2 className="w-3 h-3 animate-spin text-accent-soft shrink-0" />
             <span>{connState === "connected" ? "Syncing latest…" : "Reconnecting…"}</span>
           </div>
@@ -95,21 +90,21 @@ export function ChatVirtualizedTimeline({
       <div
         ref={scrollContainerRef}
         onScroll={onScroll}
-        className="relative h-full overflow-y-auto overflow-x-hidden px-3 sm:px-4 py-2.5 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full select-text"
+        className="relative z-10 h-full overflow-y-auto overflow-x-hidden px-3.5 sm:px-5 lg:px-8 xl:px-10 py-3 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full select-text"
       >
         <div
           ref={contentRef}
-          className="min-h-full flex flex-col justify-end min-w-0 max-w-4xl mx-auto w-full"
+          className="min-h-full flex flex-col justify-end min-w-0 max-w-3xl lg:max-w-none mx-auto w-full"
         >
           {hasEarlier && (
-            <div className="flex justify-center py-1.5 pb-2 shrink-0">
+            <div className="flex justify-center py-1.5 pb-2.5 shrink-0">
               <button
                 type="button"
                 onClick={onLoadEarlier}
                 disabled={isLoadingOlder}
-                className="flex items-center gap-1 px-3 py-1 rounded-full bg-surface hover:bg-raised border border-line text-[11px] text-muted hover:text-fg-soft transition-colors shadow-sm"
+                className="flex items-center gap-1 px-3 py-1 rounded-full bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.07] text-[11.5px] text-muted hover:text-fg transition-colors"
               >
-                <ChevronUp className="w-3 h-3 text-muted" />
+                <ChevronUp className="w-3 h-3 text-dim" />
                 <span>
                   {isLoadingOlder ? "Loading earlier messages…" : "Load earlier messages"}
                 </span>
@@ -121,18 +116,24 @@ export function ChatVirtualizedTimeline({
             <div
               role="status"
               aria-live="polite"
-              className="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto"
+              className="h-full min-h-[260px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto"
             >
-              <Loader2 className="w-6 h-6 animate-spin text-accent-soft mb-2.5" />
-              <p className="text-sm font-medium text-fg-soft">Loading conversation…</p>
+              <Loader2 className="w-5 h-5 animate-spin text-muted mb-2.5" />
+              <p className="text-[13px] font-medium text-muted">Loading conversation…</p>
             </div>
           ) : timeline.length === 0 ? (
-            <div className="h-full min-h-[300px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto">
-              <p className="text-sm font-medium text-fg-soft">
-                Active Session with {agentDisplayName(agentKind)}
+            <div className="h-full min-h-[260px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto">
+              <AgentIcon
+                kind={agentKind}
+                size={26}
+                monochrome
+                className="text-muted opacity-55 mb-2.5"
+              />
+              <p className="text-[13.5px] font-medium text-fg-soft">
+                {agentDisplayName(agentKind)}
               </p>
-              <p className="text-xs text-dim mt-1 max-w-xs">
-                Direct bidirectional chat control connected to cmux host.
+              <p className="text-[12px] text-dim mt-1 max-w-xs">
+                Ready for prompt — connected directly to cmux.
               </p>
             </div>
           ) : (

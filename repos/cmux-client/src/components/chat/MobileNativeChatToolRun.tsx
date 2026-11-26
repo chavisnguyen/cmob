@@ -76,17 +76,14 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
           {isExpanded ? (
-            <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" />
+            <ChevronDown className="w-3.5 h-3.5 text-dim shrink-0" />
           ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-muted shrink-0" />
+            <ChevronRight className="w-3.5 h-3.5 text-dim shrink-0" />
           )}
           {renderCategoryIcon(primaryCategory, !allSuccess)}
-          <span className="font-medium text-fg-soft truncate font-sans">{summary}</span>
+          <span className="text-muted group-hover:text-fg-soft truncate font-sans">{summary}</span>
           {live && (
-            <span className="flex h-1.5 w-1.5 relative shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
-            </span>
+            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-accent animate-pulse shrink-0" />
           )}
         </div>
         {!live && !allSuccess && (

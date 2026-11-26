@@ -47,7 +47,7 @@ export function DesktopTabStrip({
   const activeKey = activeSurface?.id || activeSurface?.ref || "";
 
   return (
-    <div className="flex items-center justify-between gap-2 h-[52px] px-2.5 bg-surface border-b border-line shrink-0 select-none">
+    <div className="flex items-center justify-between gap-2 h-11 px-3 bg-bg border-b border-white/[0.06] shrink-0 select-none">
       <div className="flex items-center gap-1.5 min-w-0 flex-1">
         <button
           type="button"
@@ -73,10 +73,10 @@ export function DesktopTabStrip({
               return (
                 <div
                   key={key}
-                  className={`group flex items-center gap-1.5 h-8 pl-2.5 pr-1.5 rounded-lg border text-[12.5px] font-medium shrink-0 max-w-[210px] transition-colors ${
+                  className={`group flex items-center gap-1.5 h-7 pl-2.5 pr-1.5 rounded-lg border text-[12.5px] font-medium shrink-0 max-w-[220px] transition-colors ${
                     isActive
-                      ? "bg-bg border-line text-fg shadow-xs"
-                      : "bg-transparent border-transparent text-muted hover:bg-white/[0.04] hover:text-fg-soft"
+                      ? "bg-white/[0.06] border-white/[0.09] text-fg"
+                      : "bg-transparent border-transparent text-muted hover:bg-white/[0.035] hover:text-fg-soft"
                   }`}
                 >
                   <button

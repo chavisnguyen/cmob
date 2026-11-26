@@ -68,7 +68,7 @@ export function MobileNativeChatPromptCard({
         type="button"
         data-testid="prompt-strip"
         onClick={() => setCollapsed(false)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-accent/35 bg-accent/10 hover:bg-accent/15 text-left transition-colors shadow-sm"
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-white/[0.1] bg-surface hover:bg-raised text-left transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <MessageSquareMore className="w-4 h-4 text-accent-soft shrink-0" />
@@ -139,9 +139,9 @@ export function MobileNativeChatPromptCard({
       role="region"
       aria-label="Agent question"
       data-testid="docked-prompt-card"
-      className="rounded-2xl border border-accent/35 bg-surface shadow-xl overflow-hidden"
+      className="rounded-xl border border-white/[0.1] bg-surface overflow-hidden"
     >
-      <div className="flex items-start justify-between gap-2 px-3.5 pt-2.5 pb-2 bg-accent/[0.08] border-b border-white/[0.06]">
+      <div className="flex items-start justify-between gap-2 px-3.5 pt-2.5 pb-2 bg-white/[0.02] border-b border-white/[0.06]">
         <div className="flex items-start gap-2 min-w-0 flex-1">
           {stepIndex > 0 ? (
             <button
@@ -204,10 +204,10 @@ export function MobileNativeChatPromptCard({
               type="button"
               disabled={submitting}
               onClick={() => handleOptionPress(idx)}
-              className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-xl border text-left transition-colors disabled:opacity-60 ${
+              className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg border text-left transition-colors disabled:opacity-60 ${
                 selected
-                  ? "bg-accent/20 border-accent text-fg"
-                  : "bg-raised/70 hover:bg-raised border-white/[0.08] text-fg-soft"
+                  ? "bg-accent/15 border-accent/60 text-fg"
+                  : "bg-white/[0.025] hover:bg-white/[0.05] border-white/[0.07] text-fg-soft"
               }`}
             >
               <span

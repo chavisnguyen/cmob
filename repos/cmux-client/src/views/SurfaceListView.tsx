@@ -66,8 +66,8 @@ export function SurfaceListView({
   };
 
   return (
-    <div className="flex flex-col h-full w-full max-w-3xl mx-auto bg-bg text-fg">
-      <header className="flex items-center justify-between gap-2 px-3 min-h-[56px] bg-surface border-b border-line w-full shrink-0">
+    <div className="flex flex-col h-full w-full max-w-3xl lg:max-w-none mx-auto bg-bg text-fg">
+      <header className="flex items-center justify-between gap-2 px-3 min-h-[52px] bg-bg border-b border-white/[0.06] w-full shrink-0">
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <button
             type="button"
@@ -148,37 +148,37 @@ export function SurfaceListView({
               <Pressable
                 key={surf.id || surf.ref}
                 onPress={() => onSelectSurface(surf)}
-                className="flex items-center justify-between px-4 py-3.5 min-h-[66px] hover:bg-bg active:bg-surface cursor-pointer transition-colors group"
+                className="flex items-center justify-between px-4 py-3 hover:bg-white/[0.028] active:bg-white/[0.05] cursor-pointer transition-colors group"
               >
                 <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
-                  <div className="w-10 h-10 rounded-[11px] bg-surface border border-white/[0.07] flex items-center justify-center text-fg-soft shrink-0">
+                  <div className="w-8 h-8 rounded-lg bg-white/[0.03] border border-white/[0.06] flex items-center justify-center text-fg-soft shrink-0">
                     {surf.surface_type === "markdown" ? (
-                      <FileText className="w-5 h-5 text-[#86efac]" />
+                      <FileText className="w-4 h-4 text-emerald-400" />
                     ) : surf.surface_type === "browser" ? (
-                      <Globe className="w-5 h-5 text-accent-soft" />
+                      <Globe className="w-4 h-4 text-accent-soft" />
                     ) : hasAgent ? (
-                      <AgentIcon kind={surf.agent?.agent_kind} size={22} />
+                      <AgentIcon kind={surf.agent?.agent_kind} size={18} />
                     ) : (
-                      <Terminal className="w-5 h-5 text-fg-soft" />
+                      <Terminal className="w-4 h-4 text-muted" />
                     )}
                   </div>
 
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 min-w-0">
-                      <UnreadCountBadge count={surf.unread_count} />
-                      <h2 className="text-[15px] font-semibold text-fg truncate">
+                      <UnreadCountBadge count={surf.unread_count} size="sm" />
+                      <h2 className="text-[14.5px] font-medium text-fg truncate">
                         {displaySurfaceTitle(surf.title)}
                       </h2>
                       {surf.selected && (
-                        <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-accent/15 text-accent-soft shrink-0">
+                        <span className="px-1.5 py-0.5 rounded-md text-[10.5px] font-medium bg-white/[0.06] text-muted shrink-0">
                           Active
                         </span>
                       )}
                     </div>
 
-                    <div className="mt-1 flex flex-wrap items-center gap-2.5 text-[12px]">
+                    <div className="mt-0.5 flex flex-wrap items-center gap-2 text-[12px] text-dim">
                       {surf.tty && (
-                        <span className="text-muted font-mono inline-flex items-center gap-0.5">
+                        <span className="font-mono inline-flex items-center gap-0.5">
                           <Hash className="w-3 h-3" />
                           {surf.tty}
                         </span>
@@ -186,18 +186,18 @@ export function SurfaceListView({
 
                       {hasAgent && (
                         <span
-                          className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full font-medium ${
+                          className={`inline-flex items-center gap-1 font-medium ${
                             agentStatus === "running"
-                              ? "bg-accent/15 text-accent-soft"
+                              ? "text-[#0A84FF]"
                               : agentStatus === "waiting"
-                                ? "bg-amber-500/15 text-amber-300"
+                                ? "text-amber-300"
                                 : agentStatus === "error"
-                                  ? "bg-rose-500/15 text-rose-300"
-                                  : "bg-white/[0.06] text-muted"
+                                  ? "text-rose-300"
+                                  : "text-muted"
                           }`}
                         >
                           <span>{agentDisplayName(surf.agent?.agent_kind)}</span>
-                          <span className="opacity-75">· {surf.agent?.status}</span>
+                          <span className="text-dim">· {surf.agent?.status}</span>
                         </span>
                       )}
                     </div>

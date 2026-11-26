@@ -220,7 +220,6 @@ export function OrcaChatView({
         bottomAnchorRef={bottomAnchorRef}
         agentKind={agentKind}
         surfaceId={surfaceId}
-        effectivelyWorking={viewModel.effectivelyWorking}
         liveActivity={viewModel.liveActivity}
         hasEarlier={hasEarlier}
         isLoading={isLoading}

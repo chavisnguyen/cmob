@@ -101,7 +101,7 @@ const BackgroundWorkStrip = memo(function BackgroundWorkStrip({
   return (
     <div
       data-testid="background-tasks-strip"
-      className="rounded-xl border border-accent/25 bg-surface/95 overflow-hidden shadow-sm"
+      className="rounded-xl border border-white/[0.08] bg-surface/95 overflow-hidden"
     >
       <button
         type="button"

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pin, RefreshCw, Terminal, ChevronRight, FolderGit2, QrCode, Loader2 } from "lucide-react";
+import { Pin, RefreshCw, ChevronRight, QrCode, Loader2, Zap } from "lucide-react";
 import type { WorkspaceNode } from "../protocol/rpc";
 import type { ConnectionState } from "../transport/wsClient";
 import { Pressable } from "../components/common/Pressable";
@@ -31,11 +31,8 @@ export function WorkspaceListView({
   selectedWorkspaceId = null,
   hideOnboarding = false,
 }: WorkspaceListViewProps) {
-  // Pull to refresh: a drag down from the top of the list. The page itself never scrolls (fixed body),
-  // so the browser's native gesture does not exist here.
   const PULL_TRIGGER = 64;
   const [pull, setPull] = useState(0);
-  // Only a pull shows the spinner row: the app polls every few seconds and `loading` flips each time.
   const [refreshing, setRefreshing] = useState(false);
   useEffect(() => {
     if (!refreshing) return;
@@ -68,67 +65,96 @@ export function WorkspaceListView({
     !isConnecting;
 
   return (
-    <div className="flex flex-col h-full w-full max-w-3xl mx-auto bg-bg text-fg">
-      <header className="flex items-center justify-between px-4 min-h-[52px] bg-surface border-b border-line w-full shrink-0">
-        <div className="flex items-center gap-2.5 min-w-0">
-          <h1 className="text-[16px] font-semibold tracking-tight text-fg">Workspaces</h1>
-          <span className="inline-flex items-center justify-center min-w-[24px] h-6 px-2 rounded-full bg-raised text-[12px] font-medium text-muted font-mono">
-            {workspaces.length}
-          </span>
-          {workspaces.length > 0 && (syncing || isConnecting) && (
-            <span
-              role="status"
-              aria-live="polite"
-              data-testid="workspaces-syncing-pill"
-              className="inline-flex items-center gap-1.5 px-2.5 h-6 rounded-full bg-accent/12 border border-accent/20 text-[11.5px] font-medium text-accent-soft shrink-0"
-            >
-              <Loader2 className="w-3 h-3 animate-spin shrink-0" />
-              <span>{isConnecting ? "Connecting…" : "Syncing…"}</span>
+    <div className="flex flex-col h-full w-full max-w-3xl lg:max-w-none mx-auto bg-bg text-fg">
+      {hideOnboarding ? (
+        <div className="flex items-center justify-between px-3.5 h-9 border-b border-white/[0.05] w-full shrink-0 select-none">
+          <div className="flex items-center gap-2 min-w-0">
+            <span className="text-[11px] font-semibold uppercase tracking-wider text-dim">
+              Workspaces · {workspaces.length}
             </span>
-          )}
+            {workspaces.length > 0 && (syncing || isConnecting) && (
+              <span
+                role="status"
+                aria-live="polite"
+                data-testid="workspaces-syncing-pill"
+                className="inline-flex items-center gap-1 text-[11px] font-medium text-accent-soft shrink-0"
+              >
+                <Loader2 className="w-2.5 h-2.5 animate-spin shrink-0" />
+                <span>{isConnecting ? "Connecting…" : "Syncing…"}</span>
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading || hasNoHosts}
+            className="w-6 h-6 rounded-md hover:bg-white/[0.06] text-dim hover:text-fg-soft flex items-center justify-center transition-colors disabled:opacity-40"
+            title="Refresh workspaces"
+            aria-label="Refresh workspaces"
+          >
+            <RefreshCw className={`w-3 h-3 ${loading ? "animate-spin" : ""}`} />
+          </button>
         </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={loading || hasNoHosts}
-          className="w-9 h-9 rounded-xl bg-raised hover:bg-line active:opacity-75 text-fg-soft flex items-center justify-center transition-colors disabled:opacity-40"
-          title="Refresh workspaces"
-          aria-label="Refresh workspaces"
-        >
-          <RefreshCw className={`w-4 h-4 ${loading ? "animate-spin" : ""}`} />
-        </button>
-      </header>
+      ) : (
+        <header className="flex items-center justify-between px-4 min-h-[48px] bg-bg border-b border-white/[0.06] w-full shrink-0">
+          <div className="flex items-center gap-2 min-w-0">
+            <h1 className="text-[15.5px] font-semibold tracking-tight text-fg">Workspaces</h1>
+            <span className="text-[12px] font-medium text-dim font-mono">{workspaces.length}</span>
+            {workspaces.length > 0 && (syncing || isConnecting) && (
+              <span
+                role="status"
+                aria-live="polite"
+                data-testid="workspaces-syncing-pill"
+                className="inline-flex items-center gap-1.5 px-2 h-5 rounded-full bg-white/[0.05] border border-white/[0.08] text-[11px] font-medium text-muted shrink-0"
+              >
+                <Loader2 className="w-2.5 h-2.5 animate-spin text-accent-soft shrink-0" />
+                <span>{isConnecting ? "Connecting…" : "Syncing…"}</span>
+              </span>
+            )}
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={loading || hasNoHosts}
+            className="w-8 h-8 rounded-lg hover:bg-white/[0.06] active:opacity-75 text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
+            title="Refresh workspaces"
+            aria-label="Refresh workspaces"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
+          </button>
+        </header>
+      )}
 
       <div
         onTouchStart={onTouchStart}
         onTouchMove={onTouchMove}
         onTouchEnd={onTouchEnd}
         onTouchCancel={onTouchEnd}
-        className="flex-1 overflow-y-auto overscroll-contain divide-y divide-white/[0.06] pb-[env(safe-area-inset-bottom,0px)]"
+        className="flex-1 overflow-y-auto overscroll-contain scrollbar-sleek divide-y divide-white/[0.05] pb-[env(safe-area-inset-bottom,0px)]"
       >
         <div
           aria-hidden="true"
-          style={{ height: refreshing ? 36 : pull }}
+          style={{ height: refreshing ? 34 : pull }}
           className={`flex items-center justify-center overflow-hidden text-muted ${pull === 0 ? "transition-[height] duration-200" : ""}`}
         >
           <RefreshCw
             style={refreshing ? undefined : { transform: `rotate(${pull * 4}deg)` }}
-            className={`w-4 h-4 ${refreshing ? "animate-spin" : ""} ${pull >= PULL_TRIGGER ? "text-accent-soft" : ""}`}
+            className={`w-3.5 h-3.5 ${refreshing ? "animate-spin" : ""} ${pull >= PULL_TRIGGER ? "text-accent-soft" : ""}`}
           />
         </div>
 
         {hasNoHosts && !loading && hideOnboarding && (
-          <div className="px-6 py-12 text-center text-muted text-[13.5px]">
+          <div className="px-6 py-12 text-center text-muted text-[13px]">
             No computer paired yet.
           </div>
         )}
 
         {hasNoHosts && !loading && !hideOnboarding && (
           <div className="flex flex-col items-center justify-center px-6 py-16 text-center">
-            <h2 className="text-[20px] font-bold text-white tracking-tight mb-2">
+            <h2 className="text-[19px] font-semibold text-fg tracking-tight mb-2">
               Welcome to Cmob
             </h2>
-            <p className="text-[14px] text-muted max-w-sm leading-relaxed mb-6">
+            <p className="text-[13.5px] text-muted max-w-sm leading-relaxed mb-6">
               Connect your computer to monitor terminal workspaces and control coding agents like
               Claude Code, AGY, and Kiro from your phone.
             </p>
@@ -136,18 +162,20 @@ export function WorkspaceListView({
               <button
                 type="button"
                 onClick={onPairHost}
-                className="inline-flex items-center gap-2 px-5 min-h-[44px] rounded-xl bg-accent hover:bg-accent-strong text-white text-[14px] font-semibold transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 min-h-[42px] rounded-xl bg-accent hover:bg-accent-strong text-white text-[13.5px] font-semibold transition-colors cursor-pointer"
               >
                 <QrCode className="w-4 h-4" />
                 <span>Connect Your Computer</span>
               </button>
             )}
-            <code className="mt-5 text-[12.5px] text-emerald-400">$ cmob qr --tailscale</code>
+            <code className="mt-5 text-[12px] text-muted bg-white/[0.04] border border-white/[0.07] px-2.5 py-1 rounded-md">
+              $ cmob qr --tailscale
+            </code>
           </div>
         )}
 
         {!hasNoHosts && workspaces.length === 0 && !loading && (
-          <div className="px-6 py-12 text-center text-muted text-[14px]">
+          <div className="px-6 py-12 text-center text-muted text-[13.5px]">
             No active workspaces found in cmux.
           </div>
         )}
@@ -156,74 +184,59 @@ export function WorkspaceListView({
           const isRunning = ws.status.toLowerCase() === "running";
           const isSelected = Boolean(selectedWorkspaceId && selectedWorkspaceId === ws.id);
           const surfaceCount = ws.surfaces.length;
+          const accentBarColor = ws.color || (isSelected ? "#0A84FF" : undefined);
 
           return (
             <Pressable
               key={ws.id}
               onPress={() => onSelectWorkspace(ws)}
               aria-current={isSelected ? "true" : undefined}
-              style={
-                ws.color
-                  ? {
-                      boxShadow: `inset 4px 0 0 ${ws.color}`,
-                      backgroundImage: `linear-gradient(90deg, ${ws.color}${isSelected ? "38" : "26"}, transparent ${isSelected ? "80%" : "70%"})`,
-                    }
-                  : undefined
-              }
-              className={`flex items-center justify-between px-4 py-3.5 min-h-[68px] cursor-pointer transition-colors group ${
-                isSelected
-                  ? "bg-raised/90 ring-1 ring-inset ring-white/[0.08]"
-                  : "hover:bg-bg active:bg-surface"
+              style={accentBarColor ? { boxShadow: `inset 3px 0 0 ${accentBarColor}` } : undefined}
+              className={`flex items-center justify-between px-3.5 py-2.5 cursor-pointer transition-colors group ${
+                isSelected ? "bg-white/[0.055]" : "hover:bg-white/[0.028] active:bg-white/[0.05]"
               }`}
             >
-              <div className="flex items-start gap-3 min-w-0 flex-1 pr-3">
-                <div
-                  style={ws.color ? { backgroundColor: ws.color } : undefined}
-                  className="w-10 h-10 rounded-[11px] bg-surface border border-white/[0.07] flex items-center justify-center text-muted shrink-0 mt-0.5"
-                >
-                  <FolderGit2 className={`w-5 h-5 ${ws.color ? "text-white" : "text-fg-soft"}`} />
-                </div>
-
-                <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-1.5 min-w-0">
-                    <UnreadCountBadge count={ws.unread_count} />
-                    {ws.pinned && <Pin className="w-3.5 h-3.5 text-muted shrink-0" />}
-                    <h2 className="text-[15px] font-semibold text-fg truncate">{ws.title}</h2>
-                    <span
-                      className={`inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[12px] font-medium shrink-0 ${
-                        isRunning ? "bg-accent/15 text-accent-soft" : "bg-white/[0.06] text-muted"
-                      }`}
-                    >
-                      <span
-                        className={`w-1.5 h-1.5 rounded-full ${isRunning ? "bg-accent" : "bg-dim"}`}
-                      />
-                      {isRunning ? "Running" : "Idle"}
-                    </span>
+              <div className="min-w-0 flex-1 pr-2 space-y-1">
+                <div className="flex items-center justify-between gap-2 min-w-0">
+                  <div className="flex items-center gap-1.5 min-w-0 flex-1">
+                    <UnreadCountBadge count={ws.unread_count} size="sm" />
+                    {ws.pinned && <Pin className="w-3 h-3 text-dim shrink-0" />}
+                    <h2 className="text-[14px] font-semibold text-fg truncate leading-snug">
+                      {ws.title}
+                    </h2>
                   </div>
-
-                  {ws.snippet && (
-                    <p className="mt-1 text-[13px] text-muted line-clamp-1 leading-snug">
-                      {plainSnippet(ws.snippet)}
-                    </p>
-                  )}
-
-                  <div className="mt-1.5 flex items-center gap-3 min-w-0 text-[12px] text-dim font-mono">
-                    <span className="truncate min-w-0 flex-1" title={ws.current_directory}>
-                      {shortPath(ws.current_directory)}
-                    </span>
-                    <span className="flex items-center gap-1 shrink-0 text-muted">
-                      <Terminal className="w-3.5 h-3.5" />
+                  {surfaceCount > 0 && (
+                    <span className="text-[11px] font-mono text-dim shrink-0 tabular-nums">
                       {surfaceCount} {surfaceCount === 1 ? "tab" : "tabs"}
                     </span>
-                  </div>
+                  )}
+                </div>
+
+                {ws.snippet && (
+                  <p className="text-[12.5px] text-muted line-clamp-2 leading-[1.38]">
+                    {plainSnippet(ws.snippet)}
+                  </p>
+                )}
+
+                <div className="flex items-center gap-2 min-w-0 text-[11.5px] leading-none pt-0.5">
+                  {isRunning && (
+                    <span className="inline-flex items-center gap-1 font-medium text-[#0A84FF] shrink-0">
+                      <Zap className="w-3 h-3 fill-current" />
+                      <span>Running</span>
+                    </span>
+                  )}
+                  <span
+                    className="truncate min-w-0 flex-1 text-dim font-mono"
+                    title={ws.current_directory}
+                  >
+                    {shortPath(ws.current_directory)}
+                  </span>
                 </div>
               </div>
 
-              <ChevronRight
-                className={`w-5 h-5 transition-colors shrink-0 ${
-                  isSelected ? "text-fg-soft" : "text-dim group-hover:text-muted"
-                }`}
-              />
+              {!hideOnboarding && (
+                <ChevronRight className="w-4 h-4 text-dim group-hover:text-muted transition-colors shrink-0" />
+              )}
             </Pressable>
           );
         })}

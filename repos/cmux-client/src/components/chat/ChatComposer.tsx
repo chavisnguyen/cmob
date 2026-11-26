@@ -192,7 +192,7 @@ export const ChatComposer = memo(
           />
         )}
 
-        <div className="flex items-end gap-1 bg-surface border border-line rounded-[24px] pl-4 pr-1.5 py-1.5">
+        <div className="flex items-end gap-1.5 bg-surface border border-white/[0.08] focus-within:border-white/[0.18] rounded-2xl pl-3.5 pr-1.5 py-1.5 transition-colors">
           <textarea
             ref={composerRef}
             rows={1}
@@ -223,7 +223,7 @@ export const ChatComposer = memo(
             enterKeyHint={isDesktop ? "send" : "enter"}
             placeholder={`Message ${agentDisplayName(agentKind)}...`}
             title={isDesktop ? "Enter to send, Shift+Enter for newline" : undefined}
-            className="flex-1 bg-transparent border-0 text-[15px] leading-[22px] text-fg placeholder-dim outline-none transition-colors py-[7px] min-w-0 resize-none max-h-[132px]"
+            className="flex-1 bg-transparent border-0 text-[14.5px] leading-[21px] text-fg placeholder-dim outline-none py-[5px] min-w-0 resize-none max-h-[132px]"
           />
 
           {onUploadImage && (
@@ -240,11 +240,11 @@ export const ChatComposer = memo(
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={images.length + uploading >= MAX_IMAGES_PER_MESSAGE}
-                className="w-9 h-9 rounded-full shrink-0 flex items-center justify-center text-muted hover:text-white disabled:opacity-30"
+                className="w-8 h-8 rounded-xl shrink-0 flex items-center justify-center text-dim hover:text-fg hover:bg-white/[0.05] transition-colors disabled:opacity-30"
                 title="Attach image"
                 aria-label="Attach image"
               >
-                <ImagePlus className="w-[18px] h-[18px]" />
+                <ImagePlus className="w-4 h-4" />
               </button>
             </>
           )}
@@ -254,14 +254,14 @@ export const ChatComposer = memo(
               type="button"
               onClick={() => void onInterrupt()}
               disabled={isStopping}
-              className="w-9 h-9 bg-raised hover:bg-rose-950/60 hover:text-rose-400 border border-line text-fg-soft rounded-full transition-colors shadow-sm shrink-0 flex items-center justify-center disabled:opacity-50"
-              title={isStopping ? "Stopping..." : "Stop the agent (Ctrl+C)"}
+              className="w-8 h-8 bg-white/[0.06] hover:bg-rose-500/15 hover:text-rose-300 border border-white/[0.08] text-fg-soft rounded-xl transition-colors shrink-0 flex items-center justify-center disabled:opacity-50"
+              title={isStopping ? "Stopping..." : "Stop the agent (Escape)"}
               aria-label={isStopping ? "Stopping" : "Stop"}
             >
               {isStopping ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
               ) : (
-                <Square className="w-3.5 h-3.5 fill-current text-rose-400" />
+                <Square className="w-3 h-3 fill-current text-rose-400" />
               )}
             </button>
           ) : (
@@ -269,14 +269,14 @@ export const ChatComposer = memo(
               type="button"
               onClick={() => void handleSendPrompt()}
               disabled={(!inputText.trim() && images.length === 0) || isSubmitting || uploading > 0}
-              className="w-9 h-9 bg-accent hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-white rounded-full transition-colors shrink-0 flex items-center justify-center"
+              className="w-8 h-8 bg-accent hover:bg-accent-strong disabled:bg-white/[0.04] disabled:text-dim text-white rounded-xl transition-colors shrink-0 flex items-center justify-center"
               title="Send prompt"
               aria-label="Send"
             >
               {isSubmitting ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Send className="w-[18px] h-[18px]" />
+                <Send className="w-4 h-4" />
               )}
             </button>
           )}

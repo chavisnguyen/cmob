@@ -135,7 +135,7 @@ export function DeviceListView({
   };
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto bg-bg text-fg px-5 pt-5 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] space-y-8 max-w-3xl mx-auto w-full">
+    <div className="flex flex-col h-full overflow-y-auto scrollbar-sleek bg-bg text-fg px-5 lg:px-8 pt-5 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] space-y-6 max-w-3xl lg:max-w-none mx-auto w-full">
       {!hideBack && (
         <button
           type="button"
@@ -168,208 +168,216 @@ export function DeviceListView({
         </button>
       </div>
 
-      {/* Section 1: Paired Computers (Hosts) */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim">
-            Paired Computers ({hosts.length})
-          </h2>
-        </div>
-
-        <div className="space-y-2.5">
-          {hosts.length === 0 && (
-            <div className="rounded-2xl bg-surface p-4 text-center text-[12.5px] text-muted">
-              No computers yet. Tap Pair to add one.
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
+        <div className="space-y-6">
+          {/* Section 1: Paired Computers (Hosts) */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between px-1">
+              <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim">
+                Paired Computers ({hosts.length})
+              </h2>
             </div>
-          )}
-          {hosts.map((host) => {
-            const isActive = host.id === activeHostId;
-            const machineType = classifyHostType(host.name || host.endpoint);
-            const Icon = GLYPHS[machineType];
 
-            return (
-              <div
-                key={host.id}
-                className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
-                  isActive
-                    ? "bg-surface border-white/[0.14]"
-                    : "bg-surface border-white/[0.06] hover:border-white/[0.1]"
-                }`}
-              >
-                <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-2">
+            <div className="space-y-2.5">
+              {hosts.length === 0 && (
+                <div className="rounded-2xl bg-surface p-4 text-center text-[12.5px] text-muted">
+                  No computers yet. Tap Pair to add one.
+                </div>
+              )}
+              {hosts.map((host) => {
+                const isActive = host.id === activeHostId;
+                const machineType = classifyHostType(host.name || host.endpoint);
+                const Icon = GLYPHS[machineType];
+
+                return (
                   <div
-                    className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                    key={host.id}
+                    className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
                       isActive
-                        ? "bg-accent/15 border-accent/30 text-accent-soft"
-                        : "bg-white/[0.04] border-white/[0.06] text-dim"
+                        ? "bg-surface border-white/[0.14]"
+                        : "bg-surface border-white/[0.06] hover:border-white/[0.1]"
                     }`}
                   >
-                    <Icon className="w-5 h-5" />
-                  </div>
-
-                  <div className="min-w-0 flex-1">
-                    <div className="text-[14px] font-semibold text-fg truncate">{host.name}</div>
-                    <div className="text-[11.5px] font-mono text-dim truncate mt-0.5">
-                      {host.endpoint}
-                    </div>
-                    {isActive && (
+                    <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-2">
                       <div
-                        className={`mt-1 flex items-center gap-1.5 text-[11.5px] font-medium capitalize ${
-                          connState === "connected"
-                            ? "text-emerald-400"
-                            : connState === "connecting" || connState === "authenticating"
-                              ? "text-amber-400"
-                              : "text-rose-400"
+                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
+                          isActive
+                            ? "bg-accent/15 border-accent/30 text-accent-soft"
+                            : "bg-white/[0.04] border-white/[0.06] text-dim"
                         }`}
                       >
-                        <span
-                          className={`w-1.5 h-1.5 rounded-full bg-current ${connState === "connected" ? "" : "animate-pulse"}`}
-                        />
-                        {connState}
+                        <Icon className="w-5 h-5" />
                       </div>
-                    )}
-                  </div>
-                </div>
 
-                <div className="flex items-center gap-1.5 shrink-0">
-                  {!isActive && (
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[14px] font-semibold text-fg truncate">
+                          {host.name}
+                        </div>
+                        <div className="text-[11.5px] font-mono text-dim truncate mt-0.5">
+                          {host.endpoint}
+                        </div>
+                        {isActive && (
+                          <div
+                            className={`mt-1 flex items-center gap-1.5 text-[11.5px] font-medium capitalize ${
+                              connState === "connected"
+                                ? "text-emerald-400"
+                                : connState === "connecting" || connState === "authenticating"
+                                  ? "text-amber-400"
+                                  : "text-rose-400"
+                            }`}
+                          >
+                            <span
+                              className={`w-1.5 h-1.5 rounded-full bg-current ${connState === "connected" ? "" : "animate-pulse"}`}
+                            />
+                            {connState}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      {!isActive && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            haptic("light");
+                            onSelectHost(host);
+                          }}
+                          className="min-h-[44px] px-3.5 rounded-xl bg-accent hover:bg-accent-strong text-white text-[12.5px] font-semibold transition-colors cursor-pointer"
+                        >
+                          Switch
+                        </button>
+                      )}
+
+                      <button
+                        type="button"
+                        onClick={() => {
+                          haptic("light");
+                          setEditingHost(host);
+                        }}
+                        className="min-h-[44px] min-w-[44px] rounded-xl hover:bg-white/[0.08] active:bg-white/[0.12] text-muted hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                        aria-label={`Rename ${host.name}`}
+                        title="Rename"
+                      >
+                        <Pencil className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteHost(host)}
+                        className={`min-h-[44px] min-w-[44px] px-2 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${
+                          confirmDeleteId === host.id
+                            ? "bg-rose-500 text-white font-medium text-[11.5px] px-2.5"
+                            : "hover:bg-rose-500/15 text-muted hover:text-rose-400"
+                        }`}
+                        aria-label={`Remove ${host.name}`}
+                        title={
+                          confirmDeleteId === host.id
+                            ? "Click again to confirm"
+                            : isActive
+                              ? "Disconnect and remove"
+                              : "Remove host"
+                        }
+                      >
+                        {confirmDeleteId === host.id ? (
+                          <span>Confirm</span>
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        </div>
+
+        <div className="space-y-6">
+          {/* Section 2: Authorized Mobile Devices (on current gateway) */}
+          <section className="space-y-3">
+            <div className="flex items-center justify-between px-1">
+              <div>
+                <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim">
+                  Authorized Mobile Devices
+                </h2>
+                <p className="text-[11.5px] text-dim mt-0.5">
+                  Phones and tablets with access to the active gateway
+                </p>
+              </div>
+            </div>
+
+            <div className="rounded-2xl bg-surface border border-white/[0.06] divide-y divide-white/[0.06] overflow-hidden">
+              {!authorizedDevices ? (
+                <div className="p-4 text-center text-[12.5px] text-dim">
+                  Connect to a gateway to view authorized client devices.
+                </div>
+              ) : authorizedDevices.length === 0 ? (
+                <div className="p-4 text-center text-[12.5px] text-dim">
+                  No paired mobile devices recorded.
+                </div>
+              ) : (
+                authorizedDevices.map((dev) => (
+                  <div key={dev.id} className="flex items-center justify-between p-3.5">
+                    <div className="flex items-center gap-3 min-w-0">
+                      <div className="w-8 h-8 rounded-xl bg-white/[0.04] text-muted flex items-center justify-center shrink-0">
+                        <Smartphone className="w-4 h-4" />
+                      </div>
+                      <div className="min-w-0">
+                        <div className="text-[13.5px] font-medium text-fg truncate">
+                          {dev.label || "Mobile Device"}
+                        </div>
+                        <div className="text-[11.5px] text-dim mt-0.5">
+                          Seen {relativeTime(dev.last_seen)}
+                        </div>
+                      </div>
+                    </div>
+
                     <button
                       type="button"
-                      onClick={() => {
-                        haptic("light");
-                        onSelectHost(host);
-                      }}
-                      className="min-h-[44px] px-3.5 rounded-xl bg-accent hover:bg-accent-strong text-white text-[12.5px] font-semibold transition-colors cursor-pointer"
+                      onClick={() => void handleRevoke(dev.id)}
+                      className={`min-h-[36px] px-3 rounded-lg text-[11.5px] font-medium transition-colors cursor-pointer ${
+                        revokeArmed === dev.id
+                          ? "bg-rose-500 text-white"
+                          : "bg-white/[0.05] hover:bg-rose-500/15 text-muted hover:text-rose-400"
+                      }`}
                     >
-                      Switch
+                      {revokeArmed === dev.id ? "Confirm Revoke" : "Revoke"}
                     </button>
-                  )}
+                  </div>
+                ))
+              )}
+            </div>
+          </section>
 
-                  <button
-                    type="button"
-                    onClick={() => {
-                      haptic("light");
-                      setEditingHost(host);
-                    }}
-                    className="min-h-[44px] min-w-[44px] rounded-xl hover:bg-white/[0.08] active:bg-white/[0.12] text-muted hover:text-white flex items-center justify-center transition-colors cursor-pointer"
-                    aria-label={`Rename ${host.name}`}
-                    title="Rename"
-                  >
-                    <Pencil className="w-4 h-4" />
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => handleDeleteHost(host)}
-                    className={`min-h-[44px] min-w-[44px] px-2 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${
-                      confirmDeleteId === host.id
-                        ? "bg-rose-500 text-white font-medium text-[11.5px] px-2.5"
-                        : "hover:bg-rose-500/15 text-muted hover:text-rose-400"
-                    }`}
-                    aria-label={`Remove ${host.name}`}
-                    title={
-                      confirmDeleteId === host.id
-                        ? "Click again to confirm"
-                        : isActive
-                          ? "Disconnect and remove"
-                          : "Remove host"
-                    }
-                  >
-                    {confirmDeleteId === host.id ? (
-                      <span>Confirm</span>
-                    ) : (
-                      <Trash2 className="w-4 h-4" />
-                    )}
-                  </button>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </section>
-
-      {/* Section 2: Authorized Mobile Devices (on current gateway) */}
-      <section className="space-y-3">
-        <div className="flex items-center justify-between px-1">
-          <div>
-            <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim">
-              Authorized Mobile Devices
+          {/* Section 3: Notifications */}
+          <section className="space-y-3">
+            <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim px-1">
+              Notifications
             </h2>
-            <p className="text-[11.5px] text-dim mt-0.5">
-              Phones and tablets with access to the active gateway
-            </p>
-          </div>
-        </div>
-
-        <div className="rounded-2xl bg-surface border border-white/[0.06] divide-y divide-white/[0.06] overflow-hidden">
-          {!authorizedDevices ? (
-            <div className="p-4 text-center text-[12.5px] text-dim">
-              Connect to a gateway to view authorized client devices.
+            <div className="rounded-2xl bg-surface border border-white/[0.06] p-4">
+              <NotificationPrefs />
             </div>
-          ) : authorizedDevices.length === 0 ? (
-            <div className="p-4 text-center text-[12.5px] text-dim">
-              No paired mobile devices recorded.
+          </section>
+
+          {/* Section 4: Add Host Guide Banner */}
+          <section className="rounded-2xl bg-surface border border-white/[0.06] p-4 flex items-start gap-3.5">
+            <div className="w-8 h-8 rounded-lg bg-white/[0.05] text-muted flex items-center justify-center shrink-0 mt-0.5">
+              <QrCode className="w-4 h-4" />
             </div>
-          ) : (
-            authorizedDevices.map((dev) => (
-              <div key={dev.id} className="flex items-center justify-between p-3.5">
-                <div className="flex items-center gap-3 min-w-0">
-                  <div className="w-8 h-8 rounded-xl bg-white/[0.04] text-muted flex items-center justify-center shrink-0">
-                    <Smartphone className="w-4 h-4" />
-                  </div>
-                  <div className="min-w-0">
-                    <div className="text-[13.5px] font-medium text-fg truncate">
-                      {dev.label || "Mobile Device"}
-                    </div>
-                    <div className="text-[11.5px] text-dim mt-0.5">
-                      Seen {relativeTime(dev.last_seen)}
-                    </div>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => void handleRevoke(dev.id)}
-                  className={`min-h-[36px] px-3 rounded-lg text-[11.5px] font-medium transition-colors cursor-pointer ${
-                    revokeArmed === dev.id
-                      ? "bg-rose-500 text-white"
-                      : "bg-white/[0.05] hover:bg-rose-500/15 text-muted hover:text-rose-400"
-                  }`}
-                >
-                  {revokeArmed === dev.id ? "Confirm Revoke" : "Revoke"}
-                </button>
-              </div>
-            ))
-          )}
+            <div className="space-y-1 min-w-0 flex-1">
+              <div className="text-[13.5px] font-semibold text-fg">Connect Another Computer</div>
+              <p className="text-[12px] text-muted leading-relaxed">
+                Run{" "}
+                <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-fg">
+                  cmob qr --tailscale
+                </code>{" "}
+                in your cmux terminal to scan its QR code and add it to your devices list.
+              </p>
+            </div>
+          </section>
         </div>
-      </section>
-
-      {/* Section 3: Notifications */}
-      <section className="space-y-3">
-        <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim px-1">
-          Notifications
-        </h2>
-        <div className="rounded-2xl bg-surface border border-white/[0.06] p-4">
-          <NotificationPrefs />
-        </div>
-      </section>
-
-      {/* Section 4: Add Host Guide Banner */}
-      <section className="rounded-2xl bg-surface border border-white/[0.06] p-4 flex items-start gap-3.5">
-        <div className="w-9 h-9 rounded-xl bg-accent/15 text-accent-soft flex items-center justify-center shrink-0 mt-0.5">
-          <QrCode className="w-5 h-5" />
-        </div>
-        <div className="space-y-1 min-w-0 flex-1">
-          <div className="text-[13.5px] font-semibold text-fg">Connect Another Computer</div>
-          <p className="text-[12px] text-muted leading-relaxed">
-            Run{" "}
-            <code className="px-1.5 py-0.5 rounded bg-black/40 text-accent-soft">
-              cmob qr --tailscale
-            </code>{" "}
-            in your cmux terminal to scan its QR code and add it to your devices list.
-          </p>
-        </div>
-      </section>
+      </div>
 
       {/* Modals */}
       {showPairModal && (

@@ -19,25 +19,32 @@ body,
   position: fixed;
   inset: 0;
   top: var(--app-top, 0px);
-  background-color: #141413;
-  color: #f3f4f6;
-  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  background-color: #101113;
+  color: #f2f4f7;
+  font-family:
+    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, Helvetica, Arial,
+    sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
-/* Guard against accidental horizontal viewport scroll */
 body {
   overflow-x: hidden !important;
 }
 
-/* Orca Chat Markdown & Code Word Wrapping */
+code,
+pre,
+.font-mono {
+  font-family:
+    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+}
+
 code {
   overflow-wrap: anywhere;
   word-break: break-word;
 }
 
-/* iOS Safe Area Utilities matching W3C Environment Variables Standard */
+/* iOS Safe Area Utilities */
 .safe-top {
   padding-top: env(safe-area-inset-top, 0px);
 }
@@ -52,29 +59,6 @@ code {
 
 .safe-right {
   padding-right: max(env(safe-area-inset-right, 0px), 0px);
-}
-
-/* Chat watermark: the agent logo breathes slowly while the agent works. */
-@keyframes cmux-watermark-breathe {
-  0%,
-  100% {
-    opacity: 0.07;
-    transform: scale(1);
-  }
-  50% {
-    opacity: 0.13;
-    transform: scale(1.04);
-  }
-}
-
-.cmux-watermark-breathe {
-  animation: cmux-watermark-breathe 3.6s ease-in-out infinite;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .cmux-watermark-breathe {
-    animation: none;
-  }
 }
 
 .cmux-xterm-host .xterm {
@@ -99,41 +83,50 @@ code {
   display: none;
 }
 
-.scrollbar-thin {
+.scrollbar-thin,
+.scrollbar-sleek {
   scrollbar-width: thin;
-  scrollbar-color: color-mix(in srgb, var(--color-dim) 45%, transparent) transparent;
+  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
 }
 
-.scrollbar-thin::-webkit-scrollbar {
+.scrollbar-thin::-webkit-scrollbar,
+.scrollbar-sleek::-webkit-scrollbar {
   width: 6px;
   height: 6px;
 }
 
-.scrollbar-thin::-webkit-scrollbar-track {
+.scrollbar-thin::-webkit-scrollbar-track,
+.scrollbar-sleek::-webkit-scrollbar-track {
   background: transparent;
 }
 
-.scrollbar-thin::-webkit-scrollbar-thumb {
-  background: color-mix(in srgb, var(--color-dim) 36%, transparent);
+.scrollbar-thin::-webkit-scrollbar-thumb,
+.scrollbar-sleek::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.14);
   border-radius: 9999px;
 }
 
-/* One palette for every screen: use these names (bg-surface, text-muted, ...) instead of raw hex. */
+.scrollbar-thin::-webkit-scrollbar-thumb:hover,
+.scrollbar-sleek::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.24);
+}
+
+/* Cool neutral macOS / cmux dark palette */
 @theme {
-  --color-bg: #141413;
-  --color-surface: #1c1c1a;
-  --color-raised: #262624;
-  --color-line: #343431;
-  --color-fg: #f4f3ef;
-  --color-fg-soft: #deddd7;
-  --color-muted: #b8b6ae;
-  --color-dim: #908e86;
-  --color-accent: #cf6a3a;
-  --color-accent-strong: #b85a2e;
-  --color-accent-soft: #eca17c;
+  --color-bg: #101113;
+  --color-surface: #16181c;
+  --color-raised: #1e2026;
+  --color-line: #262930;
+  --color-fg: #f2f4f7;
+  --color-fg-soft: #d7dbe2;
+  --color-muted: #8b929e;
+  --color-dim: #626875;
+  --color-accent: #0a84ff;
+  --color-accent-strong: #0070e0;
+  --color-accent-soft: #5eb0ff;
 }
 
 :focus-visible {
-  outline: 2px solid var(--color-accent);
+  outline: 1.5px solid rgba(10, 132, 255, 0.7);
   outline-offset: 2px;
 }
