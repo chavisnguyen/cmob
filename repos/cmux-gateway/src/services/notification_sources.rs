@@ -65,7 +65,7 @@ pub async fn lookup_surface_context(
     surface_id: &str,
     fallback_dir: Option<&str>,
 ) -> SurfaceContext {
-    let tree_fut = bridge.run_command("tree", &["--json", "--id-format", "both"]);
+    let tree_fut = bridge.tree_json();
     let dirs_fut = workspace_dirs_map(bridge);
     let (tree_res, dirs) = tokio::join!(tree_fut, dirs_fut);
     if let Ok(raw) = tree_res

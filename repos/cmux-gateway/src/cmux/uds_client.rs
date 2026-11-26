@@ -1,9 +1,13 @@
-//! Persistent pooled Unix Domain Socket (`cmux.sock`) JSON-RPC client.
+//! Pure persistent pooled Unix Domain Socket (`cmux.sock`) JSON-RPC client.
 //!
-//! Speaks `cmux`'s newline-delimited v2 socket protocol (`{"id":"...","method":"...","params":{...}}\n`)
-//! over reusable `tokio::net::UnixStream` slots (~0.9–1.2ms per RPC vs ~35–40ms spawning `cmux` CLI).
-//! Automatically reconnects once on broken/idle pipe and signals `Unavailable` or `AccessDenied`
-//! so `DualTransportCmuxBridge` falls back seamlessly to the `cmux` CLI binary when needed.
+//! Speaks `cmux`'s exact native v2 socket protocol over 4 reusable `tokio::net::UnixStream` slots
+//! (~0.6–0.9ms per RPC, zero subprocess spawning, zero CLI fallback):
+//! - Request line with `CMUX_SOCKET_CAPABILITY`:
+//!   `_cmux_capability_v1 <CMUX_SOCKET_CAPABILITY> {"id":"...","method":"...","params":{...}}\n`
+//! - Request line without `CMUX_SOCKET_CAPABILITY`:
+//!   `{"id":"...","method":"...","params":{...}}\n`
+//!
+//! Surfaces all daemon and socket errors directly without masking or falling back to subprocesses.
 
 use serde::Deserialize;
 use serde_json::Value;
@@ -17,16 +21,15 @@ use tokio::sync::Mutex;
 use tokio::time::timeout;
 
 const POOL_SLOTS: usize = 4;
+const CAPABILITY_PREFIX: &str = "_cmux_capability_v1 ";
 
 #[derive(Debug)]
 pub enum UdsCallError {
-    /// Socket path missing or connection refused — caller should fall back to `cmux` CLI.
-    Unavailable,
-    /// `SocketControlMode.cmuxOnly` rejected direct socket caller — caller should fall back to `cmux` CLI.
-    AccessDenied,
+    /// Socket path missing or connection refused.
+    Unavailable(String),
     /// Operation exceeded configured timeout.
     Timeout,
-    /// Daemon returned a valid JSON-RPC error (`ok: false`).
+    /// Daemon returned an error (`ok: false` or `ERROR: ...` banner).
     RpcError(String),
     /// Malformed JSON response.
     ParseError(String),
@@ -58,6 +61,7 @@ struct RawSocketError {
 
 pub struct CmuxUdsPool {
     explicit_path: Option<PathBuf>,
+    capability_token: Option<String>,
     slots: [Mutex<Option<PooledStream>>; POOL_SLOTS],
     rr_cursor: AtomicUsize,
     req_seq: AtomicU64,
@@ -67,6 +71,7 @@ impl std::fmt::Debug for CmuxUdsPool {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("CmuxUdsPool")
             .field("explicit_path", &self.explicit_path)
+            .field("has_capability", &self.capability_token.is_some())
             .finish()
     }
 }
@@ -79,8 +84,13 @@ impl Default for CmuxUdsPool {
 
 impl CmuxUdsPool {
     pub fn new() -> Self {
+        let capability_token = std::env::var("CMUX_SOCKET_CAPABILITY")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty());
         Self {
             explicit_path: None,
+            capability_token,
             slots: std::array::from_fn(|_| Mutex::new(None)),
             rr_cursor: AtomicUsize::new(0),
             req_seq: AtomicU64::new(1),
@@ -88,12 +98,24 @@ impl CmuxUdsPool {
     }
 
     pub fn with_socket_path(path: impl Into<PathBuf>) -> Self {
+        Self::with_socket_and_capability(path, None)
+    }
+
+    pub fn with_socket_and_capability(
+        path: impl Into<PathBuf>,
+        capability_token: Option<String>,
+    ) -> Self {
         Self {
             explicit_path: Some(path.into()),
+            capability_token: capability_token.filter(|s| !s.is_empty()),
             slots: std::array::from_fn(|_| Mutex::new(None)),
             rr_cursor: AtomicUsize::new(0),
             req_seq: AtomicU64::new(1),
         }
+    }
+
+    pub fn explicit_socket_path(&self) -> Option<&Path> {
+        self.explicit_path.as_deref()
     }
 
     fn candidate_paths(&self) -> Vec<PathBuf> {
@@ -128,22 +150,38 @@ impl CmuxUdsPool {
     }
 
     async fn connect_fresh(&self) -> Result<PooledStream, UdsCallError> {
-        for candidate in self.candidate_paths() {
-            if !Path::new(&candidate).exists() {
+        let candidates = self.candidate_paths();
+        let mut last_err = None;
+        for candidate in &candidates {
+            if !Path::new(candidate).exists() {
                 continue;
             }
-            if let Ok(Ok(stream)) =
-                timeout(Duration::from_millis(500), UnixStream::connect(&candidate)).await
-            {
-                let (read_half, write_half) = stream.into_split();
-                return Ok(PooledStream {
-                    path: candidate,
-                    reader: BufReader::new(read_half),
-                    writer: write_half,
-                });
+            match timeout(Duration::from_millis(500), UnixStream::connect(candidate)).await {
+                Ok(Ok(stream)) => {
+                    let (read_half, write_half) = stream.into_split();
+                    return Ok(PooledStream {
+                        path: candidate.clone(),
+                        reader: BufReader::new(read_half),
+                        writer: write_half,
+                    });
+                }
+                Ok(Err(e)) => {
+                    last_err = Some(format!("{}: {e}", candidate.display()));
+                }
+                Err(_) => {
+                    last_err = Some(format!("{}: connect timeout", candidate.display()));
+                }
             }
         }
-        Err(UdsCallError::Unavailable)
+        Err(UdsCallError::Unavailable(last_err.unwrap_or_else(|| {
+            format!(
+                "no live cmux socket found (checked {:?})",
+                candidates
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect::<Vec<_>>()
+            )
+        })))
     }
 
     async fn send_once(
@@ -175,11 +213,21 @@ impl CmuxUdsPool {
         } else {
             serde_json::json!({})
         };
-        let mut line = serde_json::to_vec(&serde_json::json!({
-            "id": req_id,
-            "method": method,
-            "params": params_obj,
-        }))
+
+        let mut line = Vec::with_capacity(256);
+        if let Some(cap) = self.capability_token.as_deref() {
+            line.extend_from_slice(CAPABILITY_PREFIX.as_bytes());
+            line.extend_from_slice(cap.as_bytes());
+            line.push(b' ');
+        }
+        serde_json::to_writer(
+            &mut line,
+            &serde_json::json!({
+                "id": req_id,
+                "method": method,
+                "params": params_obj,
+            }),
+        )
         .map_err(|e| UdsCallError::ParseError(e.to_string()))?;
         line.push(b'\n');
 
@@ -213,14 +261,22 @@ impl CmuxUdsPool {
                     *slot_guard = Some(fresh);
                     Ok(resp)
                 }
-                Err(_) => Err(UdsCallError::Unavailable),
+                Err(e) => Err(UdsCallError::Unavailable(e.to_string())),
             }
         })
         .await
         .map_err(|_| UdsCallError::Timeout)??;
 
-        let parsed: RawSocketResponse =
-            serde_json::from_str(raw_line.trim()).map_err(|e| UdsCallError::ParseError(e.to_string()))?;
+        let trimmed = raw_line.trim();
+        if let Some(err_msg) = trimmed.strip_prefix("ERROR:") {
+            *slot_guard = None;
+            return Err(UdsCallError::RpcError(err_msg.trim().to_string()));
+        }
+
+        let parsed: RawSocketResponse = serde_json::from_str(trimmed).map_err(|e| {
+            *slot_guard = None;
+            UdsCallError::ParseError(e.to_string())
+        })?;
 
         if parsed.ok {
             return Ok(parsed.result.unwrap_or(Value::Null));
@@ -233,14 +289,6 @@ impl CmuxUdsPool {
             ),
             None => (String::new(), "cmux socket error".to_string()),
         };
-
-        if matches!(
-            code.as_str(),
-            "access_denied" | "unauthorized" | "forbidden" | "permission_denied"
-        ) || message.to_ascii_lowercase().contains("cmuxonly")
-        {
-            return Err(UdsCallError::AccessDenied);
-        }
 
         if code.is_empty() {
             Err(UdsCallError::RpcError(message))
@@ -263,7 +311,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn uds_pool_reuses_persistent_connection_and_reconnects_after_eof() {
+    async fn uds_pool_sends_capability_prefix_reuses_stream_and_reconnects_after_eof() {
         let short_id = &uuid::Uuid::new_v4().simple().to_string()[..10];
         let dir_path = PathBuf::from(format!("/tmp/cmob-u-{short_id}"));
         std::fs::create_dir_all(&dir_path).unwrap();
@@ -272,14 +320,16 @@ mod tests {
         let listener = UnixListener::bind(&sock_path).unwrap();
 
         let server = tokio::spawn(async move {
-            // Connection #1: serves 2 sequential RPCs on the SAME stream, then closes.
             let (stream1, _) = listener.accept().await.unwrap();
             let (r1, mut w1) = stream1.into_split();
             let mut reader1 = BufReader::new(r1);
             for expected_n in 1..=2 {
                 let mut line = String::new();
                 reader1.read_line(&mut line).await.unwrap();
-                let req: Value = serde_json::from_str(&line).unwrap();
+                let json_part = line
+                    .strip_prefix("_cmux_capability_v1 cap-tok-123 ")
+                    .expect("capability prefix present");
+                let req: Value = serde_json::from_str(json_part).unwrap();
                 let resp = serde_json::json!({
                     "id": req["id"],
                     "ok": true,
@@ -290,13 +340,15 @@ mod tests {
             drop(w1);
             drop(reader1);
 
-            // Connection #2: verifies automatic 1-retry reconnect after EOF.
             let (stream2, _) = listener.accept().await.unwrap();
             let (r2, mut w2) = stream2.into_split();
             let mut reader2 = BufReader::new(r2);
             let mut line = String::new();
             reader2.read_line(&mut line).await.unwrap();
-            let req: Value = serde_json::from_str(&line).unwrap();
+            let json_part = line
+                .strip_prefix("_cmux_capability_v1 cap-tok-123 ")
+                .expect("capability prefix on reconnect");
+            let req: Value = serde_json::from_str(json_part).unwrap();
             let resp = serde_json::json!({
                 "id": req["id"],
                 "ok": true,
@@ -305,13 +357,8 @@ mod tests {
             w2.write_all(format!("{resp}\n").as_bytes()).await.unwrap();
         });
 
-        let pool = CmuxUdsPool {
-            explicit_path: Some(sock_path),
-            slots: std::array::from_fn(|_| Mutex::new(None)),
-            rr_cursor: AtomicUsize::new(0),
-            req_seq: AtomicU64::new(1),
-        };
-        // Force single-slot reuse by locking slots 1..POOL_SLOTS during the reuse test.
+        let pool =
+            CmuxUdsPool::with_socket_and_capability(sock_path, Some("cap-tok-123".to_string()));
         let _g1 = pool.slots[1].lock().await;
         let _g2 = pool.slots[2].lock().await;
         let _g3 = pool.slots[3].lock().await;
@@ -336,6 +383,41 @@ mod tests {
             .unwrap();
         assert_eq!(res3["conn"], 2);
         assert_eq!(res3["call"], 3);
+
+        server.await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn uds_pool_surfaces_plaintext_error_directly_without_hiding() {
+        let short_id = &uuid::Uuid::new_v4().simple().to_string()[..10];
+        let dir_path = PathBuf::from(format!("/tmp/cmob-e-{short_id}"));
+        std::fs::create_dir_all(&dir_path).unwrap();
+        let _cleanup = TempDirGuard(dir_path.clone());
+        let sock_path = dir_path.join("s.sock");
+        let listener = UnixListener::bind(&sock_path).unwrap();
+
+        let server = tokio::spawn(async move {
+            let (stream, _) = listener.accept().await.unwrap();
+            let (r, mut w) = stream.into_split();
+            let mut reader = BufReader::new(r);
+            let mut line = String::new();
+            let _ = reader.read_line(&mut line).await;
+            w.write_all(b"ERROR: Access denied - only processes started inside cmux can connect\n")
+                .await
+                .unwrap();
+        });
+
+        let pool = CmuxUdsPool::with_socket_path(sock_path);
+        let err = pool
+            .call("system.tree", serde_json::json!({}), Duration::from_secs(2))
+            .await
+            .unwrap_err();
+        match err {
+            UdsCallError::RpcError(msg) => {
+                assert!(msg.contains("Access denied"));
+            }
+            other => panic!("expected RpcError, got {other:?}"),
+        }
 
         server.await.unwrap();
     }

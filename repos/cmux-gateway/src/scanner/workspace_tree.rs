@@ -265,12 +265,7 @@ impl WorkspaceTreeBuilder {
         if let Ok(mut set) = UNREAD_SURFACES.write() {
             set.remove(surface_id);
         }
-        let _ = bridge
-            .run_command(
-                "mark-notification-read",
-                &["--workspace", &ws_id, "--surface", surface_id],
-            )
-            .await;
+        let _ = bridge.mark_notifications_read(&ws_id, surface_id).await;
         Self::invalidate_tree_cache();
     }
 

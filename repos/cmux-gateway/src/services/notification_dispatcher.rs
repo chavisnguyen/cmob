@@ -245,11 +245,7 @@ pub fn spawn_dialog_watcher(state: AppState) -> tokio::task::JoinHandle<()> {
             if recent.is_empty() && active_dialogs.is_empty() {
                 continue;
             }
-            let Ok(raw) = state
-                .cmux_bridge
-                .run_command("tree", &["--json", "--id-format", "both"])
-                .await
-            else {
+            let Ok(raw) = state.cmux_bridge.tree_json().await else {
                 continue;
             };
             let Ok(tree) = serde_json::from_str::<serde_json::Value>(&raw) else {

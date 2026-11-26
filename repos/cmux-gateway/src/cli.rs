@@ -439,11 +439,17 @@ fn warn_if_version_mismatch(h: &serde_json::Value) {
 /// Starts the gateway in the background (from inside cmux). Safe to call when it is already running.
 pub fn start(quiet: bool) -> Res<()> {
     if let Some(h) = health() {
-        if !quiet {
-            ok(format!("Gateway already running on 127.0.0.1:{}", port()));
-            warn_if_version_mismatch(&h);
+        let cmux_alive = h.get("cmux_alive").and_then(|v| v.as_bool()).unwrap_or(false);
+        if cmux_alive || !inside_cmux().unwrap_or(false) {
+            if !quiet {
+                ok(format!("Gateway already running on 127.0.0.1:{}", port()));
+                warn_if_version_mismatch(&h);
+            }
+            return Ok(());
         }
-        return Ok(());
+        // Running daemon has a stale CMUX_SOCKET_CAPABILITY (e.g. cmux.app restarted), while this
+        // shell is inside a live cmux session: restart the daemon with the fresh capability token.
+        let _ = stop();
     }
     if !inside_cmux()? {
         return Err("run this from a terminal inside cmux (cmux refuses connections from other processes)".into());

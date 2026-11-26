@@ -317,31 +317,62 @@ fn client_registry_and_awaiting_prompt_derivation() {
 
 #[tokio::test]
 async fn interrupt_rpc_sends_single_escape_or_double_escape_for_opencode() {
-    use std::os::unix::fs::PermissionsExt;
-    let dir = std::env::temp_dir().join(format!("cmux-int-{}", uuid::Uuid::new_v4()));
+    use std::sync::{Arc, Mutex as StdMutex};
+    use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
+    let short_id = &uuid::Uuid::new_v4().simple().to_string()[..10];
+    let dir = std::path::PathBuf::from(format!("/tmp/cmux-int-{short_id}"));
     std::fs::create_dir_all(&dir).unwrap();
-    let log_file = dir.join("keys.log");
-    let cli_script = dir.join("mock-cmux.sh");
-    std::fs::write(&cli_script, format!("#!/bin/sh\necho \"$@\" >> \"{}\"\nexit 0\n", log_file.display())).unwrap();
-    std::fs::set_permissions(&cli_script, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let sock_path = dir.join("s.sock");
+    let listener = UnixListener::bind(&sock_path).unwrap();
+    let recorded: Arc<StdMutex<Vec<serde_json::Value>>> = Arc::new(StdMutex::new(Vec::new()));
+    let rec_cl = recorded.clone();
+    let uds_srv = tokio::spawn(async move {
+        while let Ok((stream, _)) = listener.accept().await {
+            let rec = rec_cl.clone();
+            tokio::spawn(async move {
+                let (r, mut w) = stream.into_split();
+                let mut reader = BufReader::new(r);
+                let mut line = String::new();
+                while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    let req: serde_json::Value = serde_json::from_str(line.trim()).unwrap();
+                    let id = req["id"].clone();
+                    rec.lock().unwrap().push(req);
+                    let resp = serde_json::json!({ "id": id, "ok": true, "result": {} });
+                    let _ = w.write_all(format!("{resp}\n").as_bytes()).await;
+                    line.clear();
+                }
+            });
+        }
+    });
 
     let mut state = AppState::new("127.0.0.1".into(), 0, "tok".into());
-    state.cmux_bridge = DualTransportCmuxBridge::with_cli_path(cli_script.to_string_lossy());
+    state.cmux_bridge = DualTransportCmuxBridge::with_socket_path(&sock_path);
 
     let claude_int: JsonRpcRequest = serde_json::from_value(serde_json::json!({
         "id": "1", "method": METHOD_CHAT_INTERRUPT, "params": { "surface_id": "surf-1", "agent_kind": "claude" }
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(dispatch_rpc(&claude_int, &state).await.error.is_none());
-    assert_eq!(std::fs::read_to_string(&log_file).unwrap().lines().count(), 1);
+    {
+        let calls = recorded.lock().unwrap();
+        assert_eq!(calls.len(), 1);
+        assert_eq!(calls[0]["method"], "surface.send_key");
+        assert_eq!(calls[0]["params"]["key"], "escape");
+    }
 
-    std::fs::write(&log_file, "").unwrap();
+    recorded.lock().unwrap().clear();
     let t0 = std::time::Instant::now();
     let oc_int: JsonRpcRequest = serde_json::from_value(serde_json::json!({
         "id": "2", "method": METHOD_CHAT_INTERRUPT, "params": { "surface_id": "surf-2", "agent_kind": "opencode" }
-    })).unwrap();
+    }))
+    .unwrap();
     assert!(dispatch_rpc(&oc_int, &state).await.error.is_none());
     assert!(t0.elapsed() >= Duration::from_millis(55));
-    assert_eq!(std::fs::read_to_string(&log_file).unwrap().lines().count(), 2);
+    assert_eq!(recorded.lock().unwrap().len(), 2);
+
+    uds_srv.abort();
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -500,8 +531,7 @@ async fn ws_1rtt_auth_bootstrap_pushes_workspaces_and_initial_chat_update() {
     });
 
     let mut state = AppState::new("127.0.0.1".into(), 0, "boot-tok".into());
-    state.cmux_bridge =
-        DualTransportCmuxBridge::with_socket_and_cli(&sock_path, "nonexistent-cmux-cli");
+    state.cmux_bridge = DualTransportCmuxBridge::with_socket_path(&sock_path);
     let router = create_router(state);
     let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = tcp_listener.local_addr().unwrap();
