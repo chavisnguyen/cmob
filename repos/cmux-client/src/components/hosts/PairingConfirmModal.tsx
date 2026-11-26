@@ -13,10 +13,6 @@ function describe(endpoint: string): { host: string; encrypted: boolean; local: 
   }
 }
 
-/**
- * Pairing with another host is never automatic. A crafted link could otherwise pin this app to an
- * attacker's gateway and route terminal input and approvals there.
- */
 export function PairingConfirmModal({
   offer,
   onAccept,
@@ -36,38 +32,38 @@ export function PairingConfirmModal({
 
   const { host, encrypted, local } = describe(offer.endpoint);
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm">
-      <div className="w-full max-w-sm p-5 rounded-2xl bg-bg border border-white/[0.1] text-fg shadow-2xl space-y-4">
-        <h2 className="text-[16px] font-semibold flex items-center gap-2.5">
-          <ShieldAlert className="w-5 h-5 text-amber-300" />
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-black/65 backdrop-blur-[1px]">
+      <div className="w-full max-w-sm p-4 rounded-xl bg-surface border border-line-strong text-fg shadow-2xl space-y-3.5">
+        <h2 className="text-[14.5px] font-semibold flex items-center gap-2">
+          <ShieldAlert className="w-4 h-4 text-status-wait" />
           <span>Pair with this host?</span>
         </h2>
-        <div className="rounded-xl bg-bg border border-white/[0.1] px-3.5 py-3 space-y-1">
-          {offer.host_name && <div className="text-[14px] font-semibold">{offer.host_name}</div>}
-          <div className="text-[13px] font-mono break-all text-fg-soft">{host}</div>
+        <div className="rounded-lg bg-bg border border-line px-3 py-2.5 space-y-0.5">
+          {offer.host_name && <div className="text-[13px] font-semibold">{offer.host_name}</div>}
+          <div className="text-[12px] font-mono break-all text-muted">{host}</div>
         </div>
         {!encrypted && !local && (
-          <p className="text-[12.5px] leading-relaxed text-amber-300">
+          <p className="text-[12px] leading-relaxed text-status-wait">
             This connection is not encrypted (ws://). Anyone on the network path can read terminal
             output and your token.
           </p>
         )}
-        <p className="text-[13px] text-muted leading-relaxed">
+        <p className="text-[12.5px] text-muted leading-relaxed">
           Terminal input and approvals will be sent to this host. Continue only if you created this
           link or QR code yourself.
         </p>
-        <div className="flex items-center gap-2.5 pt-1">
+        <div className="flex items-center gap-2 pt-1">
           <button
             type="button"
             onClick={onReject}
-            className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-semibold text-fg-soft"
+            className="flex-1 h-9 rounded-lg bg-raised hover:bg-line-strong text-[13px] font-medium text-fg-soft"
           >
             Cancel
           </button>
           <button
             type="button"
             onClick={onAccept}
-            className="flex-1 h-11 rounded-xl bg-accent hover:bg-accent-strong text-[14px] font-semibold text-white"
+            className="flex-1 h-9 rounded-lg bg-fg hover:bg-accent-strong text-[13px] font-medium text-bg"
           >
             Pair
           </button>

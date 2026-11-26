@@ -1,7 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, Terminal, Bot, Sparkles, Cpu, X, Loader2 } from "lucide-react";
-import { Pressable } from "../common/Pressable";
-import { AgentIcon } from "../common/AgentIcon";
+import { Loader2, Plus, Terminal, X } from "lucide-react";
 import { RPC_METHODS } from "../../protocol/rpc";
 import { wsClient } from "../../transport/wsClient";
 import {
@@ -12,11 +10,12 @@ import {
   type AgentOptionsInfo,
   type LaunchChoice,
 } from "../chat/agentOptions";
+import { AgentIcon } from "../common/AgentIcon";
+import { Pressable } from "../common/Pressable";
 
 export interface CreateSurfaceParams {
   workspaceId: string;
   command?: string;
-  /** Model / effort to launch the agent with (gateway appends the matching CLI flags). */
   launch?: LaunchChoice;
 }
 
@@ -33,9 +32,6 @@ interface AgentPreset {
   name: string;
   desc: string;
   command: string;
-  icon: typeof Terminal;
-  badge?: string;
-  /** Gateway `agent_kind`; renders the brand logo instead of `icon`. */
   agentKind?: string;
 }
 
@@ -43,45 +39,43 @@ const PRESETS: AgentPreset[] = [
   {
     id: "shell",
     name: "Terminal Shell",
-    desc: "Default login shell (zsh/bash)",
+    desc: "Default login shell (zsh)",
     command: "",
-    icon: Terminal,
   },
   {
     id: "claude",
     name: "Claude Code",
-    desc: "Anthropic Claude coding agent",
+    desc: "claude",
     command: "claude",
-    icon: Sparkles,
     agentKind: "claude",
-    badge: "AI",
   },
   {
     id: "agy",
-    name: "Antigravity (AGY)",
-    desc: "DeepMind autonomous engineering agent",
+    name: "Antigravity",
+    desc: "agy",
     command: "agy",
-    icon: Bot,
     agentKind: "antigravity",
-    badge: "AI",
   },
   {
     id: "codex",
     name: "Codex",
-    desc: "OpenAI terminal coding agent",
+    desc: "codex",
     command: "codex",
-    icon: Cpu,
     agentKind: "codex",
-    badge: "AI",
+  },
+  {
+    id: "opencode",
+    name: "OpenCode",
+    desc: "opencode",
+    command: "opencode",
+    agentKind: "opencode",
   },
   {
     id: "kiro",
     name: "Kiro",
-    desc: "AWS Kiro CLI coding agent",
+    desc: "kiro-cli",
     command: "kiro-cli",
-    icon: Bot,
     agentKind: "kiro",
-    badge: "AI",
   },
 ];
 
@@ -96,7 +90,6 @@ export function NewSurfaceModal({
   const [customCommand, setCustomCommand] = useState<string>("");
   const [loading, setLoading] = useState<boolean>(false);
   const [error, setError] = useState<string | null>(null);
-  // Optional launch choices for agents that have an option catalog (Claude, Codex).
   const [optionsInfo, setOptionsInfo] = useState<AgentOptionsInfo | null>(null);
   const [model, setModel] = useState<string | null>(null);
   const [effort, setEffort] = useState<string | null>(null);
@@ -113,7 +106,7 @@ export function NewSurfaceModal({
     wsClient
       .call<AgentOptionsInfo>(RPC_METHODS.AGENT_OPTIONS, { agent_kind: optionKind })
       .then((r) => !cancelled && setOptionsInfo(r))
-      .catch(() => undefined); // no options: the section just does not appear
+      .catch(() => undefined);
     return () => {
       cancelled = true;
     };
@@ -159,7 +152,7 @@ export function NewSurfaceModal({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-[1px] animate-fade-in"
       onClick={() => {
         if (!loading) onClose();
       }}
@@ -169,184 +162,161 @@ export function NewSurfaceModal({
         aria-modal="true"
         aria-label="New Tab"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.1] text-white shadow-2xl overflow-hidden flex flex-col"
+        className="w-full max-w-sm rounded-xl bg-surface border border-line-strong text-fg shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/[0.08] bg-bg">
-          <div className="flex items-center gap-2">
-            <div className="w-6 h-6 rounded-md bg-accent/15 text-accent-soft flex items-center justify-center">
-              <Plus className="w-3.5 h-3.5" />
-            </div>
-            <div>
-              <h2 className="text-[16px] font-semibold text-fg">New Tab</h2>
-              <p className="text-[12px] text-muted truncate max-w-[180px]">{workspaceTitle}</p>
-            </div>
+        <div className="flex items-center justify-between px-4 h-11 border-b border-line bg-sidebar shrink-0">
+          <div className="min-w-0">
+            <h2 className="text-[13.5px] font-semibold text-fg">New Tab</h2>
+            <p className="text-[11px] text-dim truncate">{workspaceTitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
             disabled={loading}
-            className="p-1 rounded-md text-muted hover:text-white hover:bg-raised transition-colors"
+            className="w-7 h-7 rounded-md text-muted hover:text-fg hover:bg-raised flex items-center justify-center transition-colors"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <form onSubmit={handleSubmit} className="p-4 space-y-4">
+        <form
+          onSubmit={handleSubmit}
+          className="p-3.5 space-y-3 overflow-y-auto scrollbar-sleek bg-bg"
+        >
           {error && (
-            <div className="p-2 rounded bg-rose-500/10 border border-rose-500/30 text-rose-400 text-xs">
+            <div className="px-2.5 py-1.5 rounded-md bg-status-err/10 border border-status-err/30 text-status-err text-[12px]">
               {error}
             </div>
           )}
 
-          <div className="space-y-1.5">
-            <label className="text-[12px] font-semibold text-muted uppercase tracking-wider">
-              Initial Program / Agent
-            </label>
-            <div className="space-y-1.5">
-              {PRESETS.map((preset) => {
-                const Icon = preset.icon;
-                const isSelected = selectedPreset === preset.id;
-                return (
-                  <Pressable
-                    key={preset.id}
-                    onPress={() => setSelectedPreset(preset.id)}
-                    className={`flex items-center justify-between p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                      isSelected
-                        ? "bg-accent/15 border-accent text-white"
-                        : "bg-surface border-white/[0.08] text-fg-soft hover:bg-surface"
+          <div className="space-y-1">
+            {PRESETS.map((preset) => {
+              const isSelected = selectedPreset === preset.id;
+              return (
+                <Pressable
+                  key={preset.id}
+                  onPress={() => setSelectedPreset(preset.id)}
+                  className={`flex items-center justify-between px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
+                    isSelected
+                      ? "bg-raised border-line-strong text-fg"
+                      : "bg-sidebar border-line text-fg-soft hover:bg-surface"
+                  }`}
+                >
+                  <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="w-5 h-5 flex items-center justify-center shrink-0">
+                      {preset.agentKind ? (
+                        <AgentIcon kind={preset.agentKind} size={15} />
+                      ) : (
+                        <Terminal className="w-3.5 h-3.5 text-muted" />
+                      )}
+                    </div>
+                    <div className="min-w-0 flex items-baseline gap-2">
+                      <span className="text-[13px] font-medium truncate">{preset.name}</span>
+                      <span className="text-[11px] font-mono text-dim truncate">{preset.desc}</span>
+                    </div>
+                  </div>
+                  <div
+                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
+                      isSelected ? "border-fg bg-fg" : "border-line-strong"
                     }`}
                   >
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <div
-                        className={`w-6 h-6 rounded flex items-center justify-center shrink-0 ${
-                          preset.agentKind
-                            ? "bg-bg text-white border border-white/[0.08]"
-                            : isSelected
-                              ? "bg-accent text-white"
-                              : "bg-raised text-muted"
-                        }`}
-                      >
-                        {preset.agentKind ? (
-                          <AgentIcon kind={preset.agentKind} size={16} />
-                        ) : (
-                          <Icon className="w-3.5 h-3.5" />
-                        )}
-                      </div>
-                      <div className="min-w-0">
-                        <div className="text-[14px] font-medium truncate flex items-center gap-1.5">
-                          <span>{preset.name}</span>
-                          {preset.badge && (
-                            <span className="px-1 py-0.2 rounded text-[9px] bg-accent/20 text-accent-soft font-semibold">
-                              {preset.badge}
-                            </span>
-                          )}
-                        </div>
-                        <p className="text-[12px] text-muted truncate">{preset.desc}</p>
-                      </div>
-                    </div>
-                    <div
-                      className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                        isSelected ? "border-accent bg-accent" : "border-gray-600"
-                      }`}
-                    >
-                      {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
-                    </div>
-                  </Pressable>
-                );
-              })}
+                    {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-bg" />}
+                  </div>
+                </Pressable>
+              );
+            })}
 
-              {optionKind && optionsInfo && (
-                <div className="rounded-lg border border-white/[0.08] bg-surface p-2.5 space-y-2">
-                  <label className="text-[12px] font-semibold text-muted uppercase tracking-wider">
-                    Model (optional)
-                  </label>
-                  <select
-                    value={model ?? ""}
-                    onChange={(e) => {
-                      const next = e.target.value || null;
-                      setModel(next);
-                      setEffort((cur) =>
-                        next ? effortAfterModelChange(optionsInfo, next, cur) : cur,
-                      );
-                    }}
-                    className="w-full h-10 rounded-lg bg-bg border border-white/[0.14] px-2.5 text-[14px] text-fg"
-                  >
-                    <option value="">Default</option>
-                    {optionsInfo.models.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.label}
-                      </option>
-                    ))}
-                  </select>
-                  {(model ? effortsFor(optionsInfo, model) : []).length > 0 && (
-                    <>
-                      <label className="text-[12px] font-semibold text-muted uppercase tracking-wider">
-                        Effort (optional)
-                      </label>
-                      <select
-                        value={effort ?? ""}
-                        onChange={(e) => setEffort(e.target.value || null)}
-                        className="w-full h-10 rounded-lg bg-bg border border-white/[0.14] px-2.5 text-[14px] text-fg"
-                      >
-                        <option value="">Default</option>
-                        {effortsFor(optionsInfo, model).map((e) => (
-                          <option key={e.value} value={e.value}>
-                            {e.label}
-                          </option>
-                        ))}
-                      </select>
-                    </>
+            {optionKind && optionsInfo && (
+              <div className="rounded-lg border border-line bg-sidebar p-2.5 space-y-2">
+                <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">
+                  Model (optional)
+                </label>
+                <select
+                  value={model ?? ""}
+                  onChange={(e) => {
+                    const next = e.target.value || null;
+                    setModel(next);
+                    setEffort((cur) =>
+                      next ? effortAfterModelChange(optionsInfo, next, cur) : cur,
+                    );
+                  }}
+                  className="w-full h-8 rounded-md bg-bg border border-line-strong px-2 text-[13px] text-fg"
+                >
+                  <option value="">Default</option>
+                  {optionsInfo.models.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.label}
+                    </option>
+                  ))}
+                </select>
+                {(model ? effortsFor(optionsInfo, model) : []).length > 0 && (
+                  <>
+                    <label className="text-[11px] font-semibold text-muted uppercase tracking-wider">
+                      Effort (optional)
+                    </label>
+                    <select
+                      value={effort ?? ""}
+                      onChange={(e) => setEffort(e.target.value || null)}
+                      className="w-full h-8 rounded-md bg-bg border border-line-strong px-2 text-[13px] text-fg"
+                    >
+                      <option value="">Default</option>
+                      {effortsFor(optionsInfo, model).map((e) => (
+                        <option key={e.value} value={e.value}>
+                          {e.label}
+                        </option>
+                      ))}
+                    </select>
+                  </>
+                )}
+              </div>
+            )}
+
+            <Pressable
+              onPress={() => setSelectedPreset("custom")}
+              className={`px-2.5 py-2 rounded-lg border cursor-pointer transition-colors ${
+                selectedPreset === "custom"
+                  ? "bg-raised border-line-strong text-fg"
+                  : "bg-sidebar border-line text-fg-soft hover:bg-surface"
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-[13px] font-medium">Custom Command</span>
+                <div
+                  className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
+                    selectedPreset === "custom" ? "border-fg bg-fg" : "border-line-strong"
+                  }`}
+                >
+                  {selectedPreset === "custom" && (
+                    <div className="w-1.5 h-1.5 rounded-full bg-bg" />
                   )}
                 </div>
+              </div>
+              {selectedPreset === "custom" && (
+                <input
+                  type="text"
+                  value={customCommand}
+                  onChange={(event) => setCustomCommand(event.target.value)}
+                  placeholder="e.g. htop, python3 main.py"
+                  autoFocus
+                  className="w-full mt-2 bg-bg border border-line-strong focus:border-fg/60 rounded-md px-2.5 py-1.5 text-[12px] font-mono text-fg placeholder-dim outline-none"
+                />
               )}
-
-              <Pressable
-                onPress={() => setSelectedPreset("custom")}
-                className={`p-2.5 rounded-lg border cursor-pointer transition-colors ${
-                  selectedPreset === "custom"
-                    ? "bg-accent/15 border-accent text-white"
-                    : "bg-surface border-white/[0.08] text-fg-soft hover:bg-surface"
-                }`}
-              >
-                <div className="flex items-center justify-between mb-1.5">
-                  <span className="text-[14px] font-medium">Custom Command</span>
-                  <div
-                    className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                      selectedPreset === "custom" ? "border-accent bg-accent" : "border-gray-600"
-                    }`}
-                  >
-                    {selectedPreset === "custom" && (
-                      <div className="w-1.5 h-1.5 rounded-full bg-white" />
-                    )}
-                  </div>
-                </div>
-                {selectedPreset === "custom" && (
-                  <input
-                    type="text"
-                    value={customCommand}
-                    onChange={(event) => setCustomCommand(event.target.value)}
-                    placeholder="e.g. htop, python3 main.py, bash"
-                    autoFocus
-                    className="w-full mt-1 bg-bg border border-white/[0.1] focus:border-accent rounded px-2.5 py-1.5 text-xs font-mono text-white placeholder-gray-600 outline-none"
-                  />
-                )}
-              </Pressable>
-            </div>
+            </Pressable>
           </div>
 
-          <div className="flex items-center gap-2 pt-2">
+          <div className="flex items-center gap-2 pt-1">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-medium text-fg-soft transition-colors"
+              className="flex-1 h-9 rounded-lg bg-raised hover:bg-line-strong text-[13px] font-medium text-fg-soft transition-colors"
             >
               Cancel
             </button>
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 h-11 rounded-xl bg-accent hover:bg-accent-strong disabled:opacity-50 text-[14px] font-medium text-white flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+              className="flex-1 h-9 rounded-lg bg-fg hover:bg-accent-strong disabled:opacity-50 text-[13px] font-medium text-bg flex items-center justify-center gap-1.5 transition-colors"
             >
               {loading ? (
                 <>
@@ -356,7 +326,7 @@ export function NewSurfaceModal({
               ) : (
                 <>
                   <Plus className="w-3.5 h-3.5" />
-                  <span>Add Tab</span>
+                  <span>Create Tab</span>
                 </>
               )}
             </button>

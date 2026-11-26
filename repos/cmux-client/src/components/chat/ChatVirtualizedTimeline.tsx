@@ -66,10 +66,10 @@ export function ChatVirtualizedTimeline({
     <div className="relative flex-1 min-h-0 min-w-0">
       <div
         aria-hidden="true"
-        className="pointer-events-none select-none absolute bottom-3.5 right-4 lg:right-7 z-0"
+        className="pointer-events-none select-none absolute bottom-3.5 right-4 lg:right-6 z-0"
       >
-        <div className="text-fg opacity-[0.045]" data-testid="chat-watermark">
-          <AgentIcon kind={agentKind} size={42} monochrome />
+        <div className="text-fg opacity-[0.025]" data-testid="chat-watermark">
+          <AgentIcon kind={agentKind} size={36} monochrome />
         </div>
       </div>
 
@@ -78,10 +78,10 @@ export function ChatVirtualizedTimeline({
           role="status"
           aria-live="polite"
           data-testid="chat-syncing-pill"
-          className="pointer-events-none absolute top-2.5 inset-x-0 z-20 flex justify-center px-3"
+          className="pointer-events-none absolute top-2 inset-x-0 z-20 flex justify-center px-3"
         >
-          <div className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-surface/95 backdrop-blur-md border border-white/[0.08] shadow-sm text-[11.5px] font-medium text-muted">
-            <Loader2 className="w-3 h-3 animate-spin text-accent-soft shrink-0" />
+          <div className="inline-flex items-center gap-1.5 px-2.5 py-0.5 rounded-md bg-surface/95 border border-line shadow-sm text-[11px] font-medium text-muted">
+            <Loader2 className="w-2.5 h-2.5 animate-spin text-muted shrink-0" />
             <span>{connState === "connected" ? "Syncing latest…" : "Reconnecting…"}</span>
           </div>
         </div>
@@ -90,7 +90,7 @@ export function ChatVirtualizedTimeline({
       <div
         ref={scrollContainerRef}
         onScroll={onScroll}
-        className="relative z-10 h-full overflow-y-auto overflow-x-hidden px-3.5 sm:px-5 lg:px-8 xl:px-10 py-3 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full select-text"
+        className="relative z-10 h-full overflow-y-auto overflow-x-hidden px-4 sm:px-6 lg:px-7 py-3 scrollbar-sleek [overflow-anchor:none] min-w-0 max-w-full select-text"
       >
         <div
           ref={contentRef}
@@ -102,7 +102,7 @@ export function ChatVirtualizedTimeline({
                 type="button"
                 onClick={onLoadEarlier}
                 disabled={isLoadingOlder}
-                className="flex items-center gap-1 px-3 py-1 rounded-full bg-white/[0.03] hover:bg-white/[0.06] border border-white/[0.07] text-[11.5px] text-muted hover:text-fg transition-colors"
+                className="flex items-center gap-1 px-2.5 py-1 rounded-md bg-sidebar hover:bg-surface border border-line text-[11.5px] text-muted hover:text-fg transition-colors"
               >
                 <ChevronUp className="w-3 h-3 text-dim" />
                 <span>
@@ -116,24 +116,22 @@ export function ChatVirtualizedTimeline({
             <div
               role="status"
               aria-live="polite"
-              className="h-full min-h-[260px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto"
+              className="h-full min-h-[240px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto"
             >
-              <Loader2 className="w-5 h-5 animate-spin text-muted mb-2.5" />
-              <p className="text-[13px] font-medium text-muted">Loading conversation…</p>
+              <Loader2 className="w-4 h-4 animate-spin text-dim mb-2" />
+              <p className="text-[12.5px] text-muted">Loading conversation…</p>
             </div>
           ) : timeline.length === 0 ? (
-            <div className="h-full min-h-[260px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto">
+            <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-center p-6 text-dim my-auto">
               <AgentIcon
                 kind={agentKind}
-                size={26}
+                size={22}
                 monochrome
-                className="text-muted opacity-55 mb-2.5"
+                className="text-muted opacity-45 mb-2"
               />
-              <p className="text-[13.5px] font-medium text-fg-soft">
-                {agentDisplayName(agentKind)}
-              </p>
-              <p className="text-[12px] text-dim mt-1 max-w-xs">
-                Ready for prompt — connected directly to cmux.
+              <p className="text-[13px] font-medium text-fg-soft">{agentDisplayName(agentKind)}</p>
+              <p className="text-[12px] text-dim mt-0.5 max-w-xs">
+                Ready for prompt · connected via cmux.
               </p>
             </div>
           ) : (
@@ -180,7 +178,7 @@ export function ChatVirtualizedTimeline({
           )}
 
           {liveActivity.visible && (
-            <div className="w-full flex justify-start pt-2 my-0.5 pl-1 min-w-0 max-w-full">
+            <div className="w-full flex justify-start pt-1.5 my-0.5 pl-0.5 min-w-0 max-w-full">
               <NativeChatTurnActivityLine
                 activityText={liveActivity.activityText}
                 stopping={liveActivity.stopping}

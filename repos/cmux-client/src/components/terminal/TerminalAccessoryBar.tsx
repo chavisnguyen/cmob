@@ -59,28 +59,28 @@ export function TerminalAccessoryBar({
 }) {
   return (
     <div
-      className="bg-bg border-t border-white/[0.08] px-2.5 pt-2 pb-[calc(0.5rem+env(safe-area-inset-bottom,0px))] shrink-0 flex items-center gap-2 overflow-x-auto no-scrollbar"
+      className="bg-sidebar border-t border-line px-2 pt-1.5 pb-[calc(0.4rem+env(safe-area-inset-bottom,0px))] shrink-0 flex items-center gap-1.5 overflow-x-auto no-scrollbar"
       onMouseDown={(event) => event.preventDefault()}
     >
       <button
         type="button"
         onClick={onPasteClipboard}
-        className="h-9 px-3 rounded-[10px] bg-raised border border-white/[0.08] text-fg hover:bg-line active:opacity-70 text-[13px] font-sans font-medium shrink-0 flex items-center gap-1.5 transition-opacity"
+        className="h-8 px-2.5 rounded-md bg-surface border border-line text-fg-soft hover:text-fg hover:bg-raised active:opacity-70 text-[12px] font-sans font-medium shrink-0 flex items-center gap-1.5 transition-colors"
         title="Paste from clipboard"
       >
-        <ClipboardPaste className="w-4 h-4 text-muted" />
+        <ClipboardPaste className="w-3.5 h-3.5 text-muted" />
         <span>Paste</span>
       </button>
 
       <button
         type="button"
         onClick={onCtrlTap}
-        className={`h-9 min-w-[46px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
+        className={`h-8 min-w-[42px] px-2.5 rounded-md border text-[12px] font-sans font-semibold shrink-0 transition-colors active:opacity-70 ${
           ctrlLatch === "locked"
             ? "bg-fg border-fg text-bg"
             : ctrlLatch === "once"
-              ? "bg-raised border-fg text-fg"
-              : "bg-raised border-transparent text-fg hover:bg-line"
+              ? "bg-raised border-fg/60 text-fg"
+              : "bg-surface border-line text-fg-soft hover:bg-raised"
         }`}
         title="Sticky Ctrl (Tap: Once, Double Tap: Lock)"
       >
@@ -90,12 +90,12 @@ export function TerminalAccessoryBar({
       <button
         type="button"
         onClick={onAltTap}
-        className={`h-9 min-w-[42px] px-3 rounded-[10px] border text-[13px] font-sans font-semibold shrink-0 transition-opacity active:opacity-70 ${
+        className={`h-8 min-w-[40px] px-2.5 rounded-md border text-[12px] font-sans font-semibold shrink-0 transition-colors active:opacity-70 ${
           altLatch === "locked"
             ? "bg-fg border-fg text-bg"
             : altLatch === "once"
-              ? "bg-raised border-fg text-fg"
-              : "bg-raised border-transparent text-fg hover:bg-line"
+              ? "bg-raised border-fg/60 text-fg"
+              : "bg-surface border-line text-fg-soft hover:bg-raised"
         }`}
         title="Sticky Alt/Meta (Tap: Once, Double Tap: Lock)"
       >
@@ -112,15 +112,15 @@ export function TerminalAccessoryBar({
             key={item.id}
             type="button"
             onClick={() => onKeyPress(item)}
-            className={`h-9 px-3 rounded-[10px] border text-[13px] font-medium transition-opacity shrink-0 flex items-center justify-center gap-1.5 active:opacity-70 ${
+            className={`h-8 px-2.5 rounded-md border text-[12px] font-mono font-medium transition-colors shrink-0 flex items-center justify-center gap-1 active:opacity-70 ${
               isActive
-                ? "bg-accent border-accent text-white"
+                ? "bg-fg border-fg text-bg"
                 : isSignal
-                  ? "bg-[#28181b] border-rose-500/25 text-rose-300 hover:bg-[#341d22]"
-                  : "bg-raised border-white/[0.06] text-fg min-w-[38px]"
+                  ? "bg-status-err/10 border-status-err/25 text-status-err hover:bg-status-err/15"
+                  : "bg-surface border-line text-fg-soft hover:text-fg hover:bg-raised min-w-[34px]"
             }`}
           >
-            {Icon && <Icon className="w-4 h-4" />}
+            {Icon && <Icon className="w-3.5 h-3.5" />}
             {(!Icon || item.id === "enter") && <span>{item.label}</span>}
           </button>
         );
@@ -129,11 +129,11 @@ export function TerminalAccessoryBar({
       <button
         type="button"
         onClick={onDismissKeyboard}
-        className="h-9 w-9 rounded-[10px] bg-raised border border-white/[0.06] text-muted hover:text-fg active:opacity-70 shrink-0 flex items-center justify-center transition-opacity"
+        className="h-8 w-8 rounded-md bg-surface border border-line text-muted hover:text-fg hover:bg-raised active:opacity-70 shrink-0 flex items-center justify-center transition-colors"
         title="Hide keyboard"
         aria-label="Hide keyboard"
       >
-        <KeyboardOff className="w-4 h-4" />
+        <KeyboardOff className="w-3.5 h-3.5" />
       </button>
     </div>
   );

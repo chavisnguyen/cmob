@@ -91,35 +91,47 @@ pub fn handle_subscription(
     .unwrap()
 }
 
-fn collect_working_subagents(turns: &[AgentTurn], agent_kind: &str) -> (bool, Vec<String>) {
+fn collect_working_children(
+    turns: &[AgentTurn],
+) -> (bool, Vec<(String, String)>, Vec<String>) {
     let mut any_working = false;
-    let mut codex_ids = Vec::new();
+    let mut subagent_ids = Vec::new();
+    let mut bg_task_ids = Vec::new();
     for turn in turns {
         for ev in &turn.events {
             match ev {
-                AgentEvent::Subagents { agents, .. } => {
+                AgentEvent::Subagents { group_id, agents } => {
                     for entry in agents {
                         if entry.state == SubagentState::Working {
                             any_working = true;
-                            if agent_kind == "codex" && !entry.id.is_empty() {
-                                codex_ids.push(entry.id.clone());
+                            if !entry.id.is_empty() {
+                                subagent_ids.push((group_id.clone(), entry.id.clone()));
                             }
                         }
                     }
                 }
                 AgentEvent::BackgroundTasks { tasks } => {
-                    if tasks.iter().any(|t| t.state == SubagentState::Working) {
-                        any_working = true;
+                    for t in tasks {
+                        if t.state == SubagentState::Working {
+                            any_working = true;
+                            if !t.id.is_empty() {
+                                bg_task_ids.push(t.id.clone());
+                            }
+                        }
                     }
                 }
                 _ => {}
             }
         }
     }
-    (any_working, codex_ids)
+    (any_working, subagent_ids, bg_task_ids)
 }
 
-async fn fingerprint(res: &Option<ResolvedSession>, working_codex_children: &[String]) -> String {
+async fn fingerprint(
+    res: &Option<ResolvedSession>,
+    working_subagents: &[(String, String)],
+    working_bg_tasks: &[String],
+) -> String {
     let Some(r) = res else { return "none".to_string() };
     let transcript_stamp = match r.transcript_path.as_deref() {
         Some(p) if opencode_store::parse_pseudo_path(Path::new(p)).is_some() => {
@@ -145,25 +157,23 @@ async fn fingerprint(res: &Option<ResolvedSession>, working_codex_children: &[St
             .unwrap_or_else(|| "0|0".to_string()),
         None => "0|0".to_string(),
     };
-    let child_stamp = if r.agent_kind == "codex"
-        && !working_codex_children.is_empty()
-        && let Some(parent) = r.transcript_path.clone()
-    {
-        let ids = working_codex_children.to_vec();
+    let child_stamp = if !working_subagents.is_empty() || !working_bg_tasks.is_empty() {
+        let parent = r.transcript_path.clone();
+        let subs = working_subagents.to_vec();
+        let bgs = working_bg_tasks.to_vec();
+        let epoch = r.epoch;
         tokio::task::spawn_blocking(move || {
-            let parent_path = Path::new(&parent);
-            ids.iter()
-                .filter_map(|id| {
-                    crate::providers::codex_child_rollout_stamp(parent_path, id)
-                        .map(|(m, l)| format!("{id}:{m}:{l}"))
-                })
-                .collect::<Vec<_>>()
-                .join(",")
+            crate::scanner::child_reconciler::working_children_stamp(
+                parent.as_deref().map(Path::new),
+                &subs,
+                &bgs,
+                epoch,
+            )
         })
         .await
         .unwrap_or_default()
     } else {
-        String::new()
+        format!("{:?}", r.epoch)
     };
     format!(
         "{}|{:?}|{:?}|{:?}|{:?}|{:?}|{:?}|{transcript_stamp}|{child_stamp}",
@@ -234,7 +244,8 @@ pub async fn chat_watcher_stream(
     let mut approval_screen: (Option<String>, Option<Instant>) = (None, None);
     let mut is_first_tick = true;
     let mut prev_digests: Vec<(String, u64)> = Vec::new();
-    let mut working_codex_children: Vec<String> = Vec::new();
+    let mut working_subagents: Vec<(String, String)> = Vec::new();
+    let mut working_bg_tasks: Vec<String> = Vec::new();
     let mut has_working_subagents = false;
     let mut last_subagent_poll = Instant::now();
 
@@ -255,6 +266,7 @@ pub async fn chat_watcher_stream(
         let resolved = match cached_tree.as_ref().filter(|(_, at)| at.elapsed() < TREE_REFRESH) {
             Some((r, _)) => {
                 let mut r = r.clone();
+                r.epoch = state.runtime.surface_run_epoch(&r.surface_id);
                 if let Some(p) = &r.transcript_path
                     && r.agent_kind == "kiro"
                 {
@@ -321,10 +333,12 @@ pub async fn chat_watcher_stream(
         let screen_fp = approval_screen.0.as_deref().unwrap_or("");
         let fp = format!(
             "{}|{dialog_fp}|{screen_fp}",
-            fingerprint(&resolved, &working_codex_children).await
+            fingerprint(&resolved, &working_subagents, &working_bg_tasks).await
         );
+        // Re-check every 2s whenever any child item is still `Working` (even if parent turn paused/died),
+        // then drop to 0% idle kqueue sleep immediately once `has_working_subagents` becomes false.
         let force_subagent_check =
-            working && has_working_subagents && last_subagent_poll.elapsed() >= SUBAGENT_REFRESH;
+            has_working_subagents && last_subagent_poll.elapsed() >= SUBAGENT_REFRESH;
 
         if last_fp.as_deref() == Some(fp.as_str()) && !force_subagent_check {
             continue;
@@ -335,16 +349,16 @@ pub async fn chat_watcher_stream(
 
         let payload = match resolved {
             Some(res) => {
-                let agent_kind = res.agent_kind.clone();
                 let screen_ctx = approval_screen.0.clone();
                 let built = tokio::task::spawn_blocking(move || {
                     SessionStateService::session_json_with_turns(&res, max_turns, None, screen_ctx.as_deref())
                 })
                 .await;
                 let Ok(Ok((mut snap_val, page))) = built else { continue };
-                let (any_working, codex_children) = collect_working_subagents(&page.turns, &agent_kind);
+                let (any_working, sub_ids, bg_ids) = collect_working_children(&page.turns);
                 has_working_subagents = any_working;
-                working_codex_children = codex_children;
+                working_subagents = sub_ids;
+                working_bg_tasks = bg_ids;
 
                 let next_digests: Vec<(String, u64)> =
                     page.turns.iter().map(|t| (t.id.clone(), turn_digest(t))).collect();
@@ -357,7 +371,8 @@ pub async fn chat_watcher_stream(
             }
             None => {
                 has_working_subagents = false;
-                working_codex_children.clear();
+                working_subagents.clear();
+                working_bg_tasks.clear();
                 prev_digests.clear();
                 SessionStateService::empty_session_json(&target_surface_id, &fallback_agent)
             }

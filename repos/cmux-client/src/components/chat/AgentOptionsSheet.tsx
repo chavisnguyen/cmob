@@ -21,7 +21,6 @@ export function AgentOptionsSheet({
   surfaceId: string;
   agentKind: string;
   currentModel?: string;
-  /** Disables mid-session slash writes while the agent is actively working or awaiting input. */
   disabledMidSession?: boolean;
   onClose: () => void;
   onOpenTerminal?: () => void;
@@ -99,120 +98,130 @@ export function AgentOptionsSheet({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/70 backdrop-blur-sm"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/65 backdrop-blur-[1px]"
       onClick={onClose}
     >
       <div
         role="dialog"
         aria-modal="true"
         aria-label="Model and effort"
-        className="w-full max-w-md max-h-[85dvh] overflow-y-auto rounded-t-2xl md:rounded-2xl bg-bg border-t md:border border-white/[0.12] text-fg p-5 pb-[calc(1.25rem+env(safe-area-inset-bottom,0px))] md:pb-5 space-y-4 shadow-2xl"
+        className="w-full max-w-md max-h-[85dvh] flex flex-col rounded-t-xl md:rounded-xl bg-surface border-t md:border border-line-strong text-fg shadow-2xl overflow-hidden pb-[env(safe-area-inset-bottom,0px)] md:pb-0"
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between">
-          <h2 className="text-[16px] font-semibold flex items-center gap-2">
-            <SlidersHorizontal className="w-5 h-5 text-accent-soft" />
-            Model &amp; effort
+        <div className="flex items-center justify-between px-4 h-11 bg-sidebar border-b border-line shrink-0">
+          <h2 className="text-[13.5px] font-semibold flex items-center gap-2">
+            <SlidersHorizontal className="w-3.5 h-3.5 text-muted" />
+            <span>Model &amp; Effort</span>
           </h2>
           <button
             type="button"
             onClick={onClose}
-            className="w-8 h-8 rounded-lg hover:bg-white/[0.08] flex items-center justify-center"
+            className="w-7 h-7 rounded-md hover:bg-raised text-muted hover:text-fg flex items-center justify-center"
             aria-label="Close"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        {!info && !loadError && <Loader2 className="w-5 h-5 animate-spin text-accent-soft" />}
-        {loadError && <p className="text-[13px] text-amber-300">{loadError}</p>}
+        <div className="p-4 space-y-3.5 overflow-y-auto scrollbar-sleek bg-bg">
+          {!info && !loadError && <Loader2 className="w-4 h-4 animate-spin text-muted" />}
+          {loadError && <p className="text-[12.5px] text-status-wait">{loadError}</p>}
 
-        {disabledMidSession && info && (
-          <p className="text-[12.5px] text-amber-300 bg-amber-500/10 border border-amber-500/25 rounded-xl px-3 py-2">
-            Wait for the current turn or prompt to finish before changing options.
-          </p>
-        )}
-
-        {info?.mid_session === "picker" && (
-          <div className="space-y-3">
-            <p className="text-[13.5px] text-fg-soft leading-relaxed">
-              {agentKind === "codex" ? "Codex" : "This agent"} chooses its model and reasoning
-              effort in its own picker. It opens in the Terminal tab; pick there.
+          {disabledMidSession && info && (
+            <p className="text-[12px] text-status-wait bg-status-wait/10 border border-status-wait/25 rounded-lg px-3 py-2">
+              Wait for the current turn or prompt to finish before changing options.
             </p>
-            <button
-              type="button"
-              disabled={actionsDisabled}
-              onClick={() => void apply("model")}
-              className="w-full h-11 rounded-xl bg-accent disabled:opacity-50 text-[14px] font-semibold text-white"
-            >
-              {busy ? "Opening…" : "Open model picker"}
-            </button>
-          </div>
-        )}
+          )}
 
-        {info?.mid_session === "command" && (
-          <>
-            <section className="space-y-2">
-              <h3 className="text-[13px] font-semibold text-fg-soft">Model</h3>
-              {info.models.map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  disabled={actionsDisabled}
-                  onClick={() => void apply("model", m.id)}
-                  className={`w-full text-left rounded-xl border px-3.5 py-2.5 disabled:opacity-50 ${
-                    selectedModel === m.id
-                      ? "border-accent bg-accent/10"
-                      : "border-white/[0.1] bg-bg"
-                  }`}
-                >
-                  <div className="text-[14px] font-semibold">{m.label}</div>
-                  {m.description && <div className="text-[12px] text-muted">{m.description}</div>}
-                </button>
-              ))}
-            </section>
-
-            {efforts.length > 0 && (
-              <section className="space-y-2">
-                <h3 className="text-[13px] font-semibold text-fg-soft">Effort</h3>
-                <div className="flex flex-wrap gap-2">
-                  {efforts.map((e) => (
-                    <button
-                      key={e.value}
-                      type="button"
-                      disabled={actionsDisabled}
-                      onClick={() => void apply("effort", e.value)}
-                      className={`h-9 px-3.5 rounded-lg text-[13px] font-semibold disabled:opacity-50 ${
-                        activeEffort === e.value ? "bg-accent text-white" : "bg-raised text-fg-soft"
-                      }`}
-                    >
-                      {e.label}
-                    </button>
-                  ))}
-                </div>
-              </section>
-            )}
-
-            {fastModel && (
+          {info?.mid_session === "picker" && (
+            <div className="space-y-3">
+              <p className="text-[12.5px] text-fg-soft leading-relaxed">
+                {agentKind === "codex" ? "Codex" : "This agent"} selects its model and reasoning
+                effort via an interactive picker in the Terminal tab.
+              </p>
               <button
                 type="button"
                 disabled={actionsDisabled}
-                onClick={() => void apply("fast")}
-                className="w-full h-10 rounded-xl bg-raised disabled:opacity-50 text-[13.5px] font-semibold"
+                onClick={() => void apply("model")}
+                className="w-full h-9 rounded-lg bg-fg hover:bg-accent-strong disabled:opacity-50 text-[13px] font-medium text-bg transition-colors"
               >
-                Toggle fast mode
+                {busy ? "Opening…" : "Open Model Picker"}
               </button>
-            )}
+            </div>
+          )}
 
-            <p className="text-[12px] leading-relaxed text-muted">
-              Claude saves this as your default for new sessions too (it says so in the terminal),
-              so it also changes what you get the next time you start Claude on this Mac.
-            </p>
-          </>
-        )}
+          {info?.mid_session === "command" && (
+            <>
+              <section className="space-y-1.5">
+                <h3 className="text-[11px] font-semibold uppercase tracking-wider text-dim">
+                  Model
+                </h3>
+                {info.models.map((m) => (
+                  <button
+                    key={m.id}
+                    type="button"
+                    disabled={actionsDisabled}
+                    onClick={() => void apply("model", m.id)}
+                    className={`w-full text-left rounded-lg border px-3 py-2 disabled:opacity-50 transition-colors ${
+                      selectedModel === m.id
+                        ? "border-line-strong bg-raised text-fg"
+                        : "border-line bg-sidebar hover:bg-surface text-fg-soft"
+                    }`}
+                  >
+                    <div className="text-[13px] font-medium">{m.label}</div>
+                    {m.description && (
+                      <div className="text-[11.5px] text-muted">{m.description}</div>
+                    )}
+                  </button>
+                ))}
+              </section>
 
-        {error && <p className="text-[13px] text-rose-400">{error}</p>}
-        {note && !error && <p className="text-[13px] text-emerald-400">{note}</p>}
+              {efforts.length > 0 && (
+                <section className="space-y-1.5">
+                  <h3 className="text-[11px] font-semibold uppercase tracking-wider text-dim">
+                    Effort
+                  </h3>
+                  <div className="flex flex-wrap gap-1.5">
+                    {efforts.map((e) => (
+                      <button
+                        key={e.value}
+                        type="button"
+                        disabled={actionsDisabled}
+                        onClick={() => void apply("effort", e.value)}
+                        className={`h-8 px-3 rounded-md text-[12px] font-medium disabled:opacity-50 transition-colors ${
+                          activeEffort === e.value
+                            ? "bg-fg text-bg"
+                            : "bg-sidebar border border-line text-fg-soft hover:bg-raised"
+                        }`}
+                      >
+                        {e.label}
+                      </button>
+                    ))}
+                  </div>
+                </section>
+              )}
+
+              {fastModel && (
+                <button
+                  type="button"
+                  disabled={actionsDisabled}
+                  onClick={() => void apply("fast")}
+                  className="w-full h-8 rounded-lg bg-raised hover:bg-line-strong disabled:opacity-50 text-[12.5px] font-medium text-fg"
+                >
+                  Toggle Fast Mode
+                </button>
+              )}
+
+              <p className="text-[11.5px] leading-relaxed text-dim">
+                Claude persists model and effort changes as defaults for future sessions on this
+                Mac.
+              </p>
+            </>
+          )}
+
+          {error && <p className="text-[12px] text-status-err">{error}</p>}
+          {note && !error && <p className="text-[12px] text-status-ok">{note}</p>}
+        </div>
       </div>
     </div>
   );

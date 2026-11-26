@@ -1,8 +1,7 @@
-import { NotificationPrefs } from "../components/hosts/NotificationPrefs";
 import { lazy, Suspense, useCallback, useEffect, useState, type ReactElement } from "react";
 import {
-  Laptop,
   ChevronLeft,
+  Laptop,
   Monitor,
   Pencil,
   Plus,
@@ -12,12 +11,13 @@ import {
   Trash2,
   type LucideIcon,
 } from "lucide-react";
+import { relativeTime } from "../components/hosts/deviceUtils";
+import { NotificationPrefs } from "../components/hosts/NotificationPrefs";
+import { RenameHostModal } from "../components/hosts/RenameHostModal";
 import { classifyHostType, type HostMachineType, type SavedHost } from "../hosts/hostStore";
+import { haptic } from "../native/haptics";
 import { RPC_METHODS } from "../protocol/rpc";
 import { wsClient, type ConnectionState } from "../transport/wsClient";
-import { relativeTime } from "../components/hosts/deviceUtils";
-import { RenameHostModal } from "../components/hosts/RenameHostModal";
-import { haptic } from "../native/haptics";
 
 const LazyPairHostModal = lazy(() =>
   import("../components/hosts/PairHostModal").then((m) => ({ default: m.PairHostModal })),
@@ -138,24 +138,23 @@ export function DeviceListView({
   };
 
   return (
-    <div className="flex flex-col h-full overflow-y-auto scrollbar-sleek bg-bg text-fg px-5 lg:px-8 pt-5 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] space-y-6 max-w-3xl lg:max-w-none mx-auto w-full">
+    <div className="flex flex-col h-full overflow-y-auto scrollbar-sleek bg-bg text-fg px-4 lg:px-8 pt-5 pb-[calc(2rem+env(safe-area-inset-bottom,0px))] space-y-5 max-w-4xl mx-auto w-full">
       {!hideBack && (
         <button
           type="button"
           onClick={onBack}
-          className="-mb-4 -ml-1 self-start min-h-[40px] px-2 flex items-center gap-1 rounded-lg text-[13px] font-medium text-muted hover:text-fg"
+          className="-mb-3 -ml-1 self-start min-h-[34px] px-2 flex items-center gap-1 rounded-md text-[12.5px] font-medium text-muted hover:text-fg"
         >
           <ChevronLeft className="w-4 h-4" />
           <span>Workspaces</span>
         </button>
       )}
 
-      {/* Header */}
-      <div className="flex items-start justify-between gap-3 pt-1">
+      <div className="flex items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-[20px] font-bold tracking-tight text-fg">Devices & Hosts</h1>
-          <p className="text-[12.5px] text-muted mt-0.5">
-            Switch between computers or manage authorized devices
+          <h1 className="text-[16px] font-semibold tracking-tight text-fg">Hosts &amp; Devices</h1>
+          <p className="text-[12px] text-muted mt-0.5">
+            Switch paired Macs or manage authorized mobile sessions
           </p>
         </div>
         <button
@@ -164,27 +163,24 @@ export function DeviceListView({
             haptic("light");
             setShowPairModal(true);
           }}
-          className="min-h-[40px] px-3.5 rounded-xl bg-accent hover:bg-accent-strong active:bg-accent-strong text-white text-[13px] font-semibold flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+          className="h-8 px-3 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[12.5px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-3.5 h-3.5" />
           <span>Pair</span>
         </button>
       </div>
 
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
-        <div className="space-y-6">
-          {/* Section 1: Paired Computers (Hosts) */}
-          <section className="space-y-3">
-            <div className="flex items-center justify-between px-1">
-              <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim">
-                Paired Computers ({hosts.length})
-              </h2>
-            </div>
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-5 items-start">
+        <div className="space-y-5">
+          <section className="space-y-2">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-dim px-0.5">
+              Paired Computers ({hosts.length})
+            </h2>
 
-            <div className="space-y-2.5">
+            <div className="rounded-xl bg-sidebar border border-line divide-y divide-line overflow-hidden">
               {hosts.length === 0 && (
-                <div className="rounded-2xl bg-surface p-4 text-center text-[12.5px] text-muted">
-                  No computers yet. Tap Pair to add one.
+                <div className="p-4 text-center text-[12.5px] text-muted">
+                  No computers yet. Click Pair to add one.
                 </div>
               )}
               {hosts.map((host) => {
@@ -195,50 +191,40 @@ export function DeviceListView({
                 return (
                   <div
                     key={host.id}
-                    className={`flex items-center justify-between p-3.5 rounded-2xl border transition-all ${
-                      isActive
-                        ? "bg-surface border-white/[0.14]"
-                        : "bg-surface border-white/[0.06] hover:border-white/[0.1]"
+                    className={`flex items-center justify-between px-3.5 py-3 transition-colors ${
+                      isActive ? "bg-surface/70" : ""
                     }`}
                   >
-                    <div className="flex items-center gap-3.5 min-w-0 flex-1 pr-2">
-                      <div
-                        className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 border ${
-                          isActive
-                            ? "bg-accent/15 border-accent/30 text-accent-soft"
-                            : "bg-white/[0.04] border-white/[0.06] text-dim"
-                        }`}
-                      >
-                        <Icon className="w-5 h-5" />
-                      </div>
+                    <div className="flex items-center gap-3 min-w-0 flex-1 pr-2">
+                      <Icon className="w-4 h-4 text-muted shrink-0" />
 
                       <div className="min-w-0 flex-1">
-                        <div className="text-[14px] font-semibold text-fg truncate">
-                          {host.name}
+                        <div className="flex items-center gap-2 min-w-0">
+                          <span className="text-[13.5px] font-medium text-fg truncate">
+                            {host.name}
+                          </span>
+                          {isActive && (
+                            <span
+                              className={`inline-flex items-center gap-1 text-[11px] font-medium capitalize shrink-0 ${
+                                connState === "connected"
+                                  ? "text-status-ok"
+                                  : connState === "connecting" || connState === "authenticating"
+                                    ? "text-status-wait"
+                                    : "text-status-err"
+                              }`}
+                            >
+                              <span className="w-1.5 h-1.5 rounded-full bg-current" />
+                              {connState}
+                            </span>
+                          )}
                         </div>
                         <div className="text-[11.5px] font-mono text-dim truncate mt-0.5">
                           {host.endpoint}
                         </div>
-                        {isActive && (
-                          <div
-                            className={`mt-1 flex items-center gap-1.5 text-[11.5px] font-medium capitalize ${
-                              connState === "connected"
-                                ? "text-emerald-400"
-                                : connState === "connecting" || connState === "authenticating"
-                                  ? "text-amber-400"
-                                  : "text-rose-400"
-                            }`}
-                          >
-                            <span
-                              className={`w-1.5 h-1.5 rounded-full bg-current ${connState === "connected" ? "" : "animate-pulse"}`}
-                            />
-                            {connState}
-                          </div>
-                        )}
                       </div>
                     </div>
 
-                    <div className="flex items-center gap-1.5 shrink-0">
+                    <div className="flex items-center gap-1 shrink-0">
                       {!isActive && (
                         <button
                           type="button"
@@ -246,7 +232,7 @@ export function DeviceListView({
                             haptic("light");
                             onSelectHost(host);
                           }}
-                          className="min-h-[44px] px-3.5 rounded-xl bg-accent hover:bg-accent-strong text-white text-[12.5px] font-semibold transition-colors cursor-pointer"
+                          className="h-7 px-2.5 rounded-md bg-raised hover:bg-line-strong text-fg text-[12px] font-medium transition-colors cursor-pointer"
                         >
                           Switch
                         </button>
@@ -258,20 +244,20 @@ export function DeviceListView({
                           haptic("light");
                           setEditingHost(host);
                         }}
-                        className="min-h-[44px] min-w-[44px] rounded-xl hover:bg-white/[0.08] active:bg-white/[0.12] text-muted hover:text-white flex items-center justify-center transition-colors cursor-pointer"
+                        className="w-8 h-8 rounded-md hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors cursor-pointer"
                         aria-label={`Rename ${host.name}`}
                         title="Rename"
                       >
-                        <Pencil className="w-4 h-4" />
+                        <Pencil className="w-3.5 h-3.5" />
                       </button>
 
                       <button
                         type="button"
                         onClick={() => handleDeleteHost(host)}
-                        className={`min-h-[44px] min-w-[44px] px-2 rounded-xl flex items-center justify-center transition-colors cursor-pointer ${
+                        className={`h-8 min-w-[32px] px-2 rounded-md flex items-center justify-center transition-colors cursor-pointer ${
                           confirmDeleteId === host.id
-                            ? "bg-rose-500 text-white font-medium text-[11.5px] px-2.5"
-                            : "hover:bg-rose-500/15 text-muted hover:text-rose-400"
+                            ? "bg-status-err text-white font-medium text-[11.5px]"
+                            : "hover:bg-status-err/15 text-muted hover:text-status-err"
                         }`}
                         aria-label={`Remove ${host.name}`}
                         title={
@@ -285,7 +271,7 @@ export function DeviceListView({
                         {confirmDeleteId === host.id ? (
                           <span>Confirm</span>
                         ) : (
-                          <Trash2 className="w-4 h-4" />
+                          <Trash2 className="w-3.5 h-3.5" />
                         )}
                       </button>
                     </div>
@@ -296,41 +282,33 @@ export function DeviceListView({
           </section>
         </div>
 
-        <div className="space-y-6">
-          {/* Section 2: Authorized Mobile Devices (on current gateway) */}
-          <section className="space-y-3">
-            <div className="flex items-center justify-between px-1">
-              <div>
-                <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim">
-                  Authorized Mobile Devices
-                </h2>
-                <p className="text-[11.5px] text-dim mt-0.5">
-                  Phones and tablets with access to the active gateway
-                </p>
-              </div>
+        <div className="space-y-5">
+          <section className="space-y-2">
+            <div className="px-0.5">
+              <h2 className="text-[11px] font-semibold uppercase tracking-wider text-dim">
+                Authorized Devices
+              </h2>
             </div>
 
-            <div className="rounded-2xl bg-surface border border-white/[0.06] divide-y divide-white/[0.06] overflow-hidden">
+            <div className="rounded-xl bg-sidebar border border-line divide-y divide-line overflow-hidden">
               {!authorizedDevices ? (
-                <div className="p-4 text-center text-[12.5px] text-dim">
+                <div className="p-4 text-center text-[12px] text-dim">
                   Connect to a gateway to view authorized client devices.
                 </div>
               ) : authorizedDevices.length === 0 ? (
-                <div className="p-4 text-center text-[12.5px] text-dim">
+                <div className="p-4 text-center text-[12px] text-dim">
                   No paired mobile devices recorded.
                 </div>
               ) : (
                 authorizedDevices.map((dev) => (
-                  <div key={dev.id} className="flex items-center justify-between p-3.5">
-                    <div className="flex items-center gap-3 min-w-0">
-                      <div className="w-8 h-8 rounded-xl bg-white/[0.04] text-muted flex items-center justify-center shrink-0">
-                        <Smartphone className="w-4 h-4" />
-                      </div>
+                  <div key={dev.id} className="flex items-center justify-between px-3.5 py-2.5">
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <Smartphone className="w-4 h-4 text-muted shrink-0" />
                       <div className="min-w-0">
-                        <div className="text-[13.5px] font-medium text-fg truncate">
+                        <div className="text-[13px] font-medium text-fg truncate">
                           {dev.label || "Mobile Device"}
                         </div>
-                        <div className="text-[11.5px] text-dim mt-0.5">
+                        <div className="text-[11px] text-dim">
                           Seen {relativeTime(dev.last_seen)}
                         </div>
                       </div>
@@ -339,13 +317,13 @@ export function DeviceListView({
                     <button
                       type="button"
                       onClick={() => void handleRevoke(dev.id)}
-                      className={`min-h-[36px] px-3 rounded-lg text-[11.5px] font-medium transition-colors cursor-pointer ${
+                      className={`h-7 px-2.5 rounded-md text-[11.5px] font-medium transition-colors cursor-pointer ${
                         revokeArmed === dev.id
-                          ? "bg-rose-500 text-white"
-                          : "bg-white/[0.05] hover:bg-rose-500/15 text-muted hover:text-rose-400"
+                          ? "bg-status-err text-white"
+                          : "bg-raised hover:bg-status-err/15 text-muted hover:text-status-err"
                       }`}
                     >
-                      {revokeArmed === dev.id ? "Confirm Revoke" : "Revoke"}
+                      {revokeArmed === dev.id ? "Confirm" : "Revoke"}
                     </button>
                   </div>
                 ))
@@ -353,36 +331,31 @@ export function DeviceListView({
             </div>
           </section>
 
-          {/* Section 3: Notifications */}
-          <section className="space-y-3">
-            <h2 className="text-[13px] font-semibold uppercase tracking-wider text-dim px-1">
+          <section className="space-y-2">
+            <h2 className="text-[11px] font-semibold uppercase tracking-wider text-dim px-0.5">
               Notifications
             </h2>
-            <div className="rounded-2xl bg-surface border border-white/[0.06] p-4">
+            <div className="rounded-xl bg-sidebar border border-line p-3.5">
               <NotificationPrefs />
             </div>
           </section>
 
-          {/* Section 4: Add Host Guide Banner */}
-          <section className="rounded-2xl bg-surface border border-white/[0.06] p-4 flex items-start gap-3.5">
-            <div className="w-8 h-8 rounded-lg bg-white/[0.05] text-muted flex items-center justify-center shrink-0 mt-0.5">
-              <QrCode className="w-4 h-4" />
-            </div>
+          <section className="rounded-xl bg-sidebar border border-line p-3.5 flex items-start gap-3">
+            <QrCode className="w-4 h-4 text-muted shrink-0 mt-0.5" />
             <div className="space-y-1 min-w-0 flex-1">
-              <div className="text-[13.5px] font-semibold text-fg">Connect Another Computer</div>
+              <div className="text-[13px] font-medium text-fg">Connect Another Mac</div>
               <p className="text-[12px] text-muted leading-relaxed">
                 Run{" "}
-                <code className="px-1.5 py-0.5 rounded bg-white/[0.05] border border-white/[0.08] text-fg">
+                <code className="px-1.5 py-0.5 rounded bg-surface border border-line text-fg font-mono text-[11.5px]">
                   cmob qr --tailscale
                 </code>{" "}
-                in your cmux terminal to scan its QR code and add it to your devices list.
+                inside cmux to generate a one-time pairing QR code.
               </p>
             </div>
           </section>
         </div>
       </div>
 
-      {/* Modals */}
       {showPairModal && (
         <Suspense fallback={null}>
           <LazyPairHostModal

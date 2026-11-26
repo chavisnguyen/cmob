@@ -8,7 +8,7 @@ pub mod opencode;
 use crate::domain::noise_filter::record_timestamp_ms;
 use crate::protocol::event::{AgentEvent, AgentTurn};
 
-pub use codex::{codex_child_rollout_stamp, refresh_working_codex_subagents};
+pub use codex::{codex_child_rollout_stamp, codex_child_status, refresh_working_codex_subagents};
 
 #[derive(Default, Clone)]
 pub struct ProviderParseState {

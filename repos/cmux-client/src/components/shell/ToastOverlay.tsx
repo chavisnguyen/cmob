@@ -14,16 +14,16 @@ export function ToastOverlay({
   if (toasts.length === 0) return null;
 
   return (
-    <div className="fixed top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
+    <div className="fixed top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-88 z-50 flex flex-col gap-1.5 pointer-events-none">
       {toasts.map((toast) => (
         <div
           key={toast.notification_id}
-          className={`pointer-events-auto flex items-start gap-2.5 rounded-2xl bg-raised border border-line border-l-[3px] pl-3 pr-2 py-2.5 shadow-lg ${
+          className={`pointer-events-auto flex items-start gap-2 rounded-lg bg-surface border border-line-strong border-l-[2px] pl-3 pr-2 py-2 shadow-xl ${
             toast.category === "agent-error"
-              ? "border-l-rose-400"
+              ? "border-l-status-err"
               : toast.urgent || toast.category === "needs-permission"
-                ? "border-l-amber-400"
-                : "border-l-accent"
+                ? "border-l-status-wait"
+                : "border-l-fg"
           }`}
         >
           <button
@@ -31,18 +31,20 @@ export function ToastOverlay({
             onClick={() => onSelectToast(toast)}
             className="flex-1 min-w-0 text-left"
           >
-            <div className="text-[13px] font-semibold leading-snug truncate">{toast.title}</div>
-            <div className="text-[12.5px] text-fg-soft leading-snug line-clamp-2 mt-0.5">
+            <div className="text-[12.5px] font-semibold text-fg leading-snug truncate">
+              {toast.title}
+            </div>
+            <div className="text-[12px] text-muted leading-snug line-clamp-2 mt-0.5">
               {plainNotificationBody(toast.body)}
             </div>
           </button>
           <button
             type="button"
             onClick={() => onDismissToast(toast.notification_id)}
-            className="w-7 h-7 rounded-lg hover:bg-white/[0.1] text-muted hover:text-white flex items-center justify-center shrink-0"
+            className="w-6 h-6 rounded hover:bg-raised text-dim hover:text-fg flex items-center justify-center shrink-0"
             aria-label="Dismiss notification"
           >
-            <X className="w-4 h-4" />
+            <X className="w-3.5 h-3.5" />
           </button>
         </div>
       ))}

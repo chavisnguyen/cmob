@@ -7,10 +7,12 @@ use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex, RwLock};
 use std::time::{Duration, Instant};
 
+use crate::domain::child_work_fsm::SurfaceRunEpoch;
 use crate::domain::workspace_model::{SurfaceAgentInfo, WorkspaceNode};
 use crate::scanner::workspace_tree::WorkspaceTreeBuilder;
 
 pub type ProcScan = Option<HashMap<String, HashSet<&'static str>>>;
+pub type EpochMap = HashMap<String, SurfaceRunEpoch>;
 
 const PROC_TTL: Duration = Duration::from_secs(2);
 const DIALOG_FRESH_TTL: Duration = Duration::from_secs(10);
@@ -39,6 +41,8 @@ struct WorkspaceRuntimeStoreInner {
     surface_meta: RwLock<SurfaceMetaMaps>,
     /// Short-lived process table cache so 500ms watchers do not re-scan processes on every sample.
     proc_cache: Mutex<Option<(Instant, ProcScan)>>,
+    /// Short-lived TTY run-epoch cache (`PROC_TTL = 2s`) backing child-work FSM reconciliation.
+    epoch_cache: Mutex<Option<(Instant, Option<EpochMap>)>>,
     /// Surfaces currently displaying a startup dialog (`surface_id -> (fingerprint, seen_at)`).
     waiting_dialogs: RwLock<HashMap<String, (String, Instant)>>,
 }
@@ -256,6 +260,70 @@ impl WorkspaceRuntimeStore {
     pub fn surface_has_agent_process(&self, surface_id: &str) -> Option<bool> {
         self.surface_live_agent_kinds(surface_id)
             .map(|kinds| !kinds.is_empty())
+    }
+
+    fn epoch_scan(&self) -> Option<EpochMap> {
+        if let Ok(c) = self.inner.epoch_cache.lock()
+            && let Some((at, map)) = c.as_ref()
+            && at.elapsed() < PROC_TTL
+        {
+            return map.clone();
+        }
+        #[cfg(target_os = "macos")]
+        let map = crate::scanner::macos_proc::scan_agent_epochs_by_tty();
+        #[cfg(not(target_os = "macos"))]
+        let map: Option<EpochMap> = self.proc_scan().map(|scan| {
+            scan.into_iter()
+                .map(|(tty, kinds)| {
+                    let ep = if kinds.is_empty() {
+                        SurfaceRunEpoch::LocalNoAgent
+                    } else {
+                        SurfaceRunEpoch::RemoteOrUnknown
+                    };
+                    (tty, ep)
+                })
+                .collect()
+        });
+        if let Ok(mut c) = self.inner.epoch_cache.lock() {
+            *c = Some((Instant::now(), map.clone()));
+        }
+        map
+    }
+
+    /// Resolves the OS process run-epoch for `surface_id`'s controlling TTY, returning
+    /// `SurfaceRunEpoch::RemoteOrUnknown` when the TTY is unknown, SSH-backed, or uninspectable.
+    pub fn surface_run_epoch(&self, surface_id: &str) -> SurfaceRunEpoch {
+        if surface_id.is_empty() {
+            return SurfaceRunEpoch::RemoteOrUnknown;
+        }
+        let tty = {
+            let Ok(meta) = self.inner.surface_meta.read() else {
+                return SurfaceRunEpoch::RemoteOrUnknown;
+            };
+            let canonical = meta
+                .ref_to_id
+                .get(surface_id)
+                .map(String::as_str)
+                .unwrap_or(surface_id);
+            let Some(t) = meta.surface_tty.get(canonical).cloned() else {
+                return SurfaceRunEpoch::RemoteOrUnknown;
+            };
+            t
+        };
+        let Some(epochs) = self.epoch_scan() else {
+            return SurfaceRunEpoch::RemoteOrUnknown;
+        };
+        epochs
+            .get(&tty)
+            .copied()
+            .unwrap_or(SurfaceRunEpoch::LocalNoAgent)
+    }
+
+    #[cfg(test)]
+    pub fn set_tty_epochs_for_test(&self, map: EpochMap) {
+        if let Ok(mut c) = self.inner.epoch_cache.lock() {
+            *c = Some((Instant::now(), Some(map)));
+        }
     }
 
     pub fn set_dialog_waiting(&self, surface_id: &str, fingerprint: Option<&str>) {

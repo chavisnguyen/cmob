@@ -54,64 +54,65 @@ export function AppTopHeader({
 
   return (
     <div
-      className={`flex items-center justify-between px-3.5 ${
+      className={`flex items-center justify-between px-3 ${
         compactTopInset
-          ? "min-h-[44px]"
-          : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3rem+env(safe-area-inset-top,0px))]"
-      } relative bg-transparent border-b border-white/[0.06] shrink-0`}
+          ? "h-[38px]"
+          : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(2.75rem+env(safe-area-inset-top,0px))]"
+      } relative bg-transparent border-b border-line shrink-0 select-none`}
     >
-      <div className="flex items-center gap-2 min-w-0">
-        <span className="text-[15px] font-semibold tracking-tight text-fg shrink-0">Cmob</span>
+      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+        <span className="text-[13px] font-semibold tracking-tight text-fg shrink-0">cmob</span>
+        <span className="text-dim text-[12px] select-none">/</span>
         <button
           type="button"
           onClick={onOpenHostSheet}
           aria-label={`Switch computer (${connState})`}
-          className="inline-flex items-center gap-1.5 min-w-0 max-w-[175px] pl-2 pr-1.5 py-0.5 rounded-md bg-white/[0.045] hover:bg-white/[0.08] border border-white/[0.06] text-[12px] font-medium text-fg-soft transition-colors"
+          className="inline-flex items-center gap-1.5 min-w-0 max-w-[180px] px-1.5 py-0.5 rounded-[5px] hover:bg-raised text-[12px] font-medium text-fg-soft hover:text-fg transition-colors"
         >
           <span
             className={`w-1.5 h-1.5 rounded-full shrink-0 ${
               connState === "connected"
-                ? "bg-emerald-400"
+                ? "bg-status-ok"
                 : connState === "connecting" || connState === "authenticating"
-                  ? "bg-amber-400 animate-pulse"
-                  : "bg-rose-400"
+                  ? "bg-status-wait"
+                  : "bg-status-err"
             }`}
           />
           <span className="truncate">{activeHost?.name ?? "No computer"}</span>
           <ChevronDown className="w-3 h-3 shrink-0 text-dim" />
         </button>
         {isDemoMode() && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10.5px] font-medium bg-accent/15 text-accent-soft shrink-0">
-            Demo
+          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-mono uppercase tracking-wider bg-raised text-muted shrink-0">
+            demo
           </span>
         )}
       </div>
 
-      <div className="flex items-center gap-1 shrink-0">
+      <div className="flex items-center gap-0.5 shrink-0">
         <button
           type="button"
           onClick={onToggleNotifications}
-          className={`w-8 h-8 rounded-lg hover:bg-white/[0.06] flex items-center justify-center transition-colors ${
+          className={`w-7 h-7 rounded-[6px] hover:bg-raised flex items-center justify-center transition-colors ${
             notifPermission === "granted"
               ? "text-muted hover:text-fg"
               : notifPermission === "denied"
                 ? "text-dim cursor-not-allowed"
-                : "text-amber-300"
+                : "text-status-wait"
           }`}
           title={`Notifications: ${notifPermission}`}
           aria-label="Notifications"
         >
           {notifPermission === "granted" ? (
-            <BellRing className="w-4 h-4" />
+            <BellRing className="w-3.5 h-3.5" />
           ) : (
-            <Bell className="w-4 h-4" />
+            <Bell className="w-3.5 h-3.5" />
           )}
         </button>
 
         <button
           type="button"
           onClick={() => setShowAppMenu((v) => !v)}
-          className="w-8 h-8 rounded-lg hover:bg-white/[0.06] text-muted hover:text-fg flex items-center justify-center transition-colors"
+          className="w-7 h-7 rounded-[6px] hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors"
           title="Menu"
           aria-label="Menu"
           aria-expanded={showAppMenu}
@@ -122,9 +123,9 @@ export function AppTopHeader({
         {showAppMenu && (
           <>
             <div className="fixed inset-0 z-40" onClick={() => setShowAppMenu(false)} />
-            <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
+            <div className="absolute right-2.5 top-[calc(100%+4px)] z-50 w-52 rounded-lg bg-surface border border-line-strong shadow-2xl py-1 overflow-hidden">
               {[
-                { label: "Pair new device", icon: Plus, run: onOpenPairModal },
+                { label: "Pair new computer", icon: Plus, run: onOpenPairModal },
                 { label: "Model usage", icon: Gauge, run: () => onSelectMainTab("usage") },
                 { label: "Hosts & devices", icon: Server, run: () => onSelectMainTab("devices") },
                 { label: "Auth token", icon: KeyRound, run: onOpenTokenModal },
@@ -137,9 +138,9 @@ export function AppTopHeader({
                     setShowAppMenu(false);
                     run();
                   }}
-                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                  className="w-full min-h-[34px] px-3 flex items-center gap-2.5 text-[12.5px] font-medium text-fg-soft hover:text-fg hover:bg-raised transition-colors"
                 >
-                  <Icon className="w-4 h-4 text-muted" />
+                  <Icon className="w-3.5 h-3.5 text-muted" />
                   <span>{label}</span>
                 </button>
               ))}

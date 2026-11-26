@@ -1,8 +1,8 @@
 import { useEffect } from "react";
 import { Laptop, Monitor, Plus, Server, Settings2, X, type LucideIcon } from "lucide-react";
-import { Pressable } from "../common/Pressable";
 import { classifyHostType, type HostMachineType, type SavedHost } from "../../hosts/hostStore";
 import type { ConnectionState } from "../../transport/wsClient";
+import { Pressable } from "../common/Pressable";
 
 const GLYPHS: Record<HostMachineType, LucideIcon> = {
   laptop: Laptop,
@@ -20,7 +20,6 @@ interface HostSwitchSheetProps {
   onClose: () => void;
 }
 
-/** Bottom sheet to switch between paired computers; opened from the connection pill in the header. */
 export function HostSwitchSheet({
   hosts,
   activeHostId,
@@ -40,13 +39,14 @@ export function HostSwitchSheet({
 
   const tone =
     connState === "connected"
-      ? "text-emerald-400"
+      ? "text-status-ok"
       : connState === "connecting" || connState === "authenticating"
-        ? "text-amber-400"
-        : "text-rose-400";
+        ? "text-status-wait"
+        : "text-status-err";
+
   return (
     <div
-      className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/60 backdrop-blur-[1px] animate-fade-in"
+      className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/65 backdrop-blur-[1px] animate-fade-in"
       onClick={onClose}
     >
       <div
@@ -54,20 +54,20 @@ export function HostSwitchSheet({
         aria-modal="true"
         aria-label="Switch computer"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-3xl md:max-w-md mx-auto max-h-[70vh] flex flex-col rounded-t-2xl md:rounded-2xl bg-bg border-t md:border border-white/[0.1] shadow-2xl pb-[env(safe-area-inset-bottom,0px)] md:pb-0"
+        className="w-full max-w-3xl md:max-w-md mx-auto max-h-[70vh] flex flex-col rounded-t-xl md:rounded-xl bg-surface border-t md:border border-line-strong shadow-2xl pb-[env(safe-area-inset-bottom,0px)] md:pb-0 overflow-hidden"
       >
-        <div className="flex items-center justify-between px-4 h-12 border-b border-white/[0.08] shrink-0">
-          <h2 className="text-[15px] font-semibold">Computers · {hosts.length}</h2>
+        <div className="flex items-center justify-between px-4 h-11 bg-sidebar border-b border-line shrink-0">
+          <h2 className="text-[13.5px] font-semibold text-fg">Computers · {hosts.length}</h2>
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="w-9 h-9 rounded-xl text-muted hover:bg-raised flex items-center justify-center"
+            className="w-7 h-7 rounded-md text-muted hover:text-fg hover:bg-raised flex items-center justify-center"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="overflow-y-auto py-1">
+        <div className="overflow-y-auto py-1 divide-y divide-line/60 bg-bg">
           {hosts.map((host) => {
             const active = host.id === activeHostId;
             const Icon = GLYPHS[classifyHostType(host.name || host.endpoint)];
@@ -78,19 +78,17 @@ export function HostSwitchSheet({
                   onSelect(host);
                   onClose();
                 }}
-                className={`flex items-center gap-3 px-4 min-h-[56px] cursor-pointer ${
-                  active ? "bg-accent/12" : "active:bg-white/[0.05]"
+                className={`flex items-center gap-3 px-4 min-h-[48px] cursor-pointer transition-colors ${
+                  active ? "bg-raised" : "hover:bg-surface/70 active:bg-surface"
                 }`}
               >
-                <div className="w-9 h-9 rounded-[10px] bg-surface border border-white/[0.07] flex items-center justify-center shrink-0">
-                  <Icon className="w-4 h-4 text-muted" />
-                </div>
+                <Icon className="w-4 h-4 text-muted shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="text-[14.5px] font-medium truncate">{host.name}</div>
-                  <div className="text-[12.5px] text-muted font-mono truncate">{host.endpoint}</div>
+                  <div className="text-[13.5px] font-medium text-fg truncate">{host.name}</div>
+                  <div className="text-[11.5px] text-dim font-mono truncate">{host.endpoint}</div>
                 </div>
                 {active && (
-                  <span className={`text-[12px] font-medium capitalize shrink-0 ${tone}`}>
+                  <span className={`text-[11.5px] font-medium capitalize shrink-0 ${tone}`}>
                     {connState}
                   </span>
                 )}
@@ -98,17 +96,17 @@ export function HostSwitchSheet({
             );
           })}
         </div>
-        <div className="flex gap-2 mx-4 my-3">
+        <div className="flex gap-2 p-2.5 bg-sidebar border-t border-line">
           <button
             type="button"
             onClick={() => {
               onAdd();
               onClose();
             }}
-            className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-medium flex items-center justify-center gap-1.5"
+            className="flex-1 h-9 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[12.5px] font-medium flex items-center justify-center gap-1.5 transition-colors"
           >
-            <Plus className="w-4 h-4" />
-            <span>Add computer</span>
+            <Plus className="w-3.5 h-3.5" />
+            <span>Add Computer</span>
           </button>
           <button
             type="button"
@@ -116,9 +114,9 @@ export function HostSwitchSheet({
               onManage();
               onClose();
             }}
-            className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-medium flex items-center justify-center gap-1.5"
+            className="flex-1 h-9 rounded-lg bg-raised hover:bg-line-strong text-fg text-[12.5px] font-medium flex items-center justify-center gap-1.5 transition-colors"
           >
-            <Settings2 className="w-4 h-4" />
+            <Settings2 className="w-3.5 h-3.5" />
             <span>Manage</span>
           </button>
         </div>

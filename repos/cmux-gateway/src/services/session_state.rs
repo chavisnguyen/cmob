@@ -3,8 +3,10 @@
 use std::collections::HashSet;
 use std::path::Path;
 
+use crate::domain::child_work_fsm::SurfaceRunEpoch;
 use crate::domain::lifecycle::derive_awaiting_prompt_from_parts;
 use crate::protocol::event::{AgentLifecycleState, AgentTurn};
+use crate::scanner::child_reconciler::reconcile_session_child_work;
 use crate::scanner::hook_store::{HookSessionRecord, HookStoreIndex};
 use crate::scanner::kiro_store::KiroSessionIndex;
 use crate::scanner::opencode_store;
@@ -26,6 +28,8 @@ pub struct ResolvedSession {
     pub tool_name: Option<String>,
     /// Live activity derived from active tool execution (OpenCode SQLite / Kiro transcript).
     pub live_activity: Option<String>,
+    /// OS process run-epoch for the surface's controlling TTY (backing child-work FSM reconciliation).
+    pub epoch: SurfaceRunEpoch,
     /// Resolved through the cmux tree rather than the hook store.
     pub from_tree: bool,
 }
@@ -162,6 +166,7 @@ impl SessionStateService {
                     last_body: rec.last_body.clone(),
                     tool_name: rec.tool_name.clone(),
                     live_activity,
+                    epoch: runtime.surface_run_epoch(&rec.surface_id),
                     from_tree: false,
                 }
             });
@@ -226,6 +231,7 @@ impl SessionStateService {
             lifecycle = AgentLifecycleState::Idle;
         }
 
+        let epoch = state.runtime.surface_run_epoch(&surface.id);
         Some(ResolvedSession {
             session_id: agent.session_id,
             surface_id: surface.id,
@@ -237,6 +243,7 @@ impl SessionStateService {
             last_body: None,
             tool_name: None,
             live_activity,
+            epoch,
             from_tree: true,
         })
     }
@@ -277,7 +284,7 @@ impl SessionStateService {
         before_offset: Option<u64>,
         screen_context: Option<&str>,
     ) -> Result<(serde_json::Value, TranscriptPage), std::io::Error> {
-        let page = match &res.transcript_path {
+        let mut page = match &res.transcript_path {
             Some(p) => {
                 TranscriptReader::read_turns_page(Path::new(p), &res.surface_id, max_turns, before_offset)?
             }
@@ -288,6 +295,15 @@ impl SessionStateService {
                 total_turns: 0,
             },
         };
+        let session_working =
+            matches!(res.lifecycle, AgentLifecycleState::Working | AgentLifecycleState::Waiting);
+        reconcile_session_child_work(
+            res.transcript_path.as_deref().map(Path::new),
+            &mut page.turns,
+            res.epoch,
+            session_working,
+            before_offset.is_some(),
+        );
         let activity = (res.lifecycle == AgentLifecycleState::Working)
             .then(|| res.live_activity.clone())
             .flatten();

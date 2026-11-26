@@ -12,15 +12,15 @@ import {
 } from "./usageFormatting";
 
 const BAR_CLASS: Record<UsageTone, string> = {
-  emerald: "bg-emerald-400",
-  amber: "bg-amber-400",
-  rose: "bg-rose-400",
+  emerald: "bg-fg/80",
+  amber: "bg-status-wait",
+  rose: "bg-status-err",
 };
 
 const TEXT_CLASS: Record<UsageTone, string> = {
-  emerald: "text-emerald-300",
-  amber: "text-amber-300",
-  rose: "text-rose-300",
+  emerald: "text-fg-soft",
+  amber: "text-status-wait",
+  rose: "text-status-err",
 };
 
 function UsageMeterRow({
@@ -47,17 +47,19 @@ function UsageMeterRow({
           <span className="text-[12.5px] font-medium text-fg-soft">{label}</span>
           {sublabel && <p className="text-[11px] text-dim truncate">{sublabel}</p>}
         </div>
-        <span className={`text-[12.5px] font-mono font-semibold shrink-0 ${TEXT_CLASS[tone]}`}>
+        <span
+          className={`text-[12px] font-mono tabular-nums font-medium shrink-0 ${TEXT_CLASS[tone]}`}
+        >
           {used}%
         </span>
       </div>
-      <div className="h-1.5 w-full rounded-full bg-raised overflow-hidden">
+      <div className="h-1 w-full rounded-full bg-raised overflow-hidden">
         <div
           className={`h-full rounded-full transition-[width] duration-300 ease-out ${BAR_CLASS[tone]}`}
           style={{ width: `${used}%` }}
         />
       </div>
-      {resetText && <div className="text-[11px] text-dim">{resetText}</div>}
+      {resetText && <div className="text-[11px] text-dim font-mono">{resetText}</div>}
     </div>
   );
 }
@@ -66,19 +68,19 @@ function ProviderUsageCard({ provider, now }: { provider: ProviderUsage; now: nu
   const hasBuckets = Boolean(provider.buckets && provider.buckets.length > 0);
 
   return (
-    <div className="rounded-2xl bg-surface border border-white/[0.08] p-4 space-y-3">
+    <div className="rounded-xl bg-sidebar border border-line p-4 space-y-3">
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2.5 min-w-0">
-          <div className="w-8 h-8 rounded-xl bg-bg border border-white/[0.08] flex items-center justify-center shrink-0">
-            <AgentIcon kind={provider.provider} size={18} />
+          <div className="w-7 h-7 rounded-md bg-surface border border-line flex items-center justify-center shrink-0">
+            <AgentIcon kind={provider.provider} size={15} />
           </div>
           <div className="min-w-0">
             <div className="flex items-center gap-2">
-              <h2 className="text-[14.5px] font-semibold text-fg truncate">
+              <h2 className="text-[13.5px] font-semibold text-fg truncate">
                 {provider.display_name}
               </h2>
               {provider.plan_type && (
-                <span className="px-1.5 py-0.5 rounded-md bg-raised text-[10.5px] font-semibold uppercase tracking-wider text-muted">
+                <span className="px-1.5 py-0.2 rounded bg-raised text-[10px] font-mono uppercase tracking-wider text-muted">
                   {provider.plan_type}
                 </span>
               )}
@@ -87,14 +89,14 @@ function ProviderUsageCard({ provider, now }: { provider: ProviderUsage; now: nu
           </div>
         </div>
         {provider.status === "error" && (
-          <span className="px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-300 text-[11px] font-medium shrink-0">
+          <span className="px-1.5 py-0.5 rounded bg-status-err/15 text-status-err text-[10.5px] font-medium shrink-0">
             Error
           </span>
         )}
       </div>
 
       {provider.error && (
-        <p className="text-[12px] text-amber-300 leading-snug">{provider.error}</p>
+        <p className="text-[12px] text-status-wait leading-snug">{provider.error}</p>
       )}
 
       {hasBuckets ? (
@@ -152,9 +154,9 @@ export function UsageBody({
   if (connState !== "connected") {
     return (
       <div className="flex flex-col items-center justify-center py-12 px-4 text-center text-muted">
-        <Gauge className="w-7 h-7 text-dim mb-2.5" />
-        <p className="text-[14px] font-medium text-fg-soft">Computer not connected</p>
-        <p className="text-[12.5px] text-dim mt-1">
+        <Gauge className="w-6 h-6 text-dim mb-2" />
+        <p className="text-[13.5px] font-medium text-fg-soft">Computer not connected</p>
+        <p className="text-[12px] text-dim mt-1">
           Connect to a gateway to inspect live model &amp; provider quota.
         </p>
       </div>
@@ -163,7 +165,7 @@ export function UsageBody({
 
   if (unsupported) {
     return (
-      <div className="rounded-2xl bg-surface border border-amber-500/25 p-4 text-[13px] text-amber-200 leading-relaxed">
+      <div className="rounded-xl bg-sidebar border border-status-wait/30 p-3.5 text-[12.5px] text-status-wait leading-relaxed">
         The gateway on this computer does not support <code>mobile.usage.get</code> yet. Rebuild or
         update <code>cmob</code> on that Mac to enable live quota tracking.
       </div>
@@ -172,16 +174,16 @@ export function UsageBody({
 
   if (loading && !snapshot) {
     return (
-      <div className="flex flex-col items-center justify-center py-14 text-muted gap-2.5">
-        <Loader2 className="w-5 h-5 animate-spin text-accent-soft" />
-        <span className="text-[13px]">Checking Antigravity, Claude &amp; Codex quota…</span>
+      <div className="flex flex-col items-center justify-center py-14 text-muted gap-2">
+        <Loader2 className="w-4 h-4 animate-spin text-muted" />
+        <span className="text-[12.5px]">Checking Antigravity, Claude &amp; Codex quota…</span>
       </div>
     );
   }
 
   if (error && !snapshot) {
     return (
-      <div className="rounded-2xl bg-rose-500/10 border border-rose-500/25 p-4 text-[13px] text-rose-300">
+      <div className="rounded-xl bg-status-err/10 border border-status-err/25 p-3.5 text-[12.5px] text-status-err">
         {error}
       </div>
     );
@@ -191,9 +193,9 @@ export function UsageBody({
   if (providers.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-12 px-4 text-center text-muted">
-        <Gauge className="w-7 h-7 text-dim mb-2.5" />
-        <p className="text-[14px] font-medium text-fg-soft">No provider quota detected</p>
-        <p className="text-[12.5px] text-dim mt-1 max-w-xs">
+        <Gauge className="w-6 h-6 text-dim mb-2" />
+        <p className="text-[13.5px] font-medium text-fg-soft">No provider quota detected</p>
+        <p className="text-[12px] text-dim mt-1 max-w-xs">
           Sign into Antigravity (<code>agy</code>), Claude Code, or Codex on your Mac to see
           real-time limits here.
         </p>
@@ -204,11 +206,11 @@ export function UsageBody({
   return (
     <div className="space-y-3">
       {error && (
-        <div className="rounded-xl bg-amber-500/10 border border-amber-500/25 px-3 py-2 text-[12px] text-amber-200">
+        <div className="rounded-lg bg-status-wait/10 border border-status-wait/25 px-3 py-2 text-[12px] text-status-wait">
           {error}
         </div>
       )}
-      <div className="grid grid-cols-1 xl:grid-cols-2 gap-4 items-start">
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-3.5 items-start">
         {providers.map((p) => (
           <ProviderUsageCard key={p.provider} provider={p} now={now} />
         ))}
@@ -226,6 +228,7 @@ export function UsageView({
   error,
   unsupported,
   now,
+  hideHeader = false,
   onRefresh,
 }: {
   hostName: string;
@@ -236,31 +239,51 @@ export function UsageView({
   error: string | null;
   unsupported: boolean;
   now: number;
+  hideHeader?: boolean;
   onRefresh: () => void;
 }) {
   return (
-    <div className="flex flex-col h-full w-full max-w-3xl lg:max-w-none mx-auto bg-bg text-fg">
-      <header className="flex items-center justify-between px-4 lg:px-8 min-h-[48px] bg-bg border-b border-white/[0.06] shrink-0">
-        <div className="min-w-0">
-          <h1 className="text-[15.5px] font-semibold tracking-tight text-fg">Usage</h1>
-          <p className="text-[11.5px] text-muted truncate">
-            {hostName}
-            {snapshot ? ` · ${formatUpdatedAgo(snapshot.updated_at, now)}` : ""}
-          </p>
-        </div>
-        <button
-          type="button"
-          onClick={onRefresh}
-          disabled={connState !== "connected" || refreshing || loading}
-          className="w-8 h-8 rounded-lg hover:bg-white/[0.06] active:opacity-75 text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
-          title="Refresh usage"
-          aria-label="Refresh usage"
-        >
-          <RefreshCw className={`w-3.5 h-3.5 ${refreshing || loading ? "animate-spin" : ""}`} />
-        </button>
-      </header>
+    <div className="flex flex-col h-full w-full max-w-4xl mx-auto bg-bg text-fg">
+      {!hideHeader && (
+        <header className="flex items-center justify-between px-4 h-[40px] bg-bg border-b border-line shrink-0">
+          <div className="flex items-baseline gap-2 min-w-0">
+            <h1 className="text-[13.5px] font-semibold tracking-tight text-fg">Usage</h1>
+            <p className="text-[11.5px] text-dim truncate">
+              {hostName}
+              {snapshot ? ` · ${formatUpdatedAgo(snapshot.updated_at, now)}` : ""}
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={onRefresh}
+            disabled={connState !== "connected" || refreshing || loading}
+            className="w-7 h-7 rounded-[6px] hover:bg-raised active:opacity-75 text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
+            title="Refresh usage"
+            aria-label="Refresh usage"
+          >
+            <RefreshCw className={`w-3.5 h-3.5 ${refreshing || loading ? "animate-spin" : ""}`} />
+          </button>
+        </header>
+      )}
 
       <div className="flex-1 overflow-y-auto scrollbar-sleek px-4 lg:px-8 py-5 pb-[calc(1.5rem+env(safe-area-inset-bottom,0px))] select-text">
+        {hideHeader && (
+          <div className="flex items-center justify-between mb-4">
+            <div className="text-[12px] text-muted">
+              {hostName}
+              {snapshot ? ` · ${formatUpdatedAgo(snapshot.updated_at, now)}` : ""}
+            </div>
+            <button
+              type="button"
+              onClick={onRefresh}
+              disabled={connState !== "connected" || refreshing || loading}
+              className="h-7 px-2.5 rounded-md bg-sidebar hover:bg-raised border border-line text-[12px] text-fg-soft inline-flex items-center gap-1.5 transition-colors disabled:opacity-40"
+            >
+              <RefreshCw className={`w-3 h-3 ${refreshing || loading ? "animate-spin" : ""}`} />
+              <span>Refresh</span>
+            </button>
+          </div>
+        )}
         <UsageBody
           connState={connState}
           snapshot={snapshot}

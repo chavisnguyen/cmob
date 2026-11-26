@@ -293,7 +293,9 @@ fn client_registry_and_awaiting_prompt_derivation() {
         transcript_path: None, lifecycle: AgentLifecycleState::Waiting,
         last_event: Some("PreInvocation".into()), last_subtitle: Some("Completed".into()),
         last_body: Some("Stale previous turn reply".into()), tool_name: None,
-        live_activity: None, from_tree: false,
+        live_activity: None,
+        epoch: crate::domain::child_work_fsm::SurfaceRunEpoch::RemoteOrUnknown,
+        from_tree: false,
     };
     let turns = vec![AgentTurn {
         id: "t1".into(), surface_id: "surf-1".into(), role: AgentRole::Assistant, timestamp: None,

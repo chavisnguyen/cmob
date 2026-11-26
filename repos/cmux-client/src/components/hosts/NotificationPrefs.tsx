@@ -115,14 +115,14 @@ export function NotificationPrefs(): ReactElement {
             {categories.map((c) => (
               <label
                 key={c}
-                className="flex items-center justify-between gap-3 min-h-[44px] rounded-xl bg-bg hover:bg-white/[0.04] border border-white/[0.08] px-3.5 py-2.5 transition-colors cursor-pointer"
+                className="flex items-center justify-between gap-3 min-h-[40px] rounded-lg bg-bg hover:bg-surface/60 border border-line px-3 py-2 transition-colors cursor-pointer"
               >
                 <div className="min-w-0 flex-1">
-                  <div className="text-[13.5px] font-medium text-fg">
+                  <div className="text-[12.5px] font-medium text-fg">
                     {PUSH_CATEGORY_LABELS[c] ?? c}
                   </div>
                   {PUSH_CATEGORY_DESCRIPTIONS[c] && (
-                    <div className="text-[11.5px] text-dim mt-0.5">
+                    <div className="text-[11px] text-dim mt-0.5">
                       {PUSH_CATEGORY_DESCRIPTIONS[c]}
                     </div>
                   )}
@@ -131,7 +131,7 @@ export function NotificationPrefs(): ReactElement {
                   type="checkbox"
                   checked={!muted.includes(c)}
                   onChange={(e) => void changePushCategory(c, e.target.checked)}
-                  className="w-5 h-5 rounded accent-accent cursor-pointer shrink-0"
+                  className="w-4 h-4 rounded accent-fg cursor-pointer shrink-0"
                 />
               </label>
             ))}
@@ -164,17 +164,17 @@ export function NotificationPrefs(): ReactElement {
           ].map(({ key, label, desc }) => (
             <label
               key={key}
-              className="flex items-center justify-between gap-3 min-h-[44px] rounded-xl bg-bg hover:bg-white/[0.04] border border-white/[0.08] px-3.5 py-2.5 transition-colors cursor-pointer"
+              className="flex items-center justify-between gap-3 min-h-[40px] rounded-lg bg-bg hover:bg-surface/60 border border-line px-3 py-2 transition-colors cursor-pointer"
             >
               <div className="min-w-0 flex-1">
-                <div className="text-[13.5px] font-medium text-fg">{label}</div>
-                <div className="text-[11.5px] text-dim mt-0.5">{desc}</div>
+                <div className="text-[12.5px] font-medium text-fg">{label}</div>
+                <div className="text-[11px] text-dim mt-0.5">{desc}</div>
               </div>
               <input
                 type="checkbox"
                 checked={localPrefs[key]}
                 onChange={(e) => updateLocalPref(key, e.target.checked)}
-                className="w-5 h-5 rounded accent-accent cursor-pointer shrink-0"
+                className="w-4 h-4 rounded accent-fg cursor-pointer shrink-0"
               />
             </label>
           ))}

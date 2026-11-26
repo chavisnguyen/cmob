@@ -1,14 +1,5 @@
 import { memo } from "react";
-import {
-  AlertCircle,
-  Bot,
-  CheckCircle2,
-  ChevronDown,
-  ChevronUp,
-  Clock,
-  StopCircle,
-  XCircle,
-} from "lucide-react";
+import { ChevronDown, ChevronUp, Cpu } from "lucide-react";
 import type { SubagentEntry, SubagentState } from "../../protocol/event";
 import { useChatDisclosure } from "../../state/useChatDisclosure";
 import { LiveElapsedText } from "./ChatWorkPrimitives";
@@ -35,18 +26,25 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
   const totalTokens = agents.reduce((acc, a) => acc + (a.tokens || 0), 0);
 
   const allCompleted = agents.every((a) => a.state === "completed");
-  let groupStateText = "completed";
+  const completedCount = agents.filter((a) => a.state === "completed").length;
+  const hasUnverifiable = agents.some((a) => a.state === "unverifiable");
+  let groupStateText = "done";
   if (isWorking) {
     groupStateText =
       agents.length > 1 && workingCount < agents.length
-        ? `${workingCount}/${agents.length} working`
-        : "working";
+        ? `${workingCount}/${agents.length} running`
+        : "running";
   } else if (hasFailed) {
     groupStateText = "failed";
   } else if (allStopped) {
     groupStateText = "stopped";
   } else if (!allCompleted) {
-    groupStateText = "no update";
+    groupStateText =
+      hasUnverifiable && completedCount > 0
+        ? `${completedCount}/${agents.length} done`
+        : hasUnverifiable
+          ? "ended"
+          : "idle";
   }
 
   const startedCandidates = agents
@@ -60,32 +58,27 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
     !isWorking && settledCandidates.length > 0 ? Math.max(...settledCandidates) : null;
 
   const headline = isWorking
-    ? `Kicked off ${agents.length} subagent${agents.length > 1 ? "s" : ""}`
+    ? `Running ${agents.length} subagent${agents.length > 1 ? "s" : ""}`
     : `Ran ${agents.length} subagent${agents.length > 1 ? "s" : ""}`;
 
   return (
-    <div className="w-full rounded-xl border border-accent/30 bg-surface text-xs font-mono overflow-hidden my-1.5 shadow-sm">
+    <div className="w-full rounded-lg border border-line bg-sidebar text-[12px] overflow-hidden my-1">
       <button
         type="button"
         aria-expanded={isExpanded}
         onClick={toggleExpanded}
-        className="w-full flex items-center justify-between px-3 py-2 bg-accent/10 hover:bg-accent/15 text-accent-soft transition-colors"
+        className="w-full flex items-center justify-between px-2.5 py-1.5 hover:bg-surface text-fg-soft transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-          <Bot
-            className={`w-4 h-4 text-accent-soft shrink-0 ${isWorking ? "animate-pulse" : ""}`}
-          />
-          <span className="font-semibold text-accent-soft truncate">{headline}</span>
+          <Cpu className="w-3.5 h-3.5 text-dim shrink-0" />
+          <span className="font-medium text-fg-soft truncate">{headline}</span>
           {isWorking && (
-            <span className="flex h-1.5 w-1.5 relative shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-soft opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
-            </span>
+            <span className="w-1.5 h-1.5 rounded-full bg-fg/80 animate-pulse shrink-0" />
           )}
         </div>
-        <div className="flex items-center gap-1.5 shrink-0">
+        <div className="flex items-center gap-2 shrink-0 text-[11px] font-mono text-dim">
           {clockStartedAt !== null && (
-            <span className="text-[10px] text-accent-soft/80 tabular-nums">
+            <span className="tabular-nums">
               <LiveElapsedText
                 startedAt={clockStartedAt}
                 settledAt={settledAt}
@@ -93,46 +86,36 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
               />
             </span>
           )}
-          {totalTokens > 0 && (
-            <span className="text-[10px] text-accent-soft/80 bg-accent/10 px-1.5 py-0.5 rounded">
-              {formatTokens(totalTokens)}
-            </span>
-          )}
+          {totalTokens > 0 && <span>{formatTokens(totalTokens)}</span>}
           <span
-            className={`text-[10px] px-1.5 py-0.5 rounded font-semibold ${
-              groupStateText === "completed"
-                ? "bg-emerald-500/10 text-emerald-400"
-                : groupStateText === "failed"
-                  ? "bg-rose-500/10 text-rose-400"
-                  : groupStateText === "no update" || groupStateText === "stopped"
-                    ? "bg-gray-800 text-muted"
-                    : "bg-accent/20 text-accent-soft"
-            }`}
+            className={stateTextClass(hasFailed ? "failed" : isWorking ? "working" : "completed")}
           >
             {groupStateText}
           </span>
           {isExpanded ? (
-            <ChevronUp className="w-3.5 h-3.5 text-accent-soft" />
+            <ChevronUp className="w-3 h-3 text-dim" />
           ) : (
-            <ChevronDown className="w-3.5 h-3.5 text-accent-soft" />
+            <ChevronDown className="w-3 h-3 text-dim" />
           )}
         </div>
       </button>
 
       {isExpanded && (
-        <div className="p-2 space-y-1.5 border-t border-accent/20 bg-bg">
+        <div className="px-2.5 py-1.5 space-y-1 border-t border-line bg-bg/60">
           {agents.map((agent) => (
             <div
               key={agent.id}
-              className="flex items-center justify-between p-2 rounded-lg bg-surface border border-accent/20"
+              className="flex items-center justify-between py-1 px-2 rounded-[5px] bg-sidebar/80 text-[11.5px]"
             >
               <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-                {getSubagentStateIcon(agent.state)}
-                <span className="font-medium text-fg-soft truncate">{agent.label || agent.id}</span>
+                <span
+                  className={`w-1.5 h-1.5 rounded-full shrink-0 ${stateDotClass(agent.state)}`}
+                />
+                <span className="text-fg-soft truncate">{agent.label || agent.id}</span>
               </div>
-              <div className="flex items-center gap-2 shrink-0 text-[10px]">
+              <div className="flex items-center gap-2 shrink-0 text-[10.5px] font-mono text-dim">
                 {typeof agent.started_at === "number" && agent.started_at > 0 && (
-                  <span className="text-muted font-mono tabular-nums">
+                  <span className="tabular-nums">
                     <LiveElapsedText
                       startedAt={agent.started_at}
                       settledAt={agent.settled_at}
@@ -140,11 +123,9 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
                     />
                   </span>
                 )}
-                {agent.tokens ? (
-                  <span className="text-muted font-mono">{formatTokens(agent.tokens)}</span>
-                ) : null}
-                <span className={`px-1.5 py-0.5 rounded ${getSubagentStateBadge(agent.state)}`}>
-                  {agent.state === "unverifiable" ? "no update" : agent.state}
+                {agent.tokens ? <span>{formatTokens(agent.tokens)}</span> : null}
+                <span className={stateTextClass(agent.state)}>
+                  {agent.state === "unverifiable" ? "ended" : agent.state}
                 </span>
               </div>
             </div>
@@ -156,35 +137,31 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
 });
 
 function formatTokens(tokens: number): string {
-  if (tokens < 1000) return `${tokens} tokens`;
-  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}k tokens`;
-  return `${(tokens / 1000000).toFixed(1)}M tokens`;
+  if (tokens < 1000) return `${tokens} tok`;
+  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}k tok`;
+  return `${(tokens / 1000000).toFixed(1)}M tok`;
 }
 
-function getSubagentStateIcon(state: SubagentState) {
+function stateDotClass(state: SubagentState): string {
   switch (state) {
     case "completed":
-      return <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400 shrink-0" />;
+      return "bg-status-ok";
     case "failed":
-      return <XCircle className="w-3.5 h-3.5 text-rose-400 shrink-0" />;
+      return "bg-status-err";
     case "working":
-      return <Clock className="w-3.5 h-3.5 text-accent-soft animate-spin shrink-0" />;
-    case "stopped":
-      return <StopCircle className="w-3.5 h-3.5 text-muted shrink-0" />;
+      return "bg-fg animate-pulse";
     default:
-      return <AlertCircle className="w-3.5 h-3.5 text-muted shrink-0" />;
+      return "bg-dim";
   }
 }
 
-function getSubagentStateBadge(state: SubagentState): string {
+function stateTextClass(state: SubagentState): string {
   switch (state) {
-    case "completed":
-      return "bg-emerald-500/10 text-emerald-400";
     case "failed":
-      return "bg-rose-500/10 text-rose-400";
+      return "text-status-err";
     case "working":
-      return "bg-accent/20 text-accent-soft";
+      return "text-fg-soft";
     default:
-      return "bg-gray-800 text-muted";
+      return "text-muted";
   }
 }

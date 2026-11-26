@@ -1,23 +1,32 @@
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import {
   ChevronDown,
   ChevronLeft,
   GitFork,
   Loader2,
-  MessageSquare,
   MoreHorizontal,
   Pencil,
   Plus,
   RefreshCw,
-  Terminal,
   X,
 } from "lucide-react";
 import type { SurfaceNode, WorkspaceNode } from "../../protocol/rpc";
 import type { ConnectionState } from "../../transport/wsClient";
 import { UnreadCountBadge } from "../common/UnreadCountBadge";
+import { DesktopTabStrip } from "../desktop/DesktopTabStrip";
 import { displaySurfaceTitle } from "./surfaceTitle";
 
 const FORKABLE_AGENTS = new Set(["claude"]);
+
+export interface DesktopUnifiedChromeProps {
+  sidebarCollapsed: boolean;
+  loading?: boolean;
+  onToggleSidebar: () => void;
+  onOpenNewSurface: () => void;
+  onRequestCloseSurface: (surface: SurfaceNode) => void;
+  onOpenChanges: () => void;
+  usageWidget?: ReactNode;
+}
 
 export interface SurfaceDetailHeaderProps {
   surface: SurfaceNode;
@@ -25,6 +34,7 @@ export interface SurfaceDetailHeaderProps {
   connState: ConnectionState;
   isSyncing?: boolean;
   desktopLayout: boolean;
+  desktopChrome?: DesktopUnifiedChromeProps;
   chatAvailable: boolean;
   activeMode: "chat" | "terminal";
   allSurfaces?: SurfaceNode[];
@@ -33,12 +43,14 @@ export interface SurfaceDetailHeaderProps {
   canRenameSurface: boolean;
   canCloseSurface: boolean;
   onBack: () => void;
+  onSelectSurface?: (surface: SurfaceNode) => void;
   onOpenSwitcher: () => void;
   onSelectMode: (mode: "chat" | "terminal") => void;
   onOpenNewModal: () => void;
   onRequestRename: () => void;
   onRequestClose: () => void;
   onForkConversation: () => void;
+  onRefresh?: () => void;
 }
 
 function ModeSegmentedToggle({
@@ -51,34 +63,29 @@ function ModeSegmentedToggle({
   onSelectMode: (mode: "chat" | "terminal") => void;
 }) {
   const btnCls = (selected: boolean) =>
-    `flex items-center gap-1.5 ${
-      compact ? "h-6 px-2.5 rounded-md text-[11.5px]" : "h-7 px-2.5 rounded-md text-[12.5px]"
+    `flex items-center justify-center ${
+      compact
+        ? "h-[22px] px-2 rounded-[4px] text-[11px]"
+        : "h-[26px] px-2.5 rounded-[5px] text-[12px]"
     } font-medium transition-colors ${
-      selected ? "bg-white/[0.1] text-fg shadow-xs" : "text-muted hover:text-fg-soft"
+      selected ? "bg-raised text-fg" : "text-muted hover:text-fg-soft"
     }`;
-  const iconCls = compact ? "w-3 h-3" : "w-3.5 h-3.5";
 
   return (
-    <div
-      className={`flex items-center ${
-        compact ? "p-0.5 rounded-lg" : "p-0.5 rounded-lg"
-      } bg-white/[0.04] border border-white/[0.07] shrink-0`}
-    >
+    <div className="flex items-center p-[2px] rounded-[6px] bg-sidebar border border-line shrink-0">
       <button
         type="button"
         onClick={() => onSelectMode("chat")}
         className={btnCls(activeMode === "chat")}
       >
-        <MessageSquare className={iconCls} />
-        <span>Chat</span>
+        Chat
       </button>
       <button
         type="button"
         onClick={() => onSelectMode("terminal")}
         className={btnCls(activeMode === "terminal")}
       >
-        <Terminal className={iconCls} />
-        <span>Term</span>
+        Term
       </button>
     </div>
   );
@@ -90,6 +97,7 @@ export function SurfaceDetailHeader({
   connState,
   isSyncing = false,
   desktopLayout,
+  desktopChrome,
   chatAvailable,
   activeMode,
   allSurfaces,
@@ -98,12 +106,14 @@ export function SurfaceDetailHeader({
   canRenameSurface,
   canCloseSurface,
   onBack,
+  onSelectSurface,
   onOpenSwitcher,
   onSelectMode,
   onOpenNewModal,
   onRequestRename,
   onRequestClose,
   onForkConversation,
+  onRefresh,
 }: SurfaceDetailHeaderProps) {
   const [showMoreMenu, setShowMoreMenu] = useState(false);
 
@@ -126,83 +136,66 @@ export function SurfaceDetailHeader({
     }
   };
 
-  if (desktopLayout) {
+  if (desktopLayout && desktopChrome) {
+    const extraControls = (
+      <div className="flex items-center gap-1">
+        {isSyncing && (
+          <Loader2 className="w-3 h-3 animate-spin text-muted mr-1 shrink-0" aria-label="Syncing" />
+        )}
+        {chatAvailable && (
+          <ModeSegmentedToggle activeMode={activeMode} compact onSelectMode={onSelectMode} />
+        )}
+        {canRenameSurface && (
+          <button
+            type="button"
+            onClick={onRequestRename}
+            className="w-[26px] h-[26px] rounded-[6px] hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors"
+            title="Rename tab"
+            aria-label="Rename Tab"
+          >
+            <Pencil className="w-3.5 h-3.5" />
+          </button>
+        )}
+        {canFork && (
+          <button
+            type="button"
+            onClick={onForkConversation}
+            className="w-[26px] h-[26px] rounded-[6px] hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors"
+            title="Fork conversation"
+            aria-label="Fork conversation"
+          >
+            <GitFork className="w-3.5 h-3.5" />
+          </button>
+        )}
+      </div>
+    );
+
     return (
-      <header className="flex items-center justify-between gap-3 px-6 lg:px-8 h-9 bg-bg border-b border-white/[0.05] shrink-0 z-20 w-full select-none">
-        <div className="flex items-center gap-2 min-w-0">
-          <h1 className="text-[13px] font-medium text-fg-soft truncate">
-            {displaySurfaceTitle(surface.title)}
-          </h1>
-          {connState !== "connected" && (
-            <span
-              className={`w-2 h-2 rounded-full shrink-0 ${
-                connState === "connecting" ? "bg-amber-400" : "bg-rose-500"
-              }`}
-            />
-          )}
-          <span className="text-[12px] text-dim truncate">· {workspace.title}</span>
-          {isSyncing && (
-            <span className="inline-flex items-center gap-1 text-[11.5px] font-medium text-accent-soft shrink-0">
-              <Loader2 className="w-3 h-3 animate-spin" />
-              <span>{connState === "connected" ? "Syncing…" : "Reconnecting…"}</span>
-            </span>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1.5 shrink-0">
-          {chatAvailable && (
-            <ModeSegmentedToggle activeMode={activeMode} compact onSelectMode={onSelectMode} />
-          )}
-
-          {canRenameSurface && (
-            <button
-              type="button"
-              onClick={onRequestRename}
-              className="h-7 px-2 rounded-lg hover:bg-raised text-muted hover:text-fg text-[12px] inline-flex items-center gap-1 transition-colors"
-              title="Rename tab"
-              aria-label="Rename Tab"
-            >
-              <Pencil className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline">Rename</span>
-            </button>
-          )}
-
-          {canFork && (
-            <button
-              type="button"
-              onClick={onForkConversation}
-              className="h-7 px-2 rounded-lg hover:bg-raised text-muted hover:text-fg text-[12px] inline-flex items-center gap-1 transition-colors"
-              title="Fork conversation"
-              aria-label="Fork conversation"
-            >
-              <GitFork className="w-3.5 h-3.5" />
-              <span className="hidden xl:inline">Fork</span>
-            </button>
-          )}
-
-          {canCloseSurface && (
-            <button
-              type="button"
-              onClick={onRequestClose}
-              className="h-7 w-7 rounded-lg hover:bg-rose-500/15 text-muted hover:text-rose-300 flex items-center justify-center transition-colors"
-              title="Close tab"
-              aria-label="Close Tab"
-            >
-              <X className="w-3.5 h-3.5" />
-            </button>
-          )}
-        </div>
-      </header>
+      <DesktopTabStrip
+        workspace={workspace}
+        surfaces={allSurfaces ?? workspace.surfaces}
+        activeSurface={surface}
+        sidebarCollapsed={desktopChrome.sidebarCollapsed}
+        loading={desktopChrome.loading}
+        onToggleSidebar={desktopChrome.onToggleSidebar}
+        onSelectSurface={(s) => onSelectSurface?.(s)}
+        onNewSurface={desktopChrome.onOpenNewSurface}
+        onCloseSurface={desktopChrome.onRequestCloseSurface}
+        onOpenChanges={desktopChrome.onOpenChanges}
+        onRefresh={() => onRefresh?.()}
+        extraControls={extraControls}
+        usageWidget={desktopChrome.usageWidget}
+      />
     );
   }
 
   return (
-    <header className="relative flex items-center justify-between gap-2 px-2 pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))] bg-surface border-b border-line shrink-0 z-30 w-full">
-      <div className="flex items-center gap-1 min-w-0 flex-1">
+    <header className="relative flex items-center justify-between gap-2 px-2 pt-[env(safe-area-inset-top,0px)] min-h-[calc(2.85rem+env(safe-area-inset-top,0px))] bg-bg border-b border-line shrink-0 z-30 w-full select-none">
+      <div className="flex items-center gap-0.5 min-w-0 flex-1">
         <button
           type="button"
           onClick={onBack}
-          className="w-10 h-10 rounded-xl hover:bg-raised active:opacity-75 text-fg flex items-center justify-center transition-colors shrink-0"
+          className="w-9 h-9 rounded-lg hover:bg-raised active:opacity-75 text-fg flex items-center justify-center transition-colors shrink-0"
           title={`Back to ${workspace.title}`}
           aria-label={`Back to ${workspace.title}`}
         >
@@ -213,15 +206,15 @@ export function SurfaceDetailHeader({
           type="button"
           onClick={onOpenSwitcher}
           disabled={!canSwitchSurfaces}
-          className="min-w-0 flex-1 pr-1 text-left rounded-lg active:opacity-75 disabled:active:opacity-100"
+          className="min-w-0 flex-1 pr-1 text-left rounded-md active:opacity-75 disabled:active:opacity-100"
           aria-label={`Switch tab (current: ${surface.title})`}
         >
-          <h1 className="text-[15px] font-semibold text-fg truncate leading-tight flex items-center gap-1">
+          <h1 className="text-[14px] font-semibold text-fg truncate leading-tight flex items-center gap-1">
             <span className="truncate">{displaySurfaceTitle(surface.title)}</span>
             {allSurfaces && allSurfaces.length > 1 && (
               <>
-                <ChevronDown className="w-4 h-4 text-muted shrink-0" aria-hidden="true" />
-                <span className="text-[11px] font-medium text-muted shrink-0">
+                <ChevronDown className="w-3.5 h-3.5 text-dim shrink-0" aria-hidden="true" />
+                <span className="text-[11px] font-mono text-dim shrink-0">
                   {allSurfaces.length}
                 </span>
                 <UnreadCountBadge count={otherUnreadCount} size="sm" />
@@ -231,14 +224,14 @@ export function SurfaceDetailHeader({
           <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
             {connState !== "connected" && (
               <span
-                className={`w-2 h-2 rounded-full shrink-0 ${
-                  connState === "connecting" ? "bg-amber-400" : "bg-rose-500"
+                className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                  connState === "connecting" ? "bg-status-wait" : "bg-status-err"
                 }`}
               />
             )}
-            <p className="text-[12px] text-muted truncate leading-none">{workspace.title}</p>
+            <p className="text-[11.5px] text-muted truncate leading-none">{workspace.title}</p>
             {isSyncing && (
-              <span className="inline-flex items-center gap-1 text-[11px] font-medium text-accent-soft shrink-0 leading-none">
+              <span className="inline-flex items-center gap-1 text-[11px] text-dim shrink-0 leading-none">
                 <Loader2 className="w-2.5 h-2.5 animate-spin" />
                 <span>{connState === "connected" ? "Syncing…" : "Reconnecting…"}</span>
               </span>
@@ -247,7 +240,7 @@ export function SurfaceDetailHeader({
         </button>
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0 pr-1">
+      <div className="flex items-center gap-1 shrink-0 pr-1">
         {chatAvailable && (
           <ModeSegmentedToggle
             activeMode={activeMode}
@@ -258,18 +251,18 @@ export function SurfaceDetailHeader({
         <button
           type="button"
           onClick={() => setShowMoreMenu((prev) => !prev)}
-          className="w-9 h-9 rounded-xl bg-raised hover:bg-line active:opacity-75 text-fg flex items-center justify-center transition-colors"
+          className="w-8 h-8 rounded-lg hover:bg-raised active:opacity-75 text-muted hover:text-fg flex items-center justify-center transition-colors"
           title="Tab options"
           aria-label="Tab options"
         >
-          <MoreHorizontal className="w-5 h-5" />
+          <MoreHorizontal className="w-4 h-4" />
         </button>
       </div>
 
       {showMoreMenu && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
-          <div className="absolute right-3 top-[calc(100%+6px)] z-50 w-52 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
+          <div className="absolute right-2.5 top-[calc(100%+4px)] z-50 w-48 rounded-lg bg-surface border border-line-strong shadow-2xl py-1 overflow-hidden">
             {canCreateSurface && (
               <button
                 type="button"
@@ -277,9 +270,9 @@ export function SurfaceDetailHeader({
                   setShowMoreMenu(false);
                   onOpenNewModal();
                 }}
-                className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                className="w-full min-h-[38px] px-3.5 flex items-center gap-2.5 text-[13px] font-medium text-fg-soft hover:text-fg hover:bg-raised transition-colors"
               >
-                <Plus className="w-4 h-4 text-muted" />
+                <Plus className="w-3.5 h-3.5 text-muted" />
                 <span>New Tab</span>
               </button>
             )}
@@ -290,9 +283,9 @@ export function SurfaceDetailHeader({
                   setShowMoreMenu(false);
                   onRequestRename();
                 }}
-                className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                className="w-full min-h-[38px] px-3.5 flex items-center gap-2.5 text-[13px] font-medium text-fg-soft hover:text-fg hover:bg-raised transition-colors"
               >
-                <Pencil className="w-4 h-4 text-muted" />
+                <Pencil className="w-3.5 h-3.5 text-muted" />
                 <span>Rename Tab</span>
               </button>
             )}
@@ -303,10 +296,10 @@ export function SurfaceDetailHeader({
                   setShowMoreMenu(false);
                   onForkConversation();
                 }}
-                className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+                className="w-full min-h-[38px] px-3.5 flex items-center gap-2.5 text-[13px] font-medium text-fg-soft hover:text-fg hover:bg-raised transition-colors"
               >
-                <GitFork className="w-4 h-4 text-muted" />
-                <span>Fork conversation</span>
+                <GitFork className="w-3.5 h-3.5 text-muted" />
+                <span>Fork Conversation</span>
               </button>
             )}
             <button
@@ -315,25 +308,23 @@ export function SurfaceDetailHeader({
                 setShowMoreMenu(false);
                 handleForceReload();
               }}
-              className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
+              className="w-full min-h-[38px] px-3.5 flex items-center gap-2.5 text-[13px] font-medium text-fg-soft hover:text-fg hover:bg-raised transition-colors"
             >
-              <RefreshCw className="w-4 h-4 text-muted" />
+              <RefreshCw className="w-3.5 h-3.5 text-muted" />
               <span>Reload App</span>
             </button>
             {canCloseSurface && (
-              <div className="border-t border-white/[0.08] mt-1 pt-1">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    onRequestClose();
-                  }}
-                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-rose-400 hover:bg-rose-500/10 active:bg-rose-500/20 transition-colors"
-                >
-                  <X className="w-4 h-4" />
-                  <span>Close Tab</span>
-                </button>
-              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  setShowMoreMenu(false);
+                  onRequestClose();
+                }}
+                className="w-full min-h-[38px] px-3.5 flex items-center gap-2.5 text-[13px] font-medium text-status-err hover:bg-status-err/10 border-t border-line transition-colors"
+              >
+                <X className="w-3.5 h-3.5" />
+                <span>Close Tab</span>
+              </button>
             )}
           </div>
         </>

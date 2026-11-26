@@ -203,12 +203,12 @@ export function App() {
         <div className="flex flex-col shrink-0 z-30">
           {topBrandHeader}
           {hostSession.connState === "error" && errorMessage && (
-            <div className="mx-4 my-2 px-3.5 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-300 text-[12.5px] flex items-center justify-between gap-2 animate-fade-in">
+            <div className="mx-3 my-1.5 px-3 py-2 rounded-lg bg-status-err/10 border border-status-err/25 text-status-err text-[12px] flex items-center justify-between gap-2 animate-fade-in">
               <span className="leading-tight">{errorMessage}</span>
               <button
                 type="button"
                 onClick={() => wsClient.connect()}
-                className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-[11.5px] font-semibold shrink-0"
+                className="px-2 py-0.5 rounded bg-status-err/15 hover:bg-status-err/25 text-fg text-[11px] font-medium shrink-0"
               >
                 Retry
               </button>

@@ -68,17 +68,17 @@ export function MobileNativeChatPromptCard({
         type="button"
         data-testid="prompt-strip"
         onClick={() => setCollapsed(false)}
-        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-xl border border-white/[0.1] bg-surface hover:bg-raised text-left transition-colors"
+        className="w-full flex items-center justify-between gap-2 px-3 py-2 rounded-lg border border-line-strong bg-surface hover:bg-raised text-left transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1">
-          <MessageSquareMore className="w-4 h-4 text-accent-soft shrink-0" />
-          <span className="text-xs font-medium text-fg truncate">
+          <MessageSquareMore className="w-3.5 h-3.5 text-status-wait shrink-0" />
+          <span className="text-[12.5px] font-medium text-fg truncate">
             {activeStep.question || awaiting.prompt || "Question awaiting your answer"}
           </span>
         </div>
-        <div className="flex items-center gap-1 text-[11px] font-semibold text-accent-soft shrink-0">
+        <div className="flex items-center gap-1 text-[11px] font-medium text-fg-soft shrink-0">
           {totalSteps > 1 && (
-            <span className="font-mono">
+            <span className="font-mono text-muted">
               {stepIndex + 1}/{totalSteps} ·{" "}
             </span>
           )}
@@ -139,9 +139,9 @@ export function MobileNativeChatPromptCard({
       role="region"
       aria-label="Agent question"
       data-testid="docked-prompt-card"
-      className="rounded-xl border border-white/[0.1] bg-surface overflow-hidden"
+      className="rounded-lg border border-line-strong bg-surface overflow-hidden"
     >
-      <div className="flex items-start justify-between gap-2 px-3.5 pt-2.5 pb-2 bg-white/[0.02] border-b border-white/[0.06]">
+      <div className="flex items-start justify-between gap-2 px-3 py-2 bg-sidebar border-b border-line">
         <div className="flex items-start gap-2 min-w-0 flex-1">
           {stepIndex > 0 ? (
             <button
@@ -149,36 +149,36 @@ export function MobileNativeChatPromptCard({
               disabled={submitting}
               onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
               aria-label="Previous question"
-              className="w-6 h-6 -ml-1 rounded-lg hover:bg-white/[0.08] text-accent-soft flex items-center justify-center shrink-0"
+              className="w-6 h-6 -ml-1 rounded-[5px] hover:bg-raised text-fg-soft flex items-center justify-center shrink-0"
             >
-              <ChevronLeft className="w-4 h-4" />
+              <ChevronLeft className="w-3.5 h-3.5" />
             </button>
           ) : (
-            <MessageSquareMore className="w-4 h-4 text-accent-soft shrink-0 mt-0.5" />
+            <MessageSquareMore className="w-3.5 h-3.5 text-status-wait shrink-0 mt-0.5" />
           )}
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-accent-soft">
+            <div className="flex items-center gap-2 text-[10.5px] font-semibold uppercase tracking-wider text-muted">
               <span>{isMulti ? "Select all that apply" : "Question"}</span>
               {totalSteps > 1 && (
-                <span className="px-1.5 py-0.2 rounded bg-accent/20 font-mono tabular-nums">
+                <span className="px-1.5 py-0.2 rounded bg-raised text-fg-soft font-mono tabular-nums">
                   {stepIndex + 1}/{totalSteps}
                 </span>
               )}
             </div>
-            <div className="mt-0.5 text-[13.5px] font-medium text-fg leading-snug">
+            <div className="mt-0.5 text-[13px] font-medium text-fg leading-snug">
               <NativeChatProse content={activeStep.question || awaiting.prompt} compact />
             </div>
           </div>
         </div>
-        <div className="flex items-center gap-1 shrink-0">
+        <div className="flex items-center gap-0.5 shrink-0">
           <button
             type="button"
             onClick={() => setCollapsed(true)}
             title="Minimize question"
             aria-label="Minimize question"
-            className="w-7 h-7 rounded-lg hover:bg-white/[0.06] text-muted hover:text-fg flex items-center justify-center transition-colors"
+            className="w-6 h-6 rounded-[5px] hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors"
           >
-            <ChevronDown className="w-4 h-4" />
+            <ChevronDown className="w-3.5 h-3.5" />
           </button>
           {onCancel && (
             <button
@@ -187,15 +187,15 @@ export function MobileNativeChatPromptCard({
               onClick={() => void onCancel()}
               title="Skip / Cancel"
               aria-label="Cancel question"
-              className="w-7 h-7 rounded-lg hover:bg-rose-500/15 text-muted hover:text-rose-300 flex items-center justify-center transition-colors disabled:opacity-50"
+              className="w-6 h-6 rounded-[5px] hover:bg-status-err/15 text-muted hover:text-status-err flex items-center justify-center transition-colors disabled:opacity-50"
             >
-              <X className="w-4 h-4" />
+              <X className="w-3.5 h-3.5" />
             </button>
           )}
         </div>
       </div>
 
-      <div className="p-2.5 space-y-1.5 max-h-[44vh] overflow-y-auto scrollbar-sleek">
+      <div className="p-2 space-y-1 max-h-[44vh] overflow-y-auto scrollbar-sleek">
         {options.map((opt, idx) => {
           const selected = selectedIndices.includes(idx);
           return (
@@ -204,26 +204,26 @@ export function MobileNativeChatPromptCard({
               type="button"
               disabled={submitting}
               onClick={() => handleOptionPress(idx)}
-              className={`w-full flex items-start gap-2.5 px-3 py-2 rounded-lg border text-left transition-colors disabled:opacity-60 ${
+              className={`w-full flex items-start gap-2.5 px-2.5 py-2 rounded-md border text-left transition-colors disabled:opacity-60 ${
                 selected
-                  ? "bg-accent/15 border-accent/60 text-fg"
-                  : "bg-white/[0.025] hover:bg-white/[0.05] border-white/[0.07] text-fg-soft"
+                  ? "bg-raised border-line-strong text-fg"
+                  : "bg-sidebar/70 hover:bg-raised/60 border-line text-fg-soft"
               }`}
             >
               <span
                 className={`mt-0.5 text-[11px] font-mono tabular-nums shrink-0 w-4 text-right ${
-                  selected ? "text-accent-soft font-semibold" : "text-dim"
+                  selected ? "text-fg font-semibold" : "text-dim"
                 }`}
               >
                 {idx + 1}.
               </span>
-              <span className="flex-1 min-w-0 text-[13px] leading-snug break-words">
+              <span className="flex-1 min-w-0 text-[12.5px] leading-snug break-words">
                 <NativeChatProse content={opt} compact />
               </span>
               {isMulti ? (
                 <span
-                  className={`mt-0.5 w-4 h-4 rounded flex items-center justify-center border shrink-0 ${
-                    selected ? "bg-accent border-accent text-white" : "border-white/20"
+                  className={`mt-0.5 w-4 h-4 rounded-[4px] flex items-center justify-center border shrink-0 ${
+                    selected ? "bg-fg border-fg text-bg" : "border-line-strong"
                   }`}
                 >
                   {selected && <Check className="w-3 h-3 stroke-[3]" />}
@@ -231,7 +231,7 @@ export function MobileNativeChatPromptCard({
               ) : (
                 selected &&
                 submitting && (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin text-accent-soft mt-0.5 shrink-0" />
+                  <Loader2 className="w-3.5 h-3.5 animate-spin text-fg mt-0.5 shrink-0" />
                 )
               )}
             </button>
@@ -248,19 +248,19 @@ export function MobileNativeChatPromptCard({
                 ...(isMulti ? {} : { selectedIndices: [] }),
               })
             }
-            className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left transition-colors ${
+            className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md border text-left transition-colors ${
               isOtherOpen
-                ? "bg-accent/15 border-accent/60 text-fg"
-                : "bg-transparent hover:bg-white/[0.03] border-white/[0.06] text-muted"
+                ? "bg-raised border-line-strong text-fg"
+                : "bg-transparent hover:bg-sidebar border-line text-muted"
             }`}
           >
-            <PenLine className="w-3.5 h-3.5 text-muted shrink-0 ml-0.5" />
-            <span className="text-[12.5px] font-medium">Write-in / Other…</span>
+            <PenLine className="w-3 h-3 text-dim shrink-0 ml-0.5" />
+            <span className="text-[12px] font-medium">Write-in / Other…</span>
           </button>
         )}
 
         {(isOtherOpen || freeTextOnly) && (
-          <div className="pt-1 flex items-end gap-2">
+          <div className="pt-1 flex items-end gap-1.5">
             <textarea
               value={otherText}
               onChange={(e) => updateDraft({ otherText: e.target.value })}
@@ -289,19 +289,19 @@ export function MobileNativeChatPromptCard({
               placeholder="Type your custom answer…"
               rows={2}
               autoFocus
-              className="flex-1 bg-bg border border-accent/40 rounded-xl px-3 py-2 text-[13px] text-fg placeholder-dim focus:outline-none focus:border-accent resize-none font-sans"
+              className="flex-1 bg-bg border border-line-strong rounded-md px-2.5 py-1.5 text-[12.5px] text-fg placeholder-dim focus:outline-none focus:border-fg/50 resize-none font-sans"
             />
             {!isMulti && (
               <button
                 type="button"
                 disabled={submitting || !otherText.trim()}
                 onClick={() => void commitStepOrSubmit([], otherText)}
-                className="h-9 px-3 rounded-xl bg-accent hover:bg-accent-soft text-white font-semibold text-xs flex items-center gap-1.5 shrink-0 disabled:opacity-40 transition-colors"
+                className="h-8 px-3 rounded-md bg-fg hover:bg-accent-strong text-bg font-medium text-[12px] flex items-center gap-1.5 shrink-0 disabled:opacity-40 transition-colors"
               >
                 {submitting ? (
-                  <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                  <Loader2 className="w-3 h-3 animate-spin" />
                 ) : (
-                  <Send className="w-3.5 h-3.5" />
+                  <Send className="w-3 h-3" />
                 )}
                 <span>{isLastStep ? "Send" : "Next"}</span>
               </button>
@@ -311,19 +311,19 @@ export function MobileNativeChatPromptCard({
       </div>
 
       {isMulti && (
-        <div className="px-3 py-2 border-t border-white/[0.06] flex justify-end">
+        <div className="px-2.5 py-2 border-t border-line flex justify-end">
           <button
             type="button"
             disabled={submitting || !canSubmitManual}
             onClick={() =>
               void commitStepOrSubmit(selectedIndices, isOtherOpen ? otherText : undefined)
             }
-            className="h-8 px-3.5 rounded-xl bg-accent hover:bg-accent-soft text-white font-semibold text-xs flex items-center gap-1.5 disabled:opacity-40 transition-colors"
+            className="h-7 px-3 rounded-md bg-fg hover:bg-accent-strong text-bg font-medium text-[12px] flex items-center gap-1.5 disabled:opacity-40 transition-colors"
           >
             {submitting ? (
-              <Loader2 className="w-3.5 h-3.5 animate-spin" />
+              <Loader2 className="w-3 h-3 animate-spin" />
             ) : (
-              <Send className="w-3.5 h-3.5" />
+              <Send className="w-3 h-3" />
             )}
             <span>{isLastStep ? "Submit" : "Next"}</span>
           </button>

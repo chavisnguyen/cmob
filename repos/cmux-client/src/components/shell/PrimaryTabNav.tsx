@@ -15,12 +15,12 @@ export function PrimaryTabNav({
   return (
     <nav
       aria-label="Primary navigation"
-      className="shrink-0 grid grid-cols-3 bg-surface border-t border-line pt-1.5 pb-[max(env(safe-area-inset-bottom,0px),8px)] select-none"
+      className="shrink-0 grid grid-cols-3 bg-sidebar border-t border-line pt-1.5 pb-[max(env(safe-area-inset-bottom,0px),8px)] select-none"
     >
       {[
         { id: "workspaces" as const, label: "Workspaces", icon: FolderGit2 },
         { id: "usage" as const, label: "Usage", icon: Gauge },
-        { id: "devices" as const, label: "Devices", icon: Server },
+        { id: "devices" as const, label: "Hosts", icon: Server },
       ].map(({ id, label, icon: Icon }) => {
         const selected = mainTab === id;
         return (
@@ -32,12 +32,12 @@ export function PrimaryTabNav({
               onSelectTab(id);
             }}
             aria-current={selected ? "page" : undefined}
-            className={`flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
-              selected ? "text-fg" : "text-muted hover:text-fg-soft"
+            className={`flex flex-col items-center justify-center gap-0.5 py-0.5 transition-colors ${
+              selected ? "text-fg" : "text-dim hover:text-muted"
             }`}
           >
             <span className="relative inline-flex items-center justify-center">
-              <Icon className={`w-5 h-5 ${selected ? "text-accent-soft" : ""}`} />
+              <Icon className="w-[18px] h-[18px]" />
               {id === "workspaces" && unreadCount > 0 && (
                 <UnreadCountBadge
                   count={unreadCount}
@@ -46,7 +46,7 @@ export function PrimaryTabNav({
                 />
               )}
             </span>
-            <span className="text-[11px] font-medium">{label}</span>
+            <span className="text-[10.5px] font-medium tracking-tight">{label}</span>
           </button>
         );
       })}

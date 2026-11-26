@@ -110,25 +110,30 @@ export function RawTerminalView({
 
   const totalScale = controller.viewportMode === "desktop" ? fitScale * userScale : 1;
 
+  const statusToolbar = (
+    <TerminalToolbar
+      connState={controller.connState}
+      subscribed={controller.subscribed}
+      gridDims={gridDims}
+      tty={tty}
+      viewportMode={controller.viewportMode}
+      userScale={userScale}
+      showKeyBar={controller.showKeyBar}
+      isRefreshing={controller.isRefreshing}
+      bottomBar={isDesktop}
+      onResetZoom={resetDesktopZoom}
+      onToggleKeyBar={() => controller.setShowKeyBar((v) => !v)}
+      onToggleViewportMode={() => void handleToggleMode()}
+      onRefresh={() => void controller.handleManualRefresh()}
+    />
+  );
+
   return (
     <div
       className="flex flex-col h-full bg-bg text-fg font-mono select-none overflow-hidden"
       aria-label={surfaceTitle}
     >
-      <TerminalToolbar
-        connState={controller.connState}
-        subscribed={controller.subscribed}
-        gridDims={gridDims}
-        tty={tty}
-        viewportMode={controller.viewportMode}
-        userScale={userScale}
-        showKeyBar={controller.showKeyBar}
-        isRefreshing={controller.isRefreshing}
-        onResetZoom={resetDesktopZoom}
-        onToggleKeyBar={() => controller.setShowKeyBar((v) => !v)}
-        onToggleViewportMode={() => void handleToggleMode()}
-        onRefresh={() => void controller.handleManualRefresh()}
-      />
+      {!isDesktop && statusToolbar}
 
       <div
         ref={viewportRef}
@@ -158,7 +163,7 @@ export function RawTerminalView({
         />
 
         {controller.pasteNotice && (
-          <div className="absolute top-2 right-3 px-2.5 py-1 rounded-md bg-emerald-600/90 text-white text-[11px] font-medium shadow">
+          <div className="absolute top-2 right-3 px-2 py-0.5 rounded bg-surface border border-line-strong text-fg text-[11px] font-sans font-medium shadow">
             {controller.pasteNotice}
           </div>
         )}
@@ -173,9 +178,9 @@ export function RawTerminalView({
               event.stopPropagation();
               scrollToBottom();
             }}
-            className="absolute bottom-3 right-3 h-9 px-3.5 flex items-center gap-1.5 rounded-full bg-raised hover:bg-line text-fg text-[13px] font-medium shadow-lg border border-white/[0.14] transition-all z-10 font-sans"
+            className="absolute bottom-3 right-3 h-8 px-3 flex items-center gap-1 rounded-full bg-surface hover:bg-raised text-fg text-[12px] font-medium shadow-lg border border-line-strong transition-all z-10 font-sans"
           >
-            <ChevronDown className="w-4 h-4" />
+            <ChevronDown className="w-3.5 h-3.5" />
             <span>Bottom</span>
           </button>
         )}
@@ -196,6 +201,8 @@ export function RawTerminalView({
           onDismissKeyboard={dismissKeyboard}
         />
       )}
+
+      {isDesktop && statusToolbar}
     </div>
   );
 }

@@ -1,6 +1,5 @@
 import { memo } from "react";
 import {
-  Brain,
   ChevronDown,
   ChevronRight,
   Cpu,
@@ -15,10 +14,6 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
-import type { ThoughtStepItem, ToolCallItem, WorkRunStepItem } from "../../domain/chat/types";
-import { useChatDisclosure } from "../../state/useChatDisclosure";
-import { TaskChecklistRows } from "./ChatWorkPrimitives";
-import { MobileNativeChatDiffCard } from "./MobileNativeChatDiffCard";
 import { describeTaskToolCall, formatChatDuration } from "../../domain/chat/taskList";
 import {
   classifyToolCategory,
@@ -27,6 +22,10 @@ import {
   parseEditDetails,
   type ToolCategory,
 } from "../../domain/chat/toolRunSentence";
+import type { ThoughtStepItem, ToolCallItem, WorkRunStepItem } from "../../domain/chat/types";
+import { useChatDisclosure } from "../../state/useChatDisclosure";
+import { TaskChecklistRows } from "./ChatWorkPrimitives";
+import { MobileNativeChatDiffCard } from "./MobileNativeChatDiffCard";
 
 export type { ToolCallItem } from "../../domain/chat/types";
 
@@ -67,27 +66,27 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
   const effectiveSteps: WorkRunStepItem[] = steps ?? tools.map((tool) => ({ kind: "tool", tool }));
 
   return (
-    <div className="w-full my-0.5 text-xs">
+    <div className="w-full my-0.5 text-[12px]">
       <button
         type="button"
         aria-expanded={isExpanded}
         onClick={toggleExpanded}
-        className="w-full flex items-center justify-between py-1 px-1 rounded-md hover:bg-white/[0.04] text-muted hover:text-fg-soft transition-colors min-w-0"
+        className="group w-full flex items-center justify-between py-0.5 px-1 -mx-1 rounded-[5px] hover:bg-surface/80 text-muted hover:text-fg-soft transition-colors min-w-0"
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
           {isExpanded ? (
-            <ChevronDown className="w-3.5 h-3.5 text-dim shrink-0" />
+            <ChevronDown className="w-3 h-3 text-dim shrink-0" />
           ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-dim shrink-0" />
+            <ChevronRight className="w-3 h-3 text-dim shrink-0" />
           )}
           {renderCategoryIcon(primaryCategory, !allSuccess)}
-          <span className="text-muted group-hover:text-fg-soft truncate font-sans">{summary}</span>
+          <span className="truncate font-sans">{summary}</span>
           {live && (
-            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-accent animate-pulse shrink-0" />
+            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-fg/70 animate-pulse shrink-0" />
           )}
         </div>
         {!live && !allSuccess && (
-          <span className="flex items-center gap-1 text-[10px] px-1.5 py-0.2 rounded bg-rose-500/10 text-rose-400 font-medium shrink-0">
+          <span className="flex items-center gap-1 text-[10.5px] text-status-err font-medium shrink-0">
             <XCircle className="w-3 h-3" />
             Failed
           </span>
@@ -95,23 +94,20 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
       </button>
 
       {isExpanded && (
-        <div className="ml-5 pl-3 my-1 border-l border-white/10 space-y-1.5">
+        <div className="ml-2.5 pl-3 my-1 border-l border-line space-y-1.5">
           {effectiveSteps.map((step, idx) => {
             if (step.kind === "thinking") {
               return (
                 <div
                   key={`thought-${step.thought.id}-${idx}`}
-                  className="py-1 space-y-1 text-[11.5px] font-sans text-muted"
+                  className="py-0.5 space-y-0.5 text-[11.5px] font-sans text-muted"
                 >
-                  <div className="flex items-center gap-1.5 text-dim font-medium">
-                    <Brain className="w-3.5 h-3.5 shrink-0 text-muted" />
-                    <span>
-                      {step.thought.durationSeconds && step.thought.durationSeconds > 0
-                        ? `Thought for ${formatChatDuration(step.thought.durationSeconds)}`
-                        : "Thought"}
-                    </span>
+                  <div className="text-dim font-medium">
+                    {step.thought.durationSeconds && step.thought.durationSeconds > 0
+                      ? `Thought for ${formatChatDuration(step.thought.durationSeconds)}`
+                      : "Thought"}
                   </div>
-                  <p className="pl-5 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto scrollbar-thin">
+                  <p className="whitespace-pre-wrap leading-relaxed max-h-44 overflow-y-auto scrollbar-thin">
                     {step.thought.text}
                   </p>
                 </div>
@@ -131,13 +127,11 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
                   <div className="mt-0.5 shrink-0">{renderCategoryIcon(cat, t.ok === false)}</div>
                   <div className="min-w-0 flex-1">
                     <div className="flex items-center justify-between gap-2">
-                      <span className="font-medium text-fg-soft text-[11.5px] font-mono truncate">
+                      <span className="text-fg-soft text-[11.5px] font-mono truncate">
                         {itemLabel}
                       </span>
                       {t.isEnd && t.ok === false && (
-                        <span className="text-[9px] px-1 rounded shrink-0 bg-rose-500/10 text-rose-400">
-                          failed
-                        </span>
+                        <span className="text-[10px] shrink-0 text-status-err">failed</span>
                       )}
                     </div>
                     {taskInfo?.list && taskInfo.list.tasks.length > 0 ? (
@@ -148,7 +142,7 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
                       !taskInfo &&
                       t.detail &&
                       !editDetails && (
-                        <p className="mt-0.5 text-muted text-[10.5px] font-mono whitespace-pre-wrap break-all max-h-32 overflow-y-auto scrollbar-thin">
+                        <p className="mt-0.5 text-dim text-[11px] font-mono whitespace-pre-wrap break-all max-h-28 overflow-y-auto scrollbar-thin">
                           {t.detail}
                         </p>
                       )
@@ -176,27 +170,27 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
 });
 
 function renderCategoryIcon(cat: ToolCategory, failed = false) {
-  const errCls = failed ? "text-rose-400" : undefined;
+  const cls = `w-3 h-3 shrink-0 ${failed ? "text-status-err" : "text-dim"}`;
   switch (cat) {
     case "read":
-      return <Eye className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-accent-soft"}`} />;
+      return <Eye className={cls} />;
     case "search":
-      return <Search className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-accent-soft"}`} />;
+      return <Search className={cls} />;
     case "listFiles":
-      return <Folder className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-accent-soft"}`} />;
+      return <Folder className={cls} />;
     case "fileChange":
-      return <Pencil className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-amber-300"}`} />;
+      return <Pencil className={cls} />;
     case "command":
-      return <SquareTerminal className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-amber-400"}`} />;
+      return <SquareTerminal className={cls} />;
     case "webSearch":
-      return <Globe className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-emerald-400"}`} />;
+      return <Globe className={cls} />;
     case "mcp":
-      return <Plug className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-sky-400"}`} />;
+      return <Plug className={cls} />;
     case "subagent":
-      return <Cpu className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-accent-soft"}`} />;
+      return <Cpu className={cls} />;
     case "todoList":
-      return <ListChecks className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-accent-soft"}`} />;
+      return <ListChecks className={cls} />;
     case "other":
-      return <Wrench className={`w-3.5 h-3.5 shrink-0 ${errCls ?? "text-muted"}`} />;
+      return <Wrench className={cls} />;
   }
 }

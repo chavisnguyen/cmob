@@ -5,11 +5,14 @@
 //! and `sysctl([CTL_KERN, KERN_PROC, KERN_PROCARGS2, pid])` ONLY for processes attached to a
 //! controlling TTY) completing in `< 1.5ms`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::ffi::CStr;
 use std::mem::size_of;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use crate::domain::child_work_fsm::{
+    is_ambient_helper_process, is_remote_shell_command, SurfaceRunEpoch,
+};
 use crate::scanner::workspace_tree::WorkspaceTreeBuilder;
 
 /// `NODEV` (`(dev_t)-1`) on Darwin indicates a process has no controlling terminal.
@@ -28,6 +31,7 @@ unsafe extern "C" {
 
 pub struct TtyProcessEntry {
     pub pid: u32,
+    pub ppid: u32,
     pub tty: String,
     pub start_tvsec: u64,
     pub command: String,
@@ -213,12 +217,156 @@ pub fn list_tty_processes() -> Option<Vec<TtyProcessEntry>> {
         let command = read_proc_command_line(pid, &bsd);
         entries.push(TtyProcessEntry {
             pid: pid as u32,
+            ppid: bsd.pbi_ppid,
             tty,
             start_tvsec: bsd.pbi_start_tvsec,
             command,
         });
     }
     Some(entries)
+}
+
+/// Scans kernel process table once (`< 1.5ms`) to compute `SurfaceRunEpoch` per TTY, including
+/// leaf coding-agent PID selection (ignoring outer `agys` wrappers) and full descendant `PPID`
+/// tree liveness (ignoring ambient MCP / `cmux hooks` helpers, even across child PTYs or `NODEV`).
+pub fn scan_agent_epochs_by_tty() -> Option<HashMap<String, SurfaceRunEpoch>> {
+    let mut cap_pids: usize = 2048;
+    let (pids, count) = loop {
+        let mut buf = vec![0i32; cap_pids];
+        let byte_cap = (buf.len() * size_of::<i32>()) as libc::c_int;
+        let got_bytes = unsafe { libc::proc_listallpids(buf.as_mut_ptr().cast(), byte_cap) };
+        if got_bytes <= 0 {
+            return None;
+        }
+        let got_pids = (got_bytes as usize) / size_of::<i32>();
+        if got_pids == 0 {
+            return Some(HashMap::new());
+        }
+        let n = got_pids.min(buf.len());
+        if n < buf.len() || cap_pids >= 131_072 {
+            break (buf, n);
+        }
+        cap_pids = cap_pids.saturating_mul(2);
+    };
+
+    let mut tty_cache: HashMap<u32, Option<String>> = HashMap::with_capacity(32);
+    let mut all_bsd: HashMap<u32, libc::proc_bsdinfo> = HashMap::with_capacity(count);
+    let mut children_by_ppid: HashMap<u32, Vec<u32>> = HashMap::with_capacity(count / 2);
+    let mut tty_entries: HashMap<String, Vec<TtyProcessEntry>> = HashMap::with_capacity(32);
+    let bsd_size = size_of::<libc::proc_bsdinfo>() as libc::c_int;
+
+    for &raw_pid in &pids[..count] {
+        if raw_pid <= 0 {
+            continue;
+        }
+        let mut bsd: libc::proc_bsdinfo = unsafe { std::mem::zeroed() };
+        let got = unsafe {
+            libc::proc_pidinfo(
+                raw_pid,
+                libc::PROC_PIDTBSDINFO,
+                0,
+                (&mut bsd as *mut libc::proc_bsdinfo).cast::<libc::c_void>(),
+                bsd_size,
+            )
+        };
+        if got != bsd_size || bsd.pbi_status == DARWIN_SZOMB {
+            continue;
+        }
+        let upid = raw_pid as u32;
+        children_by_ppid
+            .entry(bsd.pbi_ppid)
+            .or_default()
+            .push(upid);
+        all_bsd.insert(upid, bsd);
+
+        if let Some(tty) = resolve_tty_name(bsd.e_tdev, &mut tty_cache) {
+            let command = read_proc_command_line(raw_pid, &bsd);
+            tty_entries.entry(tty.clone()).or_default().push(TtyProcessEntry {
+                pid: upid,
+                ppid: bsd.pbi_ppid,
+                tty,
+                start_tvsec: bsd.pbi_start_tvsec,
+                command,
+            });
+        }
+    }
+
+    let mut cmd_by_pid: HashMap<u32, String> = HashMap::new();
+    for list in tty_entries.values() {
+        for e in list {
+            cmd_by_pid.insert(e.pid, e.command.clone());
+        }
+    }
+
+    let mut epochs: HashMap<String, SurfaceRunEpoch> = HashMap::with_capacity(tty_entries.len());
+    for (tty, list) in &tty_entries {
+        let agent_procs: Vec<&TtyProcessEntry> = list
+            .iter()
+            .filter(|e| WorkspaceTreeBuilder::recognize_command_line(&e.command).is_some())
+            .collect();
+
+        if !agent_procs.is_empty() {
+            let agent_ppids: HashSet<u32> = agent_procs.iter().map(|e| e.ppid).collect();
+            // Pick leaf coding-agent process (so `agy` wins over outer `agys` wrapper on the same TTY).
+            let leaf = agent_procs
+                .iter()
+                .copied()
+                .filter(|e| !agent_ppids.contains(&e.pid))
+                .max_by_key(|e| (e.start_tvsec, e.pid))
+                .or_else(|| agent_procs.iter().copied().max_by_key(|e| (e.start_tvsec, e.pid)))
+                .expect("non-empty agent_procs");
+
+            let mut has_live_children = false;
+            let mut queue: VecDeque<(u32, usize)> = VecDeque::new();
+            let mut visited: HashSet<u32> = HashSet::new();
+            visited.insert(leaf.pid);
+            if let Some(direct) = children_by_ppid.get(&leaf.pid) {
+                for &cpid in direct {
+                    queue.push_back((cpid, 1));
+                }
+            }
+            while let Some((cpid, depth)) = queue.pop_front() {
+                if !visited.insert(cpid) {
+                    continue;
+                }
+                let cmd = if let Some(existing) = cmd_by_pid.get(&cpid) {
+                    existing.clone()
+                } else if let Some(bsd) = all_bsd.get(&cpid) {
+                    let s = read_proc_command_line(cpid as i32, bsd);
+                    cmd_by_pid.insert(cpid, s.clone());
+                    s
+                } else {
+                    String::new()
+                };
+                if !is_ambient_helper_process(&cmd) {
+                    has_live_children = true;
+                    break;
+                }
+                if depth < 8
+                    && let Some(grandchildren) = children_by_ppid.get(&cpid)
+                {
+                    for &gcpid in grandchildren {
+                        queue.push_back((gcpid, depth + 1));
+                    }
+                }
+            }
+
+            epochs.insert(
+                tty.clone(),
+                SurfaceRunEpoch::LocalAgentAlive {
+                    pid: leaf.pid,
+                    start_ms: leaf.start_tvsec.saturating_mul(1_000),
+                    has_live_children,
+                },
+            );
+        } else if list.iter().any(|e| is_remote_shell_command(&e.command)) {
+            epochs.insert(tty.clone(), SurfaceRunEpoch::RemoteOrUnknown);
+        } else {
+            epochs.insert(tty.clone(), SurfaceRunEpoch::LocalNoAgent);
+        }
+    }
+
+    Some(epochs)
 }
 
 pub type AgentKindsByTty = HashMap<String, HashSet<&'static str>>;

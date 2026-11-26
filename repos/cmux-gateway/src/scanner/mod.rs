@@ -1,3 +1,4 @@
+pub mod child_reconciler;
 pub mod hook_store;
 pub mod kiro_store;
 pub mod liveness;

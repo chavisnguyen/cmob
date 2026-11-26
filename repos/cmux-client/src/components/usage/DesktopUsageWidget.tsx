@@ -11,9 +11,9 @@ import {
 const LazyUsageBody = lazy(() => import("./UsageView").then((m) => ({ default: m.UsageBody })));
 
 const DOT_CLASS: Record<UsageTone, string> = {
-  emerald: "bg-emerald-400",
-  amber: "bg-amber-400",
-  rose: "bg-rose-400",
+  emerald: "bg-dim",
+  amber: "bg-status-wait",
+  rose: "bg-status-err",
 };
 
 export function DesktopUsageWidget({
@@ -55,7 +55,6 @@ export function DesktopUsageWidget({
   }, [open]);
 
   const effectiveNow = Math.max(now, localNow);
-
   const headline = snapshot ? tightestHeadlineAcrossProviders(snapshot.providers) : null;
 
   return (
@@ -66,22 +65,20 @@ export function DesktopUsageWidget({
         aria-expanded={open}
         aria-label="Model usage status"
         title="Model & provider quota status"
-        className={`h-8 px-2.5 rounded-lg border text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors ${
-          open
-            ? "bg-bg border-accent/60 text-fg"
-            : "bg-raised hover:bg-line border-transparent text-fg-soft"
+        className={`h-[26px] px-2 rounded-[6px] text-[11.5px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+          open ? "bg-raised text-fg" : "hover:bg-raised text-muted hover:text-fg"
         }`}
       >
         {headline ? (
           <>
             <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${DOT_CLASS[headline.tone]}`} />
             <span>{headline.shortName}</span>
-            <span className="font-mono text-fg">{headline.usedPercent}%</span>
+            <span className="font-mono text-fg-soft tabular-nums">{headline.usedPercent}%</span>
           </>
         ) : (
           <>
-            <Gauge className="w-3.5 h-3.5 text-muted" />
-            <span>Usage</span>
+            <Gauge className="w-3.5 h-3.5 text-dim" />
+            <span>Quota</span>
           </>
         )}
       </button>
@@ -92,22 +89,22 @@ export function DesktopUsageWidget({
           <div
             role="dialog"
             aria-label="Provider usage details"
-            className="absolute right-0 top-[calc(100%+6px)] z-50 w-[380px] max-w-[calc(100vw-2rem)] max-h-[75vh] flex flex-col rounded-2xl bg-bg border border-white/[0.12] shadow-2xl overflow-hidden select-text"
+            className="absolute right-0 top-[calc(100%+6px)] z-50 w-[360px] max-w-[calc(100vw-2rem)] max-h-[75vh] flex flex-col rounded-xl bg-surface border border-line-strong shadow-2xl overflow-hidden select-text"
           >
-            <div className="flex items-center justify-between px-4 py-2.5 bg-surface border-b border-white/[0.08] shrink-0">
+            <div className="flex items-center justify-between px-3.5 py-2.5 bg-sidebar border-b border-line shrink-0">
               <div className="min-w-0">
-                <div className="text-[14px] font-semibold text-fg">Model Usage</div>
+                <div className="text-[13px] font-semibold text-fg">Model Quota</div>
                 <div className="text-[11px] text-dim truncate">
                   {hostName}
                   {snapshot ? ` · ${formatUpdatedAgo(snapshot.updated_at, effectiveNow)}` : ""}
                 </div>
               </div>
-              <div className="flex items-center gap-1 shrink-0">
+              <div className="flex items-center gap-0.5 shrink-0">
                 <button
                   type="button"
                   onClick={onRefresh}
                   disabled={connState !== "connected" || refreshing || loading}
-                  className="w-8 h-8 rounded-lg hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
+                  className="w-7 h-7 rounded-md hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
                   title="Refresh usage"
                   aria-label="Refresh usage"
                 >
@@ -118,14 +115,14 @@ export function DesktopUsageWidget({
                 <button
                   type="button"
                   onClick={() => setOpen(false)}
-                  className="w-8 h-8 rounded-lg hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors"
+                  className="w-7 h-7 rounded-md hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors"
                   aria-label="Close"
                 >
                   <X className="w-3.5 h-3.5" />
                 </button>
               </div>
             </div>
-            <div className="overflow-y-auto p-3 scrollbar-sleek">
+            <div className="overflow-y-auto p-3 scrollbar-sleek bg-bg">
               <Suspense fallback={<div className="h-24" />}>
                 <LazyUsageBody
                   connState={connState}

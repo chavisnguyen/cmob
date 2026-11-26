@@ -293,4 +293,52 @@ describe("multi-agent taskList & background work normalization", () => {
     expect(afterIdle.dockedTaskList).toBeNull();
     expect(afterIdle.backgroundWork).toBeNull();
   });
+
+  it("renders unverifiable tasks honestly as ended without inventing 32h elapsed time or spinning idle checklists", () => {
+    const unverifiableCardHtml = renderToStaticMarkup(
+      <MobileNativeChatBackgroundTasksCard
+        tasks={[
+          {
+            id: "a95fc438/task-264",
+            kind: "command",
+            label: "Sync MatchMove Slack messages",
+            state: "unverifiable",
+            started_at: 1_700_000_000_000,
+            // Intentionally omit `settled_at`: UI must NOT compute `Date.now() - started_at`!
+          },
+        ]}
+      />,
+    );
+    expect(unverifiableCardHtml).toContain("Sync MatchMove Slack messages");
+    expect(unverifiableCardHtml).toContain("ended");
+    expect(unverifiableCardHtml).not.toContain(">done<");
+    expect(unverifiableCardHtml).not.toContain("running");
+    expect(unverifiableCardHtml).not.toMatch(/\d+h\s+\d+m/);
+
+    const orphanTurn: AgentTurn[] = [
+      {
+        id: "t-orphan",
+        surface_id: "s-1",
+        role: "assistant",
+        events: [
+          {
+            kind: "background-tasks",
+            tasks: [
+              {
+                id: "a95fc438/task-264",
+                kind: "command",
+                label: "Sync MatchMove Slack messages",
+                state: "unverifiable",
+                started_at: 1_700_000_000_000,
+                settled_at: 1_700_000_003_000,
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    // Even if a new turn starts later (`isSessionWorking = true`), settled `unverifiable` tasks never resurrect!
+    const duringLaterTurn = deriveConversationTasks(orphanTurn, true);
+    expect(duringLaterTurn.backgroundWork).toBeNull();
+  });
 });

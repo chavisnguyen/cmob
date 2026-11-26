@@ -1,10 +1,10 @@
-import { useState, useCallback, useEffect, type ReactElement } from "react";
+import { useCallback, useEffect, useState, type ReactElement } from "react";
 import { QrCode, X } from "lucide-react";
-import { parsePairingInput, isStaticHostOrigin } from "../../protocol/pairing";
+import { haptic } from "../../native/haptics";
+import { isStaticHostOrigin, parsePairingInput } from "../../protocol/pairing";
 import { wsClient } from "../../transport/wsClient";
 import { canScanQr } from "./deviceUtils";
 import { QrScanModal } from "./QrScanModal";
-import { haptic } from "../../native/haptics";
 
 export function PairHostModal({
   onClose,
@@ -67,7 +67,7 @@ export function PairHostModal({
   return (
     <>
       <div
-        className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/60 backdrop-blur-[1px] animate-fade-in"
+        className="fixed inset-0 z-50 flex items-end md:items-center justify-center md:p-4 bg-black/65 backdrop-blur-[1px] animate-fade-in"
         onClick={onClose}
       >
         <div
@@ -75,26 +75,26 @@ export function PairHostModal({
           aria-modal="true"
           aria-labelledby="pair-modal-title"
           onClick={(e) => e.stopPropagation()}
-          className="w-full max-w-3xl md:max-w-md mx-auto rounded-t-2xl md:rounded-2xl bg-bg border-t md:border border-white/[0.1] shadow-2xl pb-[env(safe-area-inset-bottom,0px)] md:pb-0"
+          className="w-full max-w-3xl md:max-w-md mx-auto rounded-t-xl md:rounded-xl bg-surface border-t md:border border-line-strong shadow-2xl pb-[env(safe-area-inset-bottom,0px)] md:pb-0 overflow-hidden"
         >
-          <div className="flex items-center justify-between px-4 h-12 border-b border-white/[0.08]">
-            <h2 id="pair-modal-title" className="text-[15px] font-semibold">
-              Add a computer
+          <div className="flex items-center justify-between px-4 h-11 bg-sidebar border-b border-line">
+            <h2 id="pair-modal-title" className="text-[13.5px] font-semibold text-fg">
+              Add a Computer
             </h2>
             <button
               type="button"
               onClick={onClose}
               aria-label="Close"
-              className="w-9 h-9 rounded-xl text-muted hover:bg-raised flex items-center justify-center"
+              className="w-7 h-7 rounded-md text-muted hover:text-fg hover:bg-raised flex items-center justify-center"
             >
               <X className="w-4 h-4" />
             </button>
           </div>
 
-          <div className="px-4 py-4 space-y-5">
-            <div className="space-y-2">
-              <p className="text-[13.5px] text-muted">In a cmux terminal on that computer, run:</p>
-              <code className="block px-3 py-2.5 rounded-xl bg-surface font-mono text-[13px] text-fg select-all">
+          <div className="p-4 space-y-4 bg-bg">
+            <div className="space-y-1.5">
+              <p className="text-[12.5px] text-muted">In a cmux terminal on that Mac, run:</p>
+              <code className="block px-3 py-2 rounded-lg bg-sidebar border border-line font-mono text-[12.5px] text-fg select-all">
                 cmob qr --tailscale
               </code>
             </div>
@@ -106,10 +106,10 @@ export function PairHostModal({
                   haptic("light");
                   setScanning(true);
                 }}
-                className="w-full h-11 rounded-xl bg-accent hover:bg-accent-strong text-white text-[14px] font-semibold flex items-center justify-center gap-2 transition-colors"
+                className="w-full h-9 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[13px] font-medium flex items-center justify-center gap-2 transition-colors"
               >
-                <QrCode className="w-4 h-4" />
-                <span>Scan the QR code</span>
+                <QrCode className="w-3.5 h-3.5" />
+                <span>Scan QR Code</span>
               </button>
             )}
 
@@ -118,10 +118,10 @@ export function PairHostModal({
                 e.preventDefault();
                 if (pasted.trim()) propose(pasted);
               }}
-              className="space-y-2"
+              className="space-y-1.5"
             >
-              <label htmlFor="pair-input" className="text-[13px] text-muted block">
-                Or paste the pairing link
+              <label htmlFor="pair-input" className="text-[12px] text-muted block">
+                Or paste pairing link
               </label>
               <div className="flex gap-2">
                 <input
@@ -138,18 +138,18 @@ export function PairHostModal({
                   autoCapitalize="none"
                   spellCheck={false}
                   placeholder="https://… or cmux_sec_…"
-                  className="flex-1 min-w-0 h-11 bg-surface border border-line focus:border-accent rounded-xl px-3 text-[13px] font-mono text-fg placeholder-dim outline-none"
+                  className="flex-1 min-w-0 h-9 bg-surface border border-line-strong focus:border-fg/60 rounded-lg px-3 text-[12.5px] font-mono text-fg placeholder-dim outline-none"
                 />
                 <button
                   type="submit"
                   disabled={!pasted.trim()}
-                  className="h-11 px-4 rounded-xl bg-raised hover:bg-line disabled:opacity-40 disabled:pointer-events-none text-[14px] font-semibold text-fg transition-colors shrink-0"
+                  className="h-9 px-3.5 rounded-lg bg-fg hover:bg-accent-strong disabled:opacity-40 disabled:pointer-events-none text-[13px] font-medium text-bg transition-colors shrink-0"
                 >
                   Pair
                 </button>
               </div>
               {pasteError && (
-                <p role="alert" className="text-[12.5px] text-rose-300 leading-snug">
+                <p role="alert" className="text-[12px] text-status-err leading-snug">
                   {pasteError}
                 </p>
               )}

@@ -152,7 +152,7 @@ export function useXtermInstance({
       cursorBlink: true,
       convertEol: false,
       disableStdin: false,
-      theme: { background: "#0a0a0a", foreground: "#fafafa", cursor: "#fcfcfa" },
+      theme: { background: "#141413", foreground: "#ededeb", cursor: "#ededeb" },
     });
 
     const unicodeAddon = new Unicode11Addon();

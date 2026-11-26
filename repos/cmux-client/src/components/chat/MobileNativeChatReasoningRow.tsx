@@ -1,7 +1,7 @@
 import { memo } from "react";
-import { Brain, ChevronDown, ChevronRight } from "lucide-react";
-import { useChatDisclosure } from "../../state/useChatDisclosure";
+import { ChevronDown, ChevronRight } from "lucide-react";
 import { formatChatDuration } from "../../domain/chat/taskList";
+import { useChatDisclosure } from "../../state/useChatDisclosure";
 
 interface MobileNativeChatReasoningRowProps {
   id: string;
@@ -35,7 +35,7 @@ export const MobileNativeChatReasoningRow = memo(function MobileNativeChatReason
 
   let headline = "Thought";
   if (live) {
-    headline = "Reasoning";
+    headline = "Thinking";
   } else if (durationSeconds !== undefined && durationSeconds > 0) {
     headline = `Thought for ${formatChatDuration(durationSeconds)}`;
   }
@@ -43,37 +43,31 @@ export const MobileNativeChatReasoningRow = memo(function MobileNativeChatReason
   const preview = !isExpanded ? extractFirstLinePreview(text) : "";
 
   return (
-    <div className="w-full my-0.5 text-xs">
+    <div className="w-full my-0.5 text-[12px]">
       <button
         type="button"
         aria-expanded={isExpanded}
         onClick={toggleExpanded}
-        className="w-full flex items-center justify-between py-1 px-1 rounded-md hover:bg-white/[0.04] text-muted hover:text-fg-soft transition-colors min-w-0"
+        className="w-full flex items-center justify-between py-0.5 px-1 -mx-1 rounded-[5px] hover:bg-surface/80 text-muted hover:text-fg-soft transition-colors min-w-0"
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
           {isExpanded ? (
-            <ChevronDown className="w-3.5 h-3.5 text-muted shrink-0" />
+            <ChevronDown className="w-3 h-3 text-dim shrink-0" />
           ) : (
-            <ChevronRight className="w-3.5 h-3.5 text-muted shrink-0" />
+            <ChevronRight className="w-3 h-3 text-dim shrink-0" />
           )}
-          <Brain
-            className={`w-3.5 h-3.5 shrink-0 ${live ? "text-accent-soft animate-pulse" : "text-muted"}`}
-          />
-          <span className="font-medium text-fg-soft shrink-0">{headline}</span>
+          <span className="font-medium text-muted shrink-0">{headline}</span>
           {preview && (
             <span className="text-[11.5px] text-dim truncate font-sans">· {preview}</span>
           )}
           {live && (
-            <span className="flex h-1.5 w-1.5 relative shrink-0">
-              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-accent-soft opacity-75" />
-              <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-accent" />
-            </span>
+            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-fg/70 animate-pulse shrink-0" />
           )}
         </div>
       </button>
 
       {isExpanded && (
-        <div className="ml-5 pl-3 my-1 border-l border-white/10 text-[12px] font-sans text-muted whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto scrollbar-thin">
+        <div className="ml-2.5 pl-3 my-1 border-l border-line text-[12px] font-sans text-muted whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto scrollbar-thin">
           {text.trim()}
         </div>
       )}

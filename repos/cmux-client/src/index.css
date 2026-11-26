@@ -19,11 +19,11 @@ body,
   position: fixed;
   inset: 0;
   top: var(--app-top, 0px);
-  background-color: #101113;
-  color: #f2f4f7;
-  font-family:
-    -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", "Segoe UI", Roboto, Helvetica, Arial,
-    sans-serif;
+  background-color: #141413;
+  color: #ededeb;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Inter", system-ui, sans-serif;
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  letter-spacing: -0.008em;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
@@ -36,7 +36,8 @@ code,
 pre,
 .font-mono {
   font-family:
-    ui-monospace, SFMono-Regular, "SF Mono", Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+    "SF Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  letter-spacing: -0.01em;
 }
 
 code {
@@ -62,7 +63,7 @@ code {
 }
 
 .cmux-xterm-host .xterm {
-  padding: 6px;
+  padding: 6px 8px;
 }
 
 .cmux-xterm-host .xterm-viewport {
@@ -86,13 +87,13 @@ code {
 .scrollbar-thin,
 .scrollbar-sleek {
   scrollbar-width: thin;
-  scrollbar-color: rgba(255, 255, 255, 0.14) transparent;
+  scrollbar-color: rgba(237, 237, 235, 0.14) transparent;
 }
 
 .scrollbar-thin::-webkit-scrollbar,
 .scrollbar-sleek::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 5px;
+  height: 5px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-track,
@@ -102,31 +103,41 @@ code {
 
 .scrollbar-thin::-webkit-scrollbar-thumb,
 .scrollbar-sleek::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.14);
+  background: rgba(237, 237, 235, 0.14);
   border-radius: 9999px;
 }
 
 .scrollbar-thin::-webkit-scrollbar-thumb:hover,
 .scrollbar-sleek::-webkit-scrollbar-thumb:hover {
-  background: rgba(255, 255, 255, 0.24);
+  background: rgba(237, 237, 235, 0.24);
 }
 
-/* Cool neutral macOS / cmux dark palette */
+/* Warm Dark Graphite — macOS Native (cmux / Raycast) palette */
 @theme {
-  --color-bg: #101113;
-  --color-surface: #16181c;
-  --color-raised: #1e2026;
-  --color-line: #262930;
-  --color-fg: #f2f4f7;
-  --color-fg-soft: #d7dbe2;
-  --color-muted: #8b929e;
-  --color-dim: #626875;
-  --color-accent: #0a84ff;
-  --color-accent-strong: #0070e0;
-  --color-accent-soft: #5eb0ff;
+  --color-bg: #141413;
+  --color-sidebar: #181817;
+  --color-surface: #1d1d1b;
+  --color-raised: #262624;
+  --color-line: #282826;
+  --color-line-strong: #383835;
+  --color-fg: #ededeb;
+  --color-fg-soft: #c9c8c3;
+  --color-muted: #8c8b85;
+  --color-dim: #62615c;
+  --color-accent: #e6e5e0;
+  --color-accent-strong: #ffffff;
+  --color-accent-soft: #d4d3ce;
+  --color-status-wait: #d99b43;
+  --color-status-err: #d96060;
+  --color-status-ok: #68ad80;
+}
+
+::selection {
+  background: rgba(237, 237, 235, 0.18);
+  color: #ffffff;
 }
 
 :focus-visible {
-  outline: 1.5px solid rgba(10, 132, 255, 0.7);
-  outline-offset: 2px;
+  outline: 1px solid rgba(237, 237, 235, 0.45);
+  outline-offset: 1px;
 }

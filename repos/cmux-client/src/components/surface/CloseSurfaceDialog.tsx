@@ -1,12 +1,5 @@
-/**
- * Confirmation dialog before closing a terminal surface
- * Sources:
- * - ref/orca/src/renderer/src/components/editor/model-lifetime/retention/closed-editor-tab-controller.ts
- * - repos/cmux-gateway/src/server.rs:496-519 (mobile.surface.close)
- */
-
-import { AlertTriangle, Loader2 } from "lucide-react";
 import { useEffect, useState } from "react";
+import { Loader2 } from "lucide-react";
 
 interface CloseSurfaceDialogProps {
   isOpen: boolean;
@@ -50,7 +43,7 @@ export function CloseSurfaceDialog({
 
   return (
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm animate-fade-in"
+      className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/65 backdrop-blur-[1px] animate-fade-in"
       onClick={() => {
         if (!loading) onClose();
       }}
@@ -60,26 +53,21 @@ export function CloseSurfaceDialog({
         aria-modal="true"
         aria-label="Close Surface"
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-2xl bg-bg border border-white/[0.1] text-white shadow-2xl p-4.5 space-y-4"
+        className="w-full max-w-sm rounded-xl bg-surface border border-line-strong text-fg shadow-2xl p-4 space-y-3.5"
       >
-        <div className="flex items-start gap-3">
-          <div className="w-9 h-9 rounded-full bg-rose-500/15 border border-rose-500/30 text-rose-400 flex items-center justify-center shrink-0">
-            <AlertTriangle className="w-5 h-5" />
-          </div>
-          <div className="min-w-0 flex-1">
-            <h3 className="text-[16px] font-semibold text-fg">Close Surface?</h3>
-            <p className="mt-1 text-[13px] text-muted leading-relaxed">
-              Are you sure you want to close{" "}
-              <span className="font-semibold text-fg-soft truncate inline-block max-w-[180px] align-bottom">
-                &ldquo;{surfaceTitle}&rdquo;
-              </span>
-              ? Any running process in this terminal will be terminated.
-            </p>
-          </div>
+        <div>
+          <h3 className="text-[14.5px] font-semibold text-fg">Close Tab?</h3>
+          <p className="mt-1 text-[12.5px] text-muted leading-relaxed">
+            Close{" "}
+            <span className="font-medium text-fg truncate inline-block max-w-[190px] align-bottom">
+              &ldquo;{surfaceTitle}&rdquo;
+            </span>
+            ? Any running process in this terminal will be terminated.
+          </p>
         </div>
 
         {error && (
-          <p role="alert" className="text-[12.5px] text-rose-300 break-words">
+          <p role="alert" className="text-[12px] text-status-err break-words">
             {error}
           </p>
         )}
@@ -92,7 +80,7 @@ export function CloseSurfaceDialog({
               onClose();
             }}
             disabled={loading}
-            className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-semibold text-fg-soft transition-colors"
+            className="flex-1 h-9 rounded-lg bg-raised hover:bg-line-strong text-[13px] font-medium text-fg-soft transition-colors"
           >
             Cancel
           </button>
@@ -100,7 +88,7 @@ export function CloseSurfaceDialog({
             type="button"
             onClick={handleConfirm}
             disabled={loading}
-            className="flex-1 h-11 rounded-xl bg-rose-600 hover:bg-rose-500 disabled:opacity-50 text-[14px] font-semibold text-white flex items-center justify-center gap-1.5 shadow-sm transition-colors"
+            className="flex-1 h-9 rounded-lg bg-status-err hover:opacity-90 disabled:opacity-50 text-[13px] font-medium text-white flex items-center justify-center gap-1.5 transition-opacity"
           >
             {loading ? (
               <>
@@ -108,7 +96,7 @@ export function CloseSurfaceDialog({
                 <span>Closing…</span>
               </>
             ) : (
-              <span>Close Surface</span>
+              <span>Close Tab</span>
             )}
           </button>
         </div>

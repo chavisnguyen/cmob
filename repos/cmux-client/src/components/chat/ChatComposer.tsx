@@ -1,5 +1,5 @@
 import { forwardRef, memo, useImperativeHandle, useLayoutEffect, useRef, useState } from "react";
-import { ImagePlus, Loader2, Send, Square } from "lucide-react";
+import { ArrowUp, ImagePlus, Loader2, Square } from "lucide-react";
 import type { AgentLifecycleState } from "../../protocol/event";
 import { agentDisplayName } from "../common/agentBrand";
 import { hasAgentOptions } from "./agentOptions";
@@ -192,7 +192,7 @@ export const ChatComposer = memo(
           />
         )}
 
-        <div className="flex items-end gap-1.5 bg-surface border border-white/[0.08] focus-within:border-white/[0.18] rounded-2xl pl-3.5 pr-1.5 py-1.5 transition-colors">
+        <div className="flex items-end gap-1.5 bg-surface border border-line focus-within:border-line-strong rounded-xl pl-3 pr-1.5 py-1.5 transition-colors">
           <textarea
             ref={composerRef}
             rows={1}
@@ -223,7 +223,7 @@ export const ChatComposer = memo(
             enterKeyHint={isDesktop ? "send" : "enter"}
             placeholder={`Message ${agentDisplayName(agentKind)}...`}
             title={isDesktop ? "Enter to send, Shift+Enter for newline" : undefined}
-            className="flex-1 bg-transparent border-0 text-[14.5px] leading-[21px] text-fg placeholder-dim outline-none py-[5px] min-w-0 resize-none max-h-[132px]"
+            className="flex-1 bg-transparent border-0 text-[13.5px] leading-[20px] text-fg placeholder-dim outline-none py-[4px] min-w-0 resize-none max-h-[132px]"
           />
 
           {onUploadImage && (
@@ -240,7 +240,7 @@ export const ChatComposer = memo(
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
                 disabled={images.length + uploading >= MAX_IMAGES_PER_MESSAGE}
-                className="w-8 h-8 rounded-xl shrink-0 flex items-center justify-center text-dim hover:text-fg hover:bg-white/[0.05] transition-colors disabled:opacity-30"
+                className="w-7 h-7 rounded-[7px] shrink-0 flex items-center justify-center text-dim hover:text-fg hover:bg-raised transition-colors disabled:opacity-30"
                 title="Attach image"
                 aria-label="Attach image"
               >
@@ -254,14 +254,14 @@ export const ChatComposer = memo(
               type="button"
               onClick={() => void onInterrupt()}
               disabled={isStopping}
-              className="w-8 h-8 bg-white/[0.06] hover:bg-rose-500/15 hover:text-rose-300 border border-white/[0.08] text-fg-soft rounded-xl transition-colors shrink-0 flex items-center justify-center disabled:opacity-50"
+              className="w-7 h-7 bg-raised hover:bg-status-err/15 hover:text-status-err text-fg-soft rounded-[7px] transition-colors shrink-0 flex items-center justify-center disabled:opacity-50"
               title={isStopping ? "Stopping..." : "Stop the agent (Escape)"}
               aria-label={isStopping ? "Stopping" : "Stop"}
             >
               {isStopping ? (
-                <Loader2 className="w-3.5 h-3.5 animate-spin text-rose-400" />
+                <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Square className="w-3 h-3 fill-current text-rose-400" />
+                <Square className="w-2.5 h-2.5 fill-current" />
               )}
             </button>
           ) : (
@@ -269,14 +269,14 @@ export const ChatComposer = memo(
               type="button"
               onClick={() => void handleSendPrompt()}
               disabled={(!inputText.trim() && images.length === 0) || isSubmitting || uploading > 0}
-              className="w-8 h-8 bg-accent hover:bg-accent-strong disabled:bg-white/[0.04] disabled:text-dim text-white rounded-xl transition-colors shrink-0 flex items-center justify-center"
+              className="w-7 h-7 bg-fg hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-bg rounded-[7px] transition-colors shrink-0 flex items-center justify-center"
               title="Send prompt"
               aria-label="Send"
             >
               {isSubmitting ? (
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
               ) : (
-                <Send className="w-4 h-4" />
+                <ArrowUp className="w-4 h-4 stroke-[2.25]" />
               )}
             </button>
           )}

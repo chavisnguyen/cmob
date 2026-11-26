@@ -5,7 +5,7 @@ interface UnreadCountBadgeProps {
 }
 
 /**
- * Native cmux-style solid `#0A84FF` unread notification count pill (`1`, `2`, ..., `99+`).
+ * High-contrast monochrome counter pill matching Raycast / macOS source-list badges.
  */
 export function UnreadCountBadge({
   count = 0,
@@ -16,14 +16,14 @@ export function UnreadCountBadge({
   const label = count > 99 ? "99+" : String(count);
   const dims =
     size === "sm"
-      ? "min-w-[16px] h-[16px] px-1 text-[10.5px]"
-      : "min-w-[19px] h-[19px] px-1.5 text-[11.5px]";
+      ? "min-w-[16px] h-[15px] px-1 text-[10px]"
+      : "min-w-[18px] h-[17px] px-1.5 text-[11px]";
 
   return (
     <span
       data-testid="unread-count-badge"
       aria-label={`${count} unread ${count === 1 ? "notification" : "notifications"}`}
-      className={`inline-flex items-center justify-center rounded-full bg-[#0A84FF] text-white font-bold leading-none tabular-nums shrink-0 shadow-xs ${dims} ${className}`.trim()}
+      className={`inline-flex items-center justify-center rounded-full bg-fg text-bg font-semibold leading-none tabular-nums shrink-0 ${dims} ${className}`.trim()}
     >
       {label}
     </span>

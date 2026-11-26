@@ -2,6 +2,7 @@ pub mod agent_options;
 pub mod agent_profile;
 pub mod agents;
 pub mod canonical_turn;
+pub mod child_work_fsm;
 pub mod dialog;
 pub mod lifecycle;
 pub mod noise_filter;

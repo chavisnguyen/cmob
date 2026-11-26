@@ -15,8 +15,9 @@ import { AgentIcon } from "../common/AgentIcon";
 import { UnreadCountBadge } from "../common/UnreadCountBadge";
 import { displaySurfaceTitle } from "../surface/surfaceTitle";
 
-interface DesktopTabStripProps {
+export interface DesktopTabStripProps {
   workspace: WorkspaceNode | null;
+  sectionTitle?: string;
   surfaces: SurfaceNode[];
   activeSurface: SurfaceNode | null;
   sidebarCollapsed: boolean;
@@ -27,11 +28,17 @@ interface DesktopTabStripProps {
   onCloseSurface: (surface: SurfaceNode) => void;
   onOpenChanges: () => void;
   onRefresh: () => void;
+  extraControls?: ReactNode;
   usageWidget?: ReactNode;
 }
 
+/**
+ * Single 38px macOS toolbar merging sidebar toggle, native tab strip, Chat/Term switch,
+ * Git changes, and provider quota into one crisp horizontal chrome bar.
+ */
 export function DesktopTabStrip({
   workspace,
+  sectionTitle,
   surfaces,
   activeSurface,
   sidebarCollapsed,
@@ -42,29 +49,34 @@ export function DesktopTabStrip({
   onCloseSurface,
   onOpenChanges,
   onRefresh,
+  extraControls,
   usageWidget,
 }: DesktopTabStripProps) {
   const activeKey = activeSurface?.id || activeSurface?.ref || "";
 
   return (
-    <div className="flex items-center justify-between gap-2 h-11 px-3 bg-bg border-b border-white/[0.06] shrink-0 select-none">
-      <div className="flex items-center gap-1.5 min-w-0 flex-1">
+    <header className="flex items-stretch justify-between h-[38px] bg-[#10100f] shadow-[inset_0_-1px_0_var(--color-line)] shrink-0 select-none">
+      <div className="flex items-stretch min-w-0 flex-1">
         <button
           type="button"
           onClick={onToggleSidebar}
-          className="w-8 h-8 rounded-lg hover:bg-raised text-muted hover:text-fg flex items-center justify-center shrink-0 transition-colors"
+          className="w-[38px] h-full border-r border-b border-line hover:bg-[#1a1a18] text-muted hover:text-fg flex items-center justify-center shrink-0 transition-colors"
           title={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
           aria-label={sidebarCollapsed ? "Show sidebar" : "Hide sidebar"}
         >
           {sidebarCollapsed ? (
-            <PanelLeftOpen className="w-4 h-4" />
+            <PanelLeftOpen className="w-3.5 h-3.5" />
           ) : (
-            <PanelLeftClose className="w-4 h-4" />
+            <PanelLeftClose className="w-3.5 h-3.5" />
           )}
         </button>
 
-        {workspace && (
-          <div className="flex items-center gap-1 min-w-0 flex-1 overflow-x-auto no-scrollbar py-1">
+        {sectionTitle ? (
+          <div className="flex items-center px-3.5 border-b border-line min-w-0 flex-1">
+            <span className="text-[13px] font-medium text-fg truncate">{sectionTitle}</span>
+          </div>
+        ) : workspace ? (
+          <div className="flex items-stretch min-w-0 flex-1 overflow-x-auto no-scrollbar">
             {surfaces.map((surf) => {
               const key = surf.id || surf.ref;
               const isActive = key === activeKey;
@@ -73,38 +85,44 @@ export function DesktopTabStrip({
               return (
                 <div
                   key={key}
-                  className={`group flex items-center gap-1.5 h-7 pl-2.5 pr-1.5 rounded-lg border text-[12.5px] font-medium shrink-0 max-w-[220px] transition-colors ${
+                  className={`relative group flex items-center gap-1.5 h-full pl-3 pr-1.5 border-r border-line text-[12.5px] shrink-0 min-w-[132px] max-w-[230px] transition-colors ${
                     isActive
-                      ? "bg-white/[0.06] border-white/[0.09] text-fg"
-                      : "bg-transparent border-transparent text-muted hover:bg-white/[0.035] hover:text-fg-soft"
+                      ? "bg-bg text-fg font-medium before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-[2px] before:bg-fg/85"
+                      : "bg-[#161615] border-b border-b-line text-fg-soft/75 hover:bg-[#1d1d1b] hover:text-fg"
                   }`}
                 >
                   <button
                     type="button"
                     onClick={() => onSelectSurface(surf)}
-                    className="flex items-center gap-1.5 min-w-0 flex-1 text-left"
+                    className="flex items-center gap-1.5 min-w-0 flex-1 h-full text-left"
                   >
-                    <span className="shrink-0 flex items-center">
+                    <span
+                      className={`shrink-0 flex items-center ${
+                        isActive ? "opacity-100" : "opacity-75 group-hover:opacity-95"
+                      }`}
+                    >
                       {surf.surface_type === "markdown" ? (
-                        <FileText className="w-3.5 h-3.5 text-[#86efac]" />
+                        <FileText className="w-3.5 h-3.5 text-muted" />
                       ) : surf.surface_type === "browser" ? (
-                        <Globe className="w-3.5 h-3.5 text-accent-soft" />
+                        <Globe className="w-3.5 h-3.5 text-muted" />
                       ) : surf.agent ? (
-                        <AgentIcon kind={surf.agent.agent_kind} size={14} />
+                        <AgentIcon kind={surf.agent.agent_kind} size={13} monochrome={!isActive} />
                       ) : (
-                        <Terminal className="w-3.5 h-3.5 text-muted" />
+                        <Terminal
+                          className={`w-3.5 h-3.5 ${isActive ? "text-fg-soft" : "text-muted"}`}
+                        />
                       )}
                     </span>
                     <UnreadCountBadge count={surf.unread_count} size="sm" />
                     <span className="truncate">{displaySurfaceTitle(surf.title)}</span>
                     {status === "running" && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-fg/85 shrink-0" />
                     )}
                     {status === "waiting" && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-amber-400 shrink-0" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-status-wait shrink-0" />
                     )}
                     {status === "error" && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-rose-400 shrink-0" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-status-err shrink-0" />
                     )}
                   </button>
 
@@ -114,7 +132,11 @@ export function DesktopTabStrip({
                       e.stopPropagation();
                       onCloseSurface(surf);
                     }}
-                    className="w-5 h-5 rounded opacity-60 group-hover:opacity-100 hover:bg-white/[0.08] text-muted hover:text-rose-300 flex items-center justify-center shrink-0 transition-opacity"
+                    className={`w-[18px] h-[18px] rounded-[4px] hover:bg-raised text-muted hover:text-fg flex items-center justify-center shrink-0 transition-opacity ${
+                      isActive
+                        ? "opacity-75 hover:opacity-100"
+                        : "opacity-0 group-hover:opacity-100"
+                    }`}
                     title={`Close ${displaySurfaceTitle(surf.title)}`}
                     aria-label={`Close ${displaySurfaceTitle(surf.title)}`}
                   >
@@ -127,27 +149,31 @@ export function DesktopTabStrip({
             <button
               type="button"
               onClick={onNewSurface}
-              className="h-8 w-8 rounded-lg hover:bg-raised text-muted hover:text-fg flex items-center justify-center shrink-0 transition-colors"
+              className="h-full w-[34px] border-r border-b border-line/70 hover:bg-[#1d1d1b] text-muted hover:text-fg flex items-center justify-center shrink-0 transition-colors"
               title="New tab"
               aria-label="New tab"
             >
-              <Plus className="w-4 h-4" />
+              <Plus className="w-3.5 h-3.5" />
             </button>
           </div>
-        )}
+        ) : null}
       </div>
 
-      <div className="flex items-center gap-1.5 shrink-0">
+      <div className="flex items-center gap-1 px-2.5 h-full border-b border-line shrink-0">
+        {extraControls}
+        {extraControls && (workspace || usageWidget) && (
+          <div className="h-3.5 w-px bg-line mx-0.5" aria-hidden="true" />
+        )}
         {usageWidget}
         {workspace && (
           <>
             <button
               type="button"
               onClick={onOpenChanges}
-              className="h-8 px-2.5 rounded-lg bg-raised hover:bg-line text-fg-soft text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors"
-              title="Git changes"
+              className="h-[26px] px-2 rounded-[6px] hover:bg-raised text-muted hover:text-fg text-[11.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
+              title="Git working tree changes"
             >
-              <GitBranch className="w-3.5 h-3.5" />
+              <GitBranch className="w-3.5 h-3.5 text-dim" />
               <span>Changes</span>
             </button>
 
@@ -155,7 +181,7 @@ export function DesktopTabStrip({
               type="button"
               onClick={onRefresh}
               disabled={loading}
-              className="w-8 h-8 rounded-lg hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
+              className="w-[26px] h-[26px] rounded-[6px] hover:bg-raised text-muted hover:text-fg flex items-center justify-center transition-colors disabled:opacity-40"
               title="Refresh workspace"
               aria-label="Refresh workspace"
             >
@@ -164,6 +190,6 @@ export function DesktopTabStrip({
           </>
         )}
       </div>
-    </div>
+    </header>
   );
 }

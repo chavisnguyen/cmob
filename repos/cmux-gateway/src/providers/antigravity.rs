@@ -64,14 +64,22 @@ fn push_agy_bg_command(
         .find_map(|l| l.strip_prefix("Task Description:").map(str::trim))
         .filter(|s| !s.is_empty())
         .map(str::to_string);
-    let desc_from_tool = tool_detail
-        .and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok())
-        .and_then(|v| {
-            v.get("toolSummary")
-                .or_else(|| v.get("CommandLine"))
-                .and_then(|s| s.as_str())
-                .map(clean_agy_arg_str)
+    let parsed_tool = tool_detail.and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
+    let is_daemon = parsed_tool
+        .as_ref()
+        .and_then(|v| v.get("IsDaemon"))
+        .is_some_and(|d| {
+            d.as_bool() == Some(true)
+                || d.as_str()
+                    .map(clean_agy_arg_str)
+                    .is_some_and(|s| s.eq_ignore_ascii_case("true"))
         });
+    let desc_from_tool = parsed_tool.and_then(|v| {
+        v.get("toolSummary")
+            .or_else(|| v.get("CommandLine"))
+            .and_then(|s| s.as_str())
+            .map(clean_agy_arg_str)
+    });
     let bg_label = desc_from_tool
         .or(desc_from_output)
         .unwrap_or_else(|| "Background command".to_string())
@@ -82,7 +90,11 @@ fn push_agy_bg_command(
         turn,
         BackgroundTaskEntry {
             id: task_id,
-            kind: BackgroundTaskKind::Command,
+            kind: if is_daemon {
+                BackgroundTaskKind::Monitor
+            } else {
+                BackgroundTaskKind::Command
+            },
             label: bg_label,
             state: SubagentState::Working,
             summary: None,

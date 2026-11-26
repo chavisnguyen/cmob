@@ -1,8 +1,11 @@
-import { lazy, Suspense, useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
 import { CloseSurfaceDialog } from "../components/surface/CloseSurfaceDialog";
 import { NewSurfaceModal, type CreateSurfaceParams } from "../components/surface/NewSurfaceModal";
 import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
-import { SurfaceDetailHeader } from "../components/surface/SurfaceDetailHeader";
+import {
+  SurfaceDetailHeader,
+  type DesktopUnifiedChromeProps,
+} from "../components/surface/SurfaceDetailHeader";
 import { SurfaceSwitchSheet } from "../components/surface/SurfaceSwitchSheet";
 import { surfaceIdentity } from "../domain/workspaceTree";
 import type { SurfaceNode, WorkspaceNode } from "../protocol/rpc";
@@ -15,6 +18,10 @@ const LazyRawTerminalView = lazy(() =>
   import("../components/terminal/RawTerminalView").then((m) => ({ default: m.RawTerminalView })),
 );
 
+export interface SurfaceDetailDesktopChrome extends DesktopUnifiedChromeProps {
+  usageWidget?: ReactNode;
+}
+
 interface SurfaceDetailViewProps {
   surface: SurfaceNode;
   workspace: WorkspaceNode;
@@ -26,6 +33,7 @@ interface SurfaceDetailViewProps {
   onCloseSurface?: (surfaceId: string) => Promise<void>;
   onRefresh?: () => void;
   desktopLayout?: boolean;
+  desktopChrome?: SurfaceDetailDesktopChrome;
 }
 
 export function SurfaceDetailView({
@@ -39,6 +47,7 @@ export function SurfaceDetailView({
   onCloseSurface,
   onRefresh,
   desktopLayout = false,
+  desktopChrome,
 }: SurfaceDetailViewProps) {
   const chat = useChatSessionController({ surface, workspace, onRefresh });
 
@@ -47,7 +56,6 @@ export function SurfaceDetailView({
   const [surfaceToRename, setSurfaceToRename] = useState<SurfaceNode | null>(null);
   const [surfaceToClose, setSurfaceToClose] = useState<SurfaceNode | null>(null);
 
-  // Idle-prefetch the xterm chunk after initial chat render so switching to Terminal tab is instant.
   useEffect(() => {
     if (chat.activeMode !== "chat") return;
     const timer = setTimeout(() => {
@@ -96,6 +104,7 @@ export function SurfaceDetailView({
         connState={chat.connState}
         isSyncing={isSyncing}
         desktopLayout={desktopLayout}
+        desktopChrome={desktopChrome}
         chatAvailable={chat.chatAvailable}
         activeMode={chat.activeMode}
         allSurfaces={allSurfaces}
@@ -104,12 +113,14 @@ export function SurfaceDetailView({
         canRenameSurface={Boolean(onRenameSurface)}
         canCloseSurface={Boolean(onCloseSurface)}
         onBack={onBack}
+        onSelectSurface={onSelectSurface}
         onOpenSwitcher={() => setShowSwitcher(true)}
         onSelectMode={chat.setViewMode}
         onOpenNewModal={() => setShowNewModal(true)}
         onRequestRename={() => setSurfaceToRename(surface)}
         onRequestClose={() => setSurfaceToClose(surface)}
         onForkConversation={() => void chat.handleForkConversation()}
+        onRefresh={onRefresh}
       />
 
       {showSwitcher && allSurfaces && onSelectSurface && (
@@ -158,11 +169,11 @@ export function SurfaceDetailView({
           </Suspense>
         ) : surface.surface_type && surface.surface_type !== "terminal" ? (
           <div className="h-full flex flex-col items-center justify-center gap-1 px-8 text-center">
-            <p className="text-[14px] font-medium text-fg-soft">
-              This tab can&apos;t be shown on mobile
+            <p className="text-[13.5px] font-medium text-fg-soft">
+              This tab can&apos;t be rendered inline
             </p>
-            <p className="text-[12.5px] text-muted">
-              It is a {surface.surface_type} tab. Open it in cmux on your computer.
+            <p className="text-[12px] text-muted">
+              It is a {surface.surface_type} surface. View it directly in cmux on your Mac.
             </p>
           </div>
         ) : (
@@ -208,7 +219,7 @@ export function SurfaceDetailView({
       {chat.forkStatus && (
         <div
           role="status"
-          className="fixed left-1/2 -translate-x-1/2 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] z-50 max-w-[90vw] px-4 py-2 rounded-xl bg-surface border border-white/[0.12] text-[13px] text-fg shadow-2xl"
+          className="fixed left-1/2 -translate-x-1/2 bottom-[calc(4.5rem+env(safe-area-inset-bottom,0px))] z-50 max-w-[90vw] px-3.5 py-2 rounded-lg bg-surface border border-line-strong text-[12.5px] text-fg shadow-2xl"
         >
           {chat.forkStatus}
         </div>

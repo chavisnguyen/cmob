@@ -1,9 +1,9 @@
 import { memo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
+import { formatWorkTokens } from "../../domain/chat/taskList";
 import type { BackgroundTaskEntry } from "../../protocol/event";
 import { useChatDisclosure } from "../../state/useChatDisclosure";
 import { BackgroundKindIcon, LiveElapsedText } from "./ChatWorkPrimitives";
-import { formatWorkTokens } from "../../domain/chat/taskList";
 
 export const MobileNativeChatBackgroundTasksCard = memo(
   function MobileNativeChatBackgroundTasksCard({
@@ -22,6 +22,9 @@ export const MobileNativeChatBackgroundTasksCard = memo(
 
     const isWorking = tasks.some((t) => t.state === "working");
     const hasFailed = tasks.some((t) => t.state === "failed");
+    const allStopped = tasks.every((t) => t.state === "stopped");
+    const allCompleted = tasks.every((t) => t.state === "completed");
+    const hasUnverifiable = tasks.some((t) => t.state === "unverifiable");
     const first = tasks[0];
     const headline =
       tasks.length === 1
@@ -32,9 +35,13 @@ export const MobileNativeChatBackgroundTasksCard = memo(
       ? "running"
       : hasFailed
         ? "failed"
-        : tasks.every((t) => t.state === "stopped")
+        : allStopped
           ? "stopped"
-          : "done";
+          : allCompleted
+            ? "done"
+            : hasUnverifiable
+              ? "ended"
+              : "done";
 
     const startedCandidates = tasks
       .map((t) => t.started_at)
@@ -49,66 +56,61 @@ export const MobileNativeChatBackgroundTasksCard = memo(
     return (
       <div
         data-testid="background-task-card"
-        className="w-full rounded-xl border border-white/[0.08] bg-surface text-xs font-mono overflow-hidden my-1 shadow-sm"
+        className="w-full rounded-lg border border-line bg-sidebar text-[12px] overflow-hidden my-1"
       >
         <button
           type="button"
           aria-expanded={expanded}
           onClick={toggleExpanded}
-          className="w-full flex items-center justify-between px-3 py-2 hover:bg-white/[0.03] text-fg-soft transition-colors"
+          className="w-full flex items-center justify-between px-2.5 py-1.5 hover:bg-surface text-fg-soft transition-colors"
         >
           <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-            <BackgroundKindIcon kind={first.kind} className="w-3.5 h-3.5" />
+            <BackgroundKindIcon kind={first.kind} className="w-3.5 h-3.5 text-dim" />
             <span className="font-medium text-fg-soft truncate font-sans">{headline}</span>
             {isWorking && (
-              <span className="flex h-1.5 w-1.5 relative shrink-0">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-amber-400 opacity-75" />
-                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-amber-500" />
-              </span>
+              <span className="w-1.5 h-1.5 rounded-full bg-fg/80 animate-pulse shrink-0" />
             )}
           </div>
-          <div className="flex items-center gap-1.5 shrink-0">
+          <div className="flex items-center gap-2 shrink-0 text-[11px] font-mono text-dim">
             {startedAt !== null && (
-              <span className="text-[10px] text-muted tabular-nums">
+              <span className="tabular-nums">
                 <LiveElapsedText startedAt={startedAt} settledAt={settledAt} counting={isWorking} />
               </span>
             )}
             <span
-              className={`text-[10px] px-1.5 py-0.5 rounded font-sans font-medium ${
-                badgeText === "done"
-                  ? "bg-emerald-500/10 text-emerald-400"
-                  : badgeText === "failed"
-                    ? "bg-rose-500/10 text-rose-400"
-                    : badgeText === "running"
-                      ? "bg-amber-500/15 text-amber-300"
-                      : "bg-white/[0.06] text-muted"
-              }`}
+              className={
+                badgeText === "failed"
+                  ? "text-status-err"
+                  : badgeText === "running"
+                    ? "text-fg-soft"
+                    : "text-muted"
+              }
             >
               {badgeText}
             </span>
             {expanded ? (
-              <ChevronUp className="w-3.5 h-3.5 text-muted" />
+              <ChevronUp className="w-3 h-3 text-dim" />
             ) : (
-              <ChevronDown className="w-3.5 h-3.5 text-muted" />
+              <ChevronDown className="w-3 h-3 text-dim" />
             )}
           </div>
         </button>
 
         {expanded && (
-          <div className="p-2 space-y-1.5 border-t border-white/[0.06] bg-bg/70">
+          <div className="p-2 space-y-1.5 border-t border-line bg-bg/60">
             {tasks.map((task) => (
               <div
                 key={task.id}
-                className="p-2 rounded-lg bg-surface border border-white/[0.06] space-y-1"
+                className="p-2 rounded-[5px] bg-sidebar/80 border border-line/60 space-y-1"
               >
                 <div className="flex items-center justify-between gap-2 min-w-0">
                   <div className="flex items-center gap-1.5 min-w-0 flex-1">
-                    <BackgroundKindIcon kind={task.kind} className="w-3.5 h-3.5" />
+                    <BackgroundKindIcon kind={task.kind} className="w-3 h-3 text-dim" />
                     <span className="font-sans font-medium text-fg-soft truncate">
                       {task.label}
                     </span>
                   </div>
-                  <div className="flex items-center gap-1.5 shrink-0 text-[10px] text-muted">
+                  <div className="flex items-center gap-1.5 shrink-0 text-[10.5px] font-mono text-dim">
                     {typeof task.tokens === "number" && task.tokens > 0 && (
                       <span>{formatWorkTokens(task.tokens)}</span>
                     )}

@@ -1,15 +1,15 @@
 import { lazy, Suspense, type ReactNode } from "react";
-import { Plus, QrCode } from "lucide-react";
+import { FolderGit2, Gauge, Plus, QrCode, Server } from "lucide-react";
 import { surfaceIdentity, type MainTab } from "../../domain/workspaceTree";
 import type { SavedHost } from "../../hosts/hostStore";
 import type { SurfaceNode, UsageSnapshot, WorkspaceNode } from "../../protocol/rpc";
 import { wsClient, type ConnectionState } from "../../transport/wsClient";
 import { SurfaceDetailView } from "../../views/SurfaceDetailView";
 import { WorkspaceListView } from "../../views/WorkspaceListView";
+import { UnreadCountBadge } from "../common/UnreadCountBadge";
 import { DesktopTabStrip } from "../desktop/DesktopTabStrip";
 import type { CreateSurfaceParams } from "../surface/NewSurfaceModal";
 import { DesktopUsageWidget } from "../usage/DesktopUsageWidget";
-import { PrimaryTabNav } from "./PrimaryTabNav";
 
 const LazyUsageView = lazy(() =>
   import("../usage/UsageView").then((m) => ({ default: m.UsageView })),
@@ -95,12 +95,29 @@ export function DesktopWorkspaceShell({
   onRenameSurface,
   onCloseSurface,
 }: DesktopWorkspaceShellProps) {
+  const usageWidget = (
+    <DesktopUsageWidget
+      hostName={activeHost?.name ?? "No computer"}
+      connState={connState}
+      snapshot={usage.snapshot}
+      loading={usage.loading}
+      refreshing={usage.refreshing}
+      error={usage.error}
+      unsupported={usage.unsupported}
+      now={usage.now}
+      onRefresh={() => void usage.refresh()}
+    />
+  );
+
+  const showingSurfaceDetail =
+    mainTab === "workspaces" && !hasNoHosts && Boolean(selectedWorkspace && selectedSurface);
+
   return (
     <>
       {!sidebarCollapsed && (
         <aside
           aria-label="Workspaces sidebar"
-          className="w-[300px] xl:w-[320px] shrink-0 h-full flex flex-col bg-surface/40 border-r border-white/[0.06] overflow-hidden"
+          className="w-[264px] xl:w-[284px] shrink-0 h-full flex flex-col bg-sidebar border-r border-line overflow-hidden select-none"
         >
           {topHeader}
           <div className="flex-1 min-h-0 overflow-hidden">
@@ -109,7 +126,10 @@ export function DesktopWorkspaceShell({
               loading={loading}
               syncing={syncing}
               onRefresh={onRefreshWorkspaces}
-              onSelectWorkspace={onSelectWorkspace}
+              onSelectWorkspace={(ws) => {
+                onSelectWorkspace(ws);
+                if (mainTab !== "workspaces") onSelectMainTab("workspaces");
+              }}
               hostsCount={hosts.length}
               connState={connState}
               onPairHost={onOpenPairModal}
@@ -117,55 +137,91 @@ export function DesktopWorkspaceShell({
               hideOnboarding
             />
           </div>
-          <PrimaryTabNav
-            mainTab={mainTab}
-            onSelectTab={onSelectMainTab}
-            unreadCount={totalUnread}
-          />
+
+          <footer
+            aria-label="Sidebar navigation"
+            className="h-[34px] shrink-0 px-2 border-t border-line bg-sidebar flex items-center justify-between gap-1"
+          >
+            <div className="flex items-center gap-0.5">
+              {[
+                { id: "workspaces" as const, label: "Workspaces", icon: FolderGit2 },
+                { id: "usage" as const, label: "Usage", icon: Gauge },
+                { id: "devices" as const, label: "Hosts", icon: Server },
+              ].map(({ id, label, icon: Icon }) => {
+                const active = mainTab === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    onClick={() => onSelectMainTab(id)}
+                    aria-current={active ? "page" : undefined}
+                    className={`h-[24px] px-2 rounded-[5px] text-[11.5px] font-medium inline-flex items-center gap-1.5 transition-colors ${
+                      active
+                        ? "bg-raised text-fg"
+                        : "text-muted hover:text-fg-soft hover:bg-surface"
+                    }`}
+                  >
+                    <Icon className="w-3 h-3 shrink-0" />
+                    <span>{label}</span>
+                    {id === "workspaces" && totalUnread > 0 && (
+                      <UnreadCountBadge count={totalUnread} size="sm" />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+
+            <button
+              type="button"
+              onClick={onOpenPairModal}
+              title="Pair computer"
+              aria-label="Pair computer"
+              className="w-[24px] h-[24px] rounded-[5px] text-dim hover:text-fg hover:bg-raised flex items-center justify-center transition-colors"
+            >
+              <Plus className="w-3.5 h-3.5" />
+            </button>
+          </footer>
         </aside>
       )}
 
       <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-bg">
-        <DesktopTabStrip
-          workspace={mainTab === "workspaces" ? selectedWorkspace : null}
-          surfaces={selectedWorkspace?.surfaces ?? []}
-          activeSurface={selectedSurface}
-          sidebarCollapsed={sidebarCollapsed}
-          loading={loading}
-          onToggleSidebar={onToggleSidebar}
-          onSelectSurface={onSelectSurface}
-          onNewSurface={() => {
-            if (selectedWorkspace) onOpenNewSurface(selectedWorkspace);
-          }}
-          onCloseSurface={(surf) => {
-            if (selectedWorkspace) onRequestCloseSurface(selectedWorkspace, surf);
-          }}
-          onOpenChanges={() => {
-            if (selectedWorkspace) onOpenChanges(selectedWorkspace);
-          }}
-          onRefresh={onRefreshWorkspaces}
-          usageWidget={
-            <DesktopUsageWidget
-              hostName={activeHost?.name ?? "No computer"}
-              connState={connState}
-              snapshot={usage.snapshot}
-              loading={usage.loading}
-              refreshing={usage.refreshing}
-              error={usage.error}
-              unsupported={usage.unsupported}
-              now={usage.now}
-              onRefresh={() => void usage.refresh()}
-            />
-          }
-        />
+        {!showingSurfaceDetail && (
+          <DesktopTabStrip
+            workspace={mainTab === "workspaces" ? selectedWorkspace : null}
+            sectionTitle={
+              mainTab === "usage"
+                ? "Model Usage"
+                : mainTab === "devices"
+                  ? "Hosts & Devices"
+                  : undefined
+            }
+            surfaces={selectedWorkspace?.surfaces ?? []}
+            activeSurface={selectedSurface}
+            sidebarCollapsed={sidebarCollapsed}
+            loading={loading}
+            onToggleSidebar={onToggleSidebar}
+            onSelectSurface={onSelectSurface}
+            onNewSurface={() => {
+              if (selectedWorkspace) onOpenNewSurface(selectedWorkspace);
+            }}
+            onCloseSurface={(surf) => {
+              if (selectedWorkspace) onRequestCloseSurface(selectedWorkspace, surf);
+            }}
+            onOpenChanges={() => {
+              if (selectedWorkspace) onOpenChanges(selectedWorkspace);
+            }}
+            onRefresh={onRefreshWorkspaces}
+            usageWidget={usageWidget}
+          />
+        )}
 
         {connState === "error" && errorMessage && (
-          <div className="mx-4 mt-2 px-3.5 py-2 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-300 text-[12.5px] flex items-center justify-between gap-2 shrink-0">
+          <div className="mx-4 mt-2 px-3 py-1.5 rounded-lg bg-status-err/10 border border-status-err/25 text-status-err text-[12px] flex items-center justify-between gap-2 shrink-0">
             <span className="leading-tight">{errorMessage}</span>
             <button
               type="button"
               onClick={() => wsClient.connect()}
-              className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-[11.5px] font-semibold shrink-0"
+              className="px-2 py-0.5 rounded bg-status-err/15 hover:bg-status-err/25 text-fg text-[11px] font-medium shrink-0"
             >
               Retry
             </button>
@@ -184,6 +240,7 @@ export function DesktopWorkspaceShell({
                 error={usage.error}
                 unsupported={usage.unsupported}
                 now={usage.now}
+                hideHeader
                 onRefresh={() => void usage.refresh()}
               />
             </Suspense>
@@ -205,22 +262,24 @@ export function DesktopWorkspaceShell({
             </Suspense>
           ) : hasNoHosts && !loading ? (
             <div className="h-full flex flex-col items-center justify-center px-6 py-16 text-center">
-              <h2 className="text-[22px] font-bold text-white tracking-tight mb-2">
+              <h2 className="text-[18px] font-semibold text-fg tracking-tight mb-1.5">
                 Welcome to Cmob
               </h2>
-              <p className="text-[14px] text-muted max-w-md leading-relaxed mb-6">
-                Connect your computer to monitor terminal workspaces and control coding agents like
-                Claude Code, AGY, and Kiro.
+              <p className="text-[13px] text-muted max-w-md leading-relaxed mb-5">
+                Connect your Mac to monitor cmux workspaces and control Claude Code, Antigravity,
+                Codex, and Kiro.
               </p>
               <button
                 type="button"
                 onClick={onOpenPairModal}
-                className="inline-flex items-center gap-2 px-5 min-h-[44px] rounded-xl bg-accent hover:bg-accent-strong text-white text-[14px] font-semibold transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 h-9 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[13px] font-medium transition-colors cursor-pointer"
               >
-                <QrCode className="w-4 h-4" />
+                <QrCode className="w-3.5 h-3.5" />
                 <span>Connect Your Computer</span>
               </button>
-              <code className="mt-5 text-[12.5px] text-emerald-400">$ cmob qr --tailscale</code>
+              <code className="mt-4 text-[12px] text-muted font-mono bg-surface border border-line px-2.5 py-1 rounded-md">
+                $ cmob qr --tailscale
+              </code>
             </div>
           ) : selectedWorkspace && selectedSurface ? (
             <SurfaceDetailView
@@ -235,24 +294,33 @@ export function DesktopWorkspaceShell({
               onCloseSurface={(id) => onCloseSurface(id, selectedWorkspace.id)}
               onRefresh={onRefreshWorkspaces}
               desktopLayout
+              desktopChrome={{
+                sidebarCollapsed,
+                loading,
+                onToggleSidebar,
+                onOpenNewSurface: () => onOpenNewSurface(selectedWorkspace),
+                onRequestCloseSurface: (surf) => onRequestCloseSurface(selectedWorkspace, surf),
+                onOpenChanges: () => onOpenChanges(selectedWorkspace),
+                usageWidget,
+              }}
             />
           ) : selectedWorkspace ? (
-            <div className="h-full flex flex-col items-center justify-center gap-4 px-6 text-center text-muted">
-              <p className="text-[14px]">
-                No terminal tabs open in{" "}
+            <div className="h-full flex flex-col items-center justify-center gap-3 px-6 text-center text-muted">
+              <p className="text-[13px]">
+                No tabs open in{" "}
                 <span className="text-fg font-medium">{selectedWorkspace.title}</span>.
               </p>
               <button
                 type="button"
                 onClick={() => onOpenNewSurface(selectedWorkspace)}
-                className="h-10 px-4 rounded-xl bg-accent hover:bg-accent-strong text-white text-[14px] font-semibold inline-flex items-center gap-2 transition-colors"
+                className="h-8 px-3.5 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[12.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
               >
-                <Plus className="w-4 h-4" />
-                <span>Open First Tab</span>
+                <Plus className="w-3.5 h-3.5" />
+                <span>New Tab</span>
               </button>
             </div>
           ) : (
-            <div className="h-full flex items-center justify-center px-6 text-center text-[14px] text-muted">
+            <div className="h-full flex items-center justify-center px-6 text-center text-[13px] text-muted">
               {loading ? "Loading workspaces…" : "Select a workspace from the sidebar."}
             </div>
           )}

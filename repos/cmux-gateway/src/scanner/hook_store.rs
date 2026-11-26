@@ -72,7 +72,7 @@ static LAST_RECORD_CACHE: LazyLock<Mutex<HashMap<String, (u128, u64, Option<serd
     LazyLock::new(|| Mutex::new(HashMap::new()));
 
 /// Last complete JSON record of a JSONL file (reads only the tail, cached by mtime+len).
-fn last_jsonl_record(path: &str) -> Option<serde_json::Value> {
+pub(crate) fn last_jsonl_record(path: &str) -> Option<serde_json::Value> {
     let (mtime_ns, len) = file_mtime_and_len(Path::new(path))?;
     if let Ok(c) = LAST_RECORD_CACHE.lock() {
         if let Some((cm, cl, val)) = c.get(path) {
