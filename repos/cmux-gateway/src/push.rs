@@ -41,12 +41,15 @@ impl VapidKeys {
     }
 }
 
-/// Write a file readable only by the owner (contains secrets / endpoints).
+/// Write a file readable only by the owner via atomic temp-file + `fsync` + rename.
 fn write_private(path: &std::path::Path, content: &str) {
     if let Some(dir) = path.parent() {
         let _ = std::fs::create_dir_all(dir);
     }
-    // Created 0600 from the start (a later chmod would leave a window where the VAPID key is world-readable).
+    let mut tmp = path.as_os_str().to_os_string();
+    tmp.push(".tmp");
+    let tmp = PathBuf::from(tmp);
+
     let mut opts = std::fs::OpenOptions::new();
     opts.write(true).create(true).truncate(true);
     #[cfg(unix)]
@@ -54,16 +57,23 @@ fn write_private(path: &std::path::Path, content: &str) {
         use std::os::unix::fs::OpenOptionsExt;
         opts.mode(0o600);
     }
-    let written = opts.open(path).and_then(|mut f| std::io::Write::write_all(&mut f, content.as_bytes()));
-    if written.is_err() {
+    let written = opts.open(&tmp).and_then(|mut f| {
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            f.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        std::io::Write::write_all(&mut f, content.as_bytes())?;
+        f.sync_all()
+    });
+    if written.is_ok() {
+        if std::fs::rename(&tmp, path).is_err() {
+            warn!("Failed to rename {}", path.display());
+            let _ = std::fs::remove_file(&tmp);
+        }
+    } else {
         warn!("Failed to persist {}", path.display());
-        return;
-    }
-    #[cfg(unix)]
-    {
-        // An existing file keeps its old mode on open; tighten it too.
-        use std::os::unix::fs::PermissionsExt;
-        let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600));
+        let _ = std::fs::remove_file(&tmp);
     }
 }
 
@@ -308,6 +318,15 @@ impl PushService {
         true
     }
 
+    /// Resets burst cooldowns for `surface_id` (excluding 1-hour startup-dialog deduplication keys)
+    /// when a turn resumes/dismisses so back-to-back permission prompts are never suppressed.
+    pub fn clear_surface_cooldowns(&self, surface_id: &str) {
+        let prefix = format!("{surface_id}:");
+        let dialog_prefix = format!("{surface_id}:dialog:");
+        let mut guard = self.cooldowns.lock().unwrap();
+        guard.retain(|k, _| !k.starts_with(&prefix) || k.starts_with(&dialog_prefix));
+    }
+
     /// Dispatches an alert to all registered push subscriptions and records to history.
     pub async fn dispatch(
         &self,
@@ -388,7 +407,8 @@ impl PushService {
                         | Err(WebPushError::EndpointNotFound(_))
                         | Err(WebPushError::InvalidCryptoKeys) => {
                             info!("Pruning expired push subscription {}", short(&sub.endpoint));
-                            svc.unregister(&sub.endpoint);
+                            let ep = sub.endpoint.clone();
+                            let _ = tokio::task::spawn_blocking(move || svc.unregister(&ep)).await;
                         }
                         Err(e) => warn!("Web Push to {} failed: {e}", short(&sub.endpoint)),
                     }

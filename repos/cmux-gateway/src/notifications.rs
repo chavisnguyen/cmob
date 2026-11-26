@@ -226,6 +226,10 @@ impl NotificationEngine {
                                         turn_stamp,
                                         record: (*rec).clone(),
                                     });
+                                } else if let Some(pending) = tracker.pending_done.as_mut() {
+                                    // Refresh record during the 1.5s quiet window so a late `lastBody`
+                                    // update is included when the matured notification fires!
+                                    pending.record = (*rec).clone();
                                 }
                             } else {
                                 tracker.working_seen = false;
@@ -450,23 +454,24 @@ pub fn strip_markdown_for_notification(text: &str) -> String {
                     continue;
                 }
             }
-            // Bold/italic: `**`, `__`, `*`, `_`
+            // Bold/italic: `**`, `__`, `*`, `_` (preserving intraword `snake_case` underscores!)
             if chars[i] == '*' || chars[i] == '_' {
                 let marker = chars[i];
                 let double = i + 1 < n && chars[i + 1] == marker;
                 let fence_len = if double { 2 } else { 1 };
-                // Find the matching closing fence on the same run.
                 let search_start = i + fence_len;
-                let close = if double {
-                    find_closing(&chars, search_start, &[marker, marker])
-                } else {
-                    find_closing_single(&chars, search_start, marker)
-                };
-                if let Some(end) = close {
-                    let inner: String = chars[search_start..end].iter().collect();
-                    out.push_str(&inner);
-                    i = end + fence_len;
-                    continue;
+                let prev_alnum = i > 0 && chars[i - 1].is_alphanumeric();
+                let open_valid = search_start < n
+                    && !chars[search_start].is_whitespace()
+                    && (marker != '_' || !prev_alnum);
+                if open_valid {
+                    let close = find_closing_emphasis(&chars, search_start, marker, fence_len);
+                    if let Some(end) = close {
+                        let inner: String = chars[search_start..end].iter().collect();
+                        out.push_str(&inner);
+                        i = end + fence_len;
+                        continue;
+                    }
                 }
             }
             // Inline code: `code`
@@ -506,6 +511,39 @@ pub fn strip_markdown_for_notification(text: &str) -> String {
         let label: String = chars[pos + 1..close_bracket].iter().collect();
         let consumed = close_paren - pos + 1;
         Some((label, consumed))
+    }
+
+    fn find_closing_emphasis(
+        chars: &[char],
+        from: usize,
+        marker: char,
+        fence_len: usize,
+    ) -> Option<usize> {
+        let n = chars.len();
+        if from + fence_len > n {
+            return None;
+        }
+        for idx in from..=(n - fence_len) {
+            let matches_fence = if fence_len == 2 {
+                chars[idx] == marker && chars[idx + 1] == marker
+            } else {
+                chars[idx] == marker
+                    && (idx + 1 >= n || chars[idx + 1] != marker)
+                    && (idx == 0 || chars[idx - 1] != marker)
+            };
+            if !matches_fence {
+                continue;
+            }
+            if idx == from || chars[idx - 1].is_whitespace() {
+                continue;
+            }
+            let after_idx = idx + fence_len;
+            if marker == '_' && after_idx < n && chars[after_idx].is_alphanumeric() {
+                continue;
+            }
+            return Some(idx);
+        }
+        None
     }
 
     fn find_closing(chars: &[char], from: usize, pat: &[char]) -> Option<usize> {
@@ -721,63 +759,7 @@ pub fn extract_transcript_preview(
     lifecycle: AgentLifecycleState,
 ) -> Option<String> {
     let turns = TranscriptReader::read_recent_turns(Path::new(transcript_path), surface_id, 6).ok()?;
-    for turn in turns.iter().rev() {
-        for ev in turn.events.iter().rev() {
-            match (lifecycle, ev) {
-                (AgentLifecycleState::Waiting, AgentEvent::AwaitingInput(ai)) => {
-                    let s = normalize_text(Some(&ai.prompt), BODY_MAX_CHARS);
-                    if !s.is_empty() && !is_generic_placeholder(&s) {
-                        return Some(s);
-                    }
-                }
-                (AgentLifecycleState::Error, AgentEvent::Error { message }) => {
-                    let s = normalize_text(Some(message), BODY_MAX_CHARS);
-                    if !s.is_empty() && !is_generic_placeholder(&s) {
-                        return Some(s);
-                    }
-                }
-                (AgentLifecycleState::Done, AgentEvent::Assistant { text }) => {
-                    let stripped = strip_markdown_for_notification(text);
-                    let s = normalize_text(Some(&stripped), BODY_MAX_CHARS);
-                    if !s.is_empty() && !is_generic_placeholder(&s) {
-                        return Some(s);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    // Secondary fallbacks (e.g. Waiting showing latest assistant question or tool name).
-    for turn in turns.iter().rev() {
-        for ev in turn.events.iter().rev() {
-            match (lifecycle, ev) {
-                (AgentLifecycleState::Waiting, AgentEvent::Assistant { text })
-                | (AgentLifecycleState::Error, AgentEvent::Assistant { text }) => {
-                    let stripped = strip_markdown_for_notification(text);
-                    let s = normalize_text(Some(&stripped), BODY_MAX_CHARS);
-                    if !s.is_empty() && !is_generic_placeholder(&s) {
-                        return Some(s);
-                    }
-                }
-                (AgentLifecycleState::Waiting, AgentEvent::ToolStart { name, .. }) => {
-                    let tool = normalize_text(Some(name), 60);
-                    if !tool.is_empty() {
-                        return Some(format!("Approve tool: {tool}"));
-                    }
-                }
-                (AgentLifecycleState::Done, AgentEvent::Done { stats: Some(stats) }) => {
-                    let s = normalize_text(Some(stats), BODY_MAX_CHARS);
-                    if !s.is_empty() && !is_generic_placeholder(&s) {
-                        return Some(s);
-                    }
-                }
-                _ => {}
-            }
-        }
-    }
-
-    None
+    crate::domain::lifecycle::extract_transcript_preview_from_turns(&turns, lifecycle)
 }
 
 /// Builds Orca-style notification title, subtitle, body, and tag for an agent lifecycle event.
@@ -819,11 +801,18 @@ pub fn build_notification_content(
         (!s.is_empty()).then_some(s)
     };
 
-    let rich_hook_text = [record.last_body.as_deref(), record.last_subtitle.as_deref()]
-        .into_iter()
-        .flatten()
-        .map(|s| normalize_text(Some(s), BODY_MAX_CHARS))
-        .find(|s| !is_generic_placeholder(s));
+    let stale_waiting_hook = lifecycle == AgentLifecycleState::Waiting
+        && crate::domain::lifecycle::is_stale_in_flight_hook_body(record.hook_event_name.as_deref());
+
+    let rich_hook_text = if stale_waiting_hook {
+        None
+    } else {
+        [record.last_body.as_deref(), record.last_subtitle.as_deref()]
+            .into_iter()
+            .flatten()
+            .map(|s| normalize_text(Some(s), BODY_MAX_CHARS))
+            .find(|s| !is_generic_placeholder(s))
+    };
 
     let transcript_preview = if rich_hook_text.is_none() {
         record
@@ -1153,5 +1142,16 @@ mod tests {
         }
         assert_ne!(t1, t2);
         assert_ne!(t1, t3);
+    }
+
+    #[test]
+    fn strip_markdown_preserves_snake_case_while_stripping_emphasis() {
+        let out = strip_markdown_for_notification(
+            "Updated **turn_digest** and _italic text_ in chat_watcher_stream_v2.",
+        );
+        assert_eq!(
+            out,
+            "Updated turn_digest and italic text in chat_watcher_stream_v2."
+        );
     }
 }

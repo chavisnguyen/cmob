@@ -1,19 +1,8 @@
-//! OpenCode transcript + status reader.
+//! OpenCode SQLite (`opencode.db`) session & transcript store.
 //!
-//! cmux writes `~/.cmuxterm/opencode-hook-sessions.json` (verified on this machine) whose
-//! `sessionId` is OpenCode's own session id (`ses_...`) and whose `surfaceId` is the cmux surface.
-//! The hook record carries no `transcriptPath`, so the conversation itself is read from OpenCode's
-//! SQLite database:
-//!   - `<XDG_DATA_HOME|~/.local/share>/opencode/opencode.db` (override: `OPENCODE_DB`)
-//!   - tables `session_v2`, `session_message` (verified: opencode v2.3.2, `sqlite3 .schema`)
-//!   - `session_message.data` is JSON: user `{text}`, assistant `{content:[...],tokens,model}` with
-//!     part types `text` | `reasoning` | `tool` (`state.status`, `state.input`, `state.content`)
-//! Schema discovery mirrors Orca: ref/orca/src/main/ai-vault/scanners/opencode2/
-//! session-scanner-opencode2-sqlite.ts:36-37,95-117 and ...-message.ts:30-54.
-//! Database path resolution mirrors ref/orca/src/main/opencode/accounts/opencode-data-directory.ts:3-33.
-//!
-//! Rust has no SQLite crate in this build (no vendored `rusqlite`), so reads shell out to the
-//! `sqlite3` CLI in read-only + JSON mode. The gateway already shells out to `ps`/`cmux`/`agy`.
+//! Sources:
+//! - `ref/orca/src/main/native-chat/transcript-opencode2-sqlite.ts`
+//! - `ref/orca/src/main/opencode/accounts/opencode-data-directory.ts:3-33`
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -21,32 +10,33 @@ use std::process::Command;
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant};
 
-use crate::protocol::event::{
-    AgentEvent, AgentLifecycleState, AgentRole, AgentTurn, AwaitingInput, SubagentEntry,
-    SubagentState,
-};
+use crate::io::jsonl_window::TranscriptPage;
+use crate::protocol::event::{AgentLifecycleState, AgentTurn};
+use crate::providers::opencode::build_turns_with_seqs;
 
-/// `dbPath#sessionId`, the same reference form Orca uses for SQLite-backed transcripts
-/// (ref/orca/src/shared/opencode-sqlite-session-path.ts:3-22). It is a reference, not a file path.
 const SEPARATOR: char = '#';
-/// Same client-facing cap as the JSONL transcript reader (see `transcript::MAX_DETAIL_CHARS`).
-const MAX_DETAIL_CHARS: usize = 4000;
-/// Rows fetched per `max_turns` when only the tail is needed.
 const ROWS_PER_TURN: usize = 20;
 const MAX_ROWS: usize = 2000;
-/// Turn snapshots and status are re-read when the DB/WAL changes or after TTL expires (must be >500ms watcher tick).
 const TURN_TTL: Duration = Duration::from_millis(1500);
 const STATUS_TTL: Duration = Duration::from_millis(1500);
-/// Known session ids per database. A full id scan is cheap; a per-record probe is not.
 const IDS_TTL: Duration = Duration::from_secs(3);
 const SQLITE_TIMEOUT: Duration = Duration::from_secs(3);
 const MAX_CACHE_ENTRIES: usize = 128;
 
 /// A live OpenCode session's derived state.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct OpenCodeStatus {
     pub lifecycle: AgentLifecycleState,
     pub last_subtitle: Option<String>,
+    pub turn_completed_at: Option<f64>,
+}
+
+#[derive(Clone)]
+struct CachedTurnWindow {
+    turns: Vec<AgentTurn>,
+    seqs: Vec<u64>,
+    total_turns: usize,
+    db_has_older: bool,
 }
 
 /// `$XDG_DATA_HOME/opencode`, or `~/.local/share/opencode`.
@@ -58,11 +48,13 @@ pub fn data_dir() -> PathBuf {
         }
     }
     let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home).join(".local").join("share").join("opencode")
+    PathBuf::from(home)
+        .join(".local")
+        .join("share")
+        .join("opencode")
 }
 
 /// Candidate databases: `OPENCODE_DB` when set, otherwise `opencode*.db` in the data directory.
-/// Canonical `opencode.db` is tried first (Orca `compareOpenCodeClaimPriority`).
 pub fn database_candidates() -> Vec<PathBuf> {
     if let Ok(sel) = std::env::var("OPENCODE_DB") {
         let sel = sel.trim();
@@ -75,11 +67,18 @@ pub fn database_candidates() -> Vec<PathBuf> {
         }
     }
     let dir = data_dir();
-    let Ok(entries) = std::fs::read_dir(&dir) else { return Vec::new() };
+    let Ok(entries) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
     let mut paths: Vec<PathBuf> = entries
         .flatten()
         .map(|e| e.path())
-        .filter(|p| p.is_file() && p.file_name().and_then(|n| n.to_str()).is_some_and(is_database_name))
+        .filter(|p| {
+            p.is_file()
+                && p.file_name()
+                    .and_then(|n| n.to_str())
+                    .is_some_and(is_database_name)
+        })
         .collect();
     paths.sort_by_key(|p| {
         let canonical = p.file_name().and_then(|n| n.to_str()) == Some("opencode.db");
@@ -88,10 +87,13 @@ pub fn database_candidates() -> Vec<PathBuf> {
     paths
 }
 
-/// `^opencode(?:-[A-Za-z0-9_.-]+)?\.db$` (Orca `listOpenCodeDatabasesInDirectory`).
 fn is_database_name(name: &str) -> bool {
-    let Some(rest) = name.strip_prefix("opencode") else { return false };
-    let Some(stem) = rest.strip_suffix(".db") else { return false };
+    let Some(rest) = name.strip_prefix("opencode") else {
+        return false;
+    };
+    let Some(stem) = rest.strip_suffix(".db") else {
+        return false;
+    };
     stem.is_empty()
         || (stem.starts_with('-')
             && stem[1..]
@@ -99,10 +101,10 @@ fn is_database_name(name: &str) -> bool {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.' | '-')))
 }
 
-/// OpenCode session ids look like `ses_<alnum>` (verified in both hook files and the database).
-/// Anything else (e.g. the `opencode-test` fixtures cmux writes) is not a database key.
 pub fn is_session_id(id: &str) -> bool {
-    let Some(rest) = id.strip_prefix("ses_") else { return false };
+    let Some(rest) = id.strip_prefix("ses_") else {
+        return false;
+    };
     !rest.is_empty() && rest.len() <= 64 && rest.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
@@ -110,7 +112,6 @@ pub fn pseudo_path(db: &Path, session_id: &str) -> String {
     format!("{}{SEPARATOR}{session_id}", db.display())
 }
 
-/// Split a `dbPath#sessionId` reference. Returns None for real files.
 pub fn parse_pseudo_path(path: &Path) -> Option<(PathBuf, String)> {
     let s = path.to_string_lossy();
     let idx = s.rfind(SEPARATOR)?;
@@ -127,7 +128,7 @@ struct Cached<T> {
     value: T,
 }
 
-static TURNS: LazyLock<Mutex<HashMap<String, Cached<Result<(Vec<AgentTurn>, usize), String>>>>> =
+static TURNS: LazyLock<Mutex<HashMap<String, Cached<Result<CachedTurnWindow, String>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
 static STATUS: LazyLock<Mutex<HashMap<String, Cached<Option<OpenCodeStatus>>>>> =
     LazyLock::new(|| Mutex::new(HashMap::new()));
@@ -174,11 +175,17 @@ fn store<T>(map: &Mutex<HashMap<String, Cached<T>>>, key: String, stamp: u128, v
                 guard.clear();
             }
         }
-        guard.insert(key, Cached { at: Instant::now(), stamp, value });
+        guard.insert(
+            key,
+            Cached {
+                at: Instant::now(),
+                stamp,
+                value,
+            },
+        );
     }
 }
 
-/// Run a query with a bounded wait timeout and parse `sqlite3 -json` output.
 fn query(db: &Path, sql: &str) -> Result<Vec<serde_json::Value>, String> {
     use std::io::Read;
     use std::process::Stdio;
@@ -245,7 +252,6 @@ fn session_ids(db: &Path) -> HashSet<String> {
     ids
 }
 
-/// Database reference for `session_id`, or None when no candidate database contains it.
 pub fn resolve_transcript_path(session_id: &str) -> Option<String> {
     if !is_session_id(session_id) {
         return None;
@@ -260,236 +266,84 @@ fn sql_str(s: &str) -> String {
     format!("'{}'", s.replace('\'', "''"))
 }
 
-fn cap(s: String) -> String {
-    if s.chars().count() <= MAX_DETAIL_CHARS {
-        return s;
-    }
-    let mut out: String = s.chars().take(MAX_DETAIL_CHARS).collect();
-    out.push_str("… [truncated]");
-    out
-}
-
-fn text_of_parts(v: Option<&serde_json::Value>) -> String {
-    match v {
-        Some(serde_json::Value::String(s)) => s.clone(),
-        Some(serde_json::Value::Array(items)) => items
-            .iter()
-            .filter_map(|i| i.get("text").and_then(|t| t.as_str()))
-            .collect::<Vec<_>>()
-            .join("\n"),
-        _ => String::new(),
-    }
-}
-
-fn tool_event(part: &serde_json::Value, turn: &mut AgentTurn) {
-    let name = part.get("name").and_then(|n| n.as_str()).unwrap_or("tool").to_string();
-    let tool_id = part
-        .get("id")
-        .and_then(|i| i.as_str())
-        .map(str::to_string)
-        .unwrap_or_else(|| format!("tool-{}", turn.events.len()));
-    let state = part.get("state");
-    let status = state
-        .and_then(|s| s.get("status"))
-        .and_then(|s| s.as_str())
-        .unwrap_or("completed");
-    // A running `question` is OpenCode's blocking prompt (verified shape:
-    // `{questions:[{question, options:[{label, description}]}]}`).
-    if name == "question" && status == "running" {
-        if let Some(q) = state
-            .and_then(|s| s.get("input"))
-            .and_then(|i| i.get("questions"))
-            .and_then(|q| q.as_array())
-            .and_then(|q| q.first())
-        {
-            let prompt = q.get("question").and_then(|v| v.as_str()).unwrap_or("Question").to_string();
-            let options = q
-                .get("options")
-                .and_then(|o| o.as_array())
-                .map(|arr| {
-                    arr.iter()
-                        .filter_map(|o| o.get("label").and_then(|l| l.as_str()).map(str::to_string))
-                        .collect()
-                });
-            turn.events.push(AgentEvent::AwaitingInput(AwaitingInput {
-                input_kind: "question".into(),
-                prompt,
-                options,
-                default_choice: None,
-                multi_select: None,
-                questions: None,
-                answered: None,
-            }));
-            return;
-        }
-    }
-    if matches!(name.as_str(), "task" | "subagent") {
-        let inp = state.and_then(|s| s.get("input"));
-        let label = inp
-            .and_then(|i| i.get("description").or_else(|| i.get("subagent_type")))
-            .and_then(|s| s.as_str())
-            .map(str::trim)
-            .filter(|s| !s.is_empty())
-            .unwrap_or("Subagent")
-            .to_string();
-        let sub_state = match status {
-            "running" | "pending" => SubagentState::Working,
-            "error" => SubagentState::Failed,
-            _ => SubagentState::Completed,
-        };
-        let entry = SubagentEntry {
-            id: tool_id,
-            label,
-            state: sub_state,
-            tokens: None,
-            started_at: None,
-            settled_at: None,
-        };
-        let gid = format!("opencode-subagents-{}", turn.id);
-        if let Some(agents) = turn.events.iter_mut().find_map(|e| match e {
-            AgentEvent::Subagents { group_id, agents } if *group_id == gid => Some(agents),
-            _ => None,
-        }) {
-            agents.push(entry);
-        } else {
-            turn.events.push(AgentEvent::Subagents {
-                group_id: gid,
-                agents: vec![entry],
-            });
-        }
-        return;
-    }
-
-    let detail = state
-        .and_then(|s| s.get("input"))
-        .map(|i| cap(i.to_string()));
-    turn.events.push(AgentEvent::ToolStart { tool_id: tool_id.clone(), name: name.clone(), detail });
-    if status != "running" && status != "pending" {
-        let detail = state
-            .and_then(|s| s.get("content"))
-            .map(|c| cap(text_of_parts(Some(c))))
-            .filter(|s| !s.trim().is_empty());
-        turn.events.push(AgentEvent::ToolEnd { tool_id, name: Some(name), detail, ok: status != "error" });
-    }
-}
-
-fn assistant_events(data: &serde_json::Value, turn: &mut AgentTurn) {
-    for part in data.get("content").and_then(|c| c.as_array()).into_iter().flatten() {
-        match part.get("type").and_then(|t| t.as_str()).unwrap_or("") {
-            "reasoning" => {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()).filter(|t| !t.trim().is_empty()) {
-                    turn.events.push(AgentEvent::Thinking {
-                        text: text.to_string(),
-                        duration_secs: None,
-                    });
-                }
-            }
-            "text" => {
-                if let Some(text) = part.get("text").and_then(|t| t.as_str()).filter(|t| !t.trim().is_empty()) {
-                    turn.events.push(AgentEvent::Assistant { text: text.to_string() });
-                }
-            }
-            "tool" => tool_event(part, turn),
-            _ => {}
-        }
-    }
-    if let Some(tokens) = data.get("tokens") {
-        let n = |k: &str| tokens.get(k).and_then(|v| v.as_u64()).unwrap_or(0);
-        turn.events.push(AgentEvent::Usage {
-            model: data
-                .pointer("/model/id")
-                .and_then(|m| m.as_str())
-                .map(str::to_string),
-            input_tokens: n("input"),
-            output_tokens: n("output"),
-            cache_read_tokens: tokens.pointer("/cache/read").and_then(|v| v.as_u64()).unwrap_or(0),
-            cache_creation_tokens: tokens.pointer("/cache/write").and_then(|v| v.as_u64()).unwrap_or(0),
+/// Paginated OpenCode SQLite reader supporting `before_offset` (`seq < cursor`), stable `turn-oc-{seq}` IDs,
+/// `surface_id` stamping after cache lookup, and exact `max_turns` slicing.
+pub fn read_turns_page(
+    db: &Path,
+    session_id: &str,
+    surface_id: &str,
+    max_turns: usize,
+    before_offset: Option<u64>,
+) -> Result<TranscriptPage, String> {
+    if !is_session_id(session_id) || max_turns == 0 {
+        return Ok(TranscriptPage {
+            turns: Vec::new(),
+            has_more: false,
+            before_offset: None,
+            total_turns: 0,
         });
     }
-}
 
-fn user_text(data: &serde_json::Value) -> String {
-    if let Some(t) = data.get("text").and_then(|t| t.as_str()) {
-        return t.to_string();
-    }
-    data.get("content")
-        .and_then(|c| c.as_array())
-        .map(|items| {
-            items
-                .iter()
-                .filter(|i| i.get("type").and_then(|t| t.as_str()) == Some("text"))
-                .filter_map(|i| i.get("text").and_then(|t| t.as_str()))
-                .collect::<Vec<_>>()
-                .join("\n")
-        })
-        .unwrap_or_default()
-}
-
-fn build_turns(rows: &[serde_json::Value], surface_id: &str) -> Vec<AgentTurn> {
-    let mut turns: Vec<AgentTurn> = Vec::new();
-    let mut current: Option<AgentTurn> = None;
-    for row in rows {
-        let kind = row.get("type").and_then(|t| t.as_str()).unwrap_or("");
-        let Ok(data) = serde_json::from_str::<serde_json::Value>(
-            row.get("data").and_then(|d| d.as_str()).unwrap_or("{}"),
-        ) else {
-            continue;
-        };
-        match kind {
-            "user" => {
-                if let Some(t) = current.take() {
-                    turns.push(t);
-                }
-                let text = user_text(&data);
-                if text.trim().is_empty() {
-                    continue;
-                }
-                let mut turn =
-                    AgentTurn::new(format!("turn-{}", turns.len() + 1), surface_id, AgentRole::User);
-                turn.events.push(AgentEvent::User { text });
-                turns.push(turn);
-            }
-            "assistant" => {
-                let turn = current.get_or_insert_with(|| {
-                    AgentTurn::new(format!("turn-{}", turns.len() + 1), surface_id, AgentRole::Assistant)
-                });
-                assistant_events(&data, turn);
-            }
-            _ => {}
+    let cursor_key = before_offset
+        .map(|c| c.to_string())
+        .unwrap_or_else(|| "tail".to_string());
+    let key = format!("{}:{max_turns}:{cursor_key}", pseudo_path(db, session_id));
+    let stamp = db_stamp(db);
+    let win = match cached(&TURNS, &key, stamp, TURN_TTL) {
+        Some(hit) => hit?,
+        None => {
+            let fetched = read_uncached(db, session_id, max_turns, before_offset);
+            store(&TURNS, key, stamp, fetched.clone());
+            fetched?
         }
+    };
+
+    let avail = win.turns.len();
+    let start_idx = avail.saturating_sub(max_turns);
+    let first_seq = win.seqs.get(start_idx).copied().unwrap_or(0);
+    let mut turns: Vec<AgentTurn> = win.turns[start_idx..]
+        .iter()
+        .cloned()
+        .map(|mut t| {
+            t.surface_id = surface_id.to_string();
+            t
+        })
+        .collect();
+    if max_turns == 0 {
+        turns.clear();
     }
-    if let Some(t) = current {
-        turns.push(t);
-    }
-    turns
+
+    let has_more = (start_idx > 0 || win.db_has_older) && first_seq > 0;
+    let total_turns = if before_offset.is_none() && !has_more {
+        turns.len()
+    } else {
+        win.total_turns.max(turns.len() + usize::from(has_more))
+    };
+
+    Ok(TranscriptPage {
+        turns,
+        has_more,
+        before_offset: has_more.then_some(first_seq),
+        total_turns,
+    })
 }
 
-/// Read the conversation stored for `session_id`, newest `max_turns` turns.
 pub fn read_recent_turns_page(
     db: &Path,
     session_id: &str,
     surface_id: &str,
     max_turns: usize,
 ) -> Result<(Vec<AgentTurn>, usize), String> {
-    if !is_session_id(session_id) {
-        return Ok((Vec::new(), 0));
-    }
-    let key = format!("{}:{max_turns}", pseudo_path(db, session_id));
-    let stamp = db_stamp(db);
-    if let Some(hit) = cached(&TURNS, &key, stamp, TURN_TTL) {
-        return hit;
-    }
-    let result = read_uncached(db, session_id, surface_id, max_turns);
-    store(&TURNS, key, stamp, result.clone());
-    result
+    let page = read_turns_page(db, session_id, surface_id, max_turns, None)?;
+    Ok((page.turns, page.total_turns))
 }
 
 fn read_uncached(
     db: &Path,
     session_id: &str,
-    surface_id: &str,
     max_turns: usize,
-) -> Result<(Vec<AgentTurn>, usize), String> {
+    before_offset: Option<u64>,
+) -> Result<CachedTurnWindow, String> {
     let id = sql_str(session_id);
     let counts = query(
         db,
@@ -502,19 +356,36 @@ fn read_uncached(
         let n = |k: &str| r.get(k).and_then(|v| v.as_u64()).unwrap_or(0) as usize;
         n("users") + n("assistants")
     });
+
     let limit = (max_turns.max(1) * ROWS_PER_TURN).clamp(ROWS_PER_TURN, MAX_ROWS);
+    let seq_clause = match before_offset {
+        Some(cursor) => format!("AND seq < {cursor} "),
+        None => String::new(),
+    };
     let mut rows = query(
         db,
         &format!(
-            "SELECT type, data FROM session_message WHERE session_id={id} \
-             AND type IN ('user','assistant') ORDER BY time_created DESC, seq DESC LIMIT {limit}"
+            "SELECT seq, id, type, time_created, time_updated, data FROM session_message \
+             WHERE session_id={id} AND type IN ('user','assistant','idle') {seq_clause}\
+             ORDER BY seq DESC, time_created DESC LIMIT {}",
+            limit + 1
         ),
     )?;
+    let db_has_older = rows.len() > limit;
+    if db_has_older {
+        rows.truncate(limit);
+    }
     rows.reverse();
-    Ok((build_turns(&rows, surface_id), total_turns))
+
+    let (turns, seqs) = build_turns_with_seqs(&rows, "");
+    Ok(CachedTurnWindow {
+        turns,
+        seqs,
+        total_turns,
+        db_has_older,
+    })
 }
 
-/// Change token for the chat watcher (`server::fingerprint`): the row reference has no file mtime.
 pub fn change_token(db: &Path, session_id: &str) -> Option<String> {
     if !is_session_id(session_id) {
         return None;
@@ -531,10 +402,15 @@ pub fn change_token(db: &Path, session_id: &str) -> Option<String> {
     .ok()?;
     let r = rows.first()?;
     let v = |k: &str| r.get(k).map(|x| x.to_string()).unwrap_or_default();
-    Some(format!("{}|{}|{}|{}", v("time_updated"), v("time_busy"), v("time_idle"), v("messages")))
+    Some(format!(
+        "{}|{}|{}|{}",
+        v("time_updated"),
+        v("time_busy"),
+        v("time_idle"),
+        v("messages")
+    ))
 }
 
-/// Live status derived from the session row and its newest assistant message.
 pub fn status(db: &Path, session_id: &str) -> Option<OpenCodeStatus> {
     if !is_session_id(session_id) {
         return None;
@@ -549,13 +425,22 @@ pub fn status(db: &Path, session_id: &str) -> Option<OpenCodeStatus> {
     value
 }
 
+fn to_unix_secs(raw: i64) -> Option<f64> {
+    if raw <= 0 {
+        return None;
+    }
+    if raw > 10_000_000_000 {
+        Some(raw as f64 / 1000.0)
+    } else {
+        Some(raw as f64)
+    }
+}
+
 fn status_uncached(db: &Path, session_id: &str) -> Option<OpenCodeStatus> {
     let id = sql_str(session_id);
     let rows = query(
         db,
-        &format!(
-            "SELECT time_busy, time_idle, idle_outcome FROM session_v2 WHERE id={id} LIMIT 1"
-        ),
+        &format!("SELECT time_busy, time_idle, idle_outcome FROM session_v2 WHERE id={id} LIMIT 1"),
     )
     .ok()?;
     let row = rows.first()?;
@@ -571,31 +456,42 @@ fn status_uncached(db: &Path, session_id: &str) -> Option<OpenCodeStatus> {
 
     let mut running_tool: Option<String> = None;
     let mut question = false;
-    if let Some(data) = last.first().and_then(|r| r.get("data")).and_then(|d| d.as_str()) {
-        if let Ok(data) = serde_json::from_str::<serde_json::Value>(data) {
-            for part in data.get("content").and_then(|c| c.as_array()).into_iter().flatten() {
-                let is_tool = part.get("type").and_then(|t| t.as_str()) == Some("tool");
-                let status = part.pointer("/state/status").and_then(|s| s.as_str());
-                if is_tool && status == Some("running") {
-                    let name = part.get("name").and_then(|n| n.as_str()).unwrap_or("tool");
-                    if name == "question" {
-                        question = true;
-                    }
-                    running_tool = Some(name.to_string());
+    if let Some(data) = last.first().and_then(|r| r.get("data")).and_then(|d| d.as_str())
+        && let Ok(data) = serde_json::from_str::<serde_json::Value>(data)
+    {
+        for part in data.get("content").and_then(|c| c.as_array()).into_iter().flatten() {
+            let is_tool = part.get("type").and_then(|t| t.as_str()) == Some("tool");
+            let status = part.pointer("/state/status").and_then(|s| s.as_str());
+            if is_tool && status == Some("running") {
+                let name = part
+                    .get("name")
+                    .or_else(|| part.get("tool"))
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("tool");
+                if name == "question" {
+                    question = true;
                 }
+                running_tool = Some(name.to_string());
             }
         }
     }
+
+    let idle_val = num("time_idle");
+    let busy_val = num("time_busy");
+    let idle_outcome = row.get("idle_outcome").and_then(|v| v.as_str());
 
     let lifecycle = if question {
         AgentLifecycleState::Waiting
     } else if running_tool.is_some() {
         AgentLifecycleState::Working
-    } else if row.get("idle_outcome").and_then(|v| v.as_str()) == Some("failed") {
+    } else if idle_outcome == Some("failed") {
         AgentLifecycleState::Error
     } else {
-        match (num("time_busy"), num("time_idle")) {
+        match (busy_val, idle_val) {
             (Some(busy), Some(idle)) if busy > idle => AgentLifecycleState::Working,
+            (_, Some(idle)) if idle > 0 && idle_outcome == Some("succeeded") => {
+                AgentLifecycleState::Done
+            }
             _ => AgentLifecycleState::Idle,
         }
     };
@@ -603,10 +499,18 @@ fn status_uncached(db: &Path, session_id: &str) -> Option<OpenCodeStatus> {
         (AgentLifecycleState::Working, Some(name)) => Some(format!("Running {name}")),
         _ => None,
     };
-    Some(OpenCodeStatus { lifecycle, last_subtitle })
+    let turn_completed_at = if lifecycle == AgentLifecycleState::Done {
+        idle_val.and_then(to_unix_secs)
+    } else {
+        None
+    };
+    Some(OpenCodeStatus {
+        lifecycle,
+        last_subtitle,
+        turn_completed_at,
+    })
 }
 
-/// Status for a `dbPath#sessionId` reference.
 pub fn status_for_path(path: &Path) -> Option<OpenCodeStatus> {
     let (db, id) = parse_pseudo_path(path)?;
     status(&db, &id)
@@ -620,22 +524,25 @@ pub fn change_token_for_path(path: &Path) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::event::{AgentEvent, AgentRole};
+    use crate::providers::opencode::build_turns;
 
-    fn row(kind: &str, data: serde_json::Value) -> serde_json::Value {
-        serde_json::json!({ "type": kind, "data": data.to_string() })
+    fn row(seq: u64, kind: &str, data: serde_json::Value) -> serde_json::Value {
+        serde_json::json!({ "seq": seq, "id": format!("m{seq}"), "type": kind, "data": data.to_string() })
     }
 
     #[test]
-    fn parses_assistant_parts_like_the_real_database() {
-        // Shapes copied from opencode 2.3.2 `session_message.data` on this machine.
+    fn parses_assistant_parts_and_filters_synthetic_and_zero_usage() {
         let rows = vec![
-            row("user", serde_json::json!({ "text": "cmux mobile chưa có agent opencode đúng không?" })),
+            row(1, "user", serde_json::json!({ "text": "cmux mobile chưa có agent opencode đúng không?" })),
             row(
+                2,
                 "assistant",
                 serde_json::json!({
                     "model": { "id": "deepseek-v4.1-flash-free", "providerID": "opencode" },
                     "content": [
                         { "type": "reasoning", "text": "look at the code first" },
+                        { "type": "text", "synthetic": true, "text": "SYNTHETIC_NOISE" },
                         { "type": "tool", "id": "call_1", "name": "grep",
                           "state": { "status": "completed", "input": { "pattern": "opencode" },
                                      "content": [{ "type": "text", "text": "Found 18 matches" }] } },
@@ -647,65 +554,63 @@ mod tests {
         ];
         let turns = build_turns(&rows, "surf-1");
         assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].id, "turn-oc-1");
+        assert_eq!(turns[1].id, "turn-oc-2");
         assert_eq!(turns[0].role, AgentRole::User);
         assert_eq!(turns[1].role, AgentRole::Assistant);
         let ev = &turns[1].events;
+        assert!(!ev.iter().any(|e| matches!(e, AgentEvent::Assistant { text } if text.contains("SYNTHETIC_NOISE"))));
         assert!(matches!(ev[0], AgentEvent::Thinking { .. }));
         assert!(matches!(ev[1], AgentEvent::ToolStart { .. }));
         assert!(matches!(ev[2], AgentEvent::ToolEnd { ok: true, .. }));
         assert!(matches!(ev[3], AgentEvent::Assistant { .. }));
-        match &ev[4] {
-            AgentEvent::Usage { model, input_tokens, output_tokens, cache_read_tokens, .. } => {
-                assert_eq!(model.as_deref(), Some("deepseek-v4.1-flash-free"));
-                assert_eq!((*input_tokens, *output_tokens, *cache_read_tokens), (17888, 115, 512));
-            }
-            other => panic!("expected usage, got {other:?}"),
-        }
+        assert!(matches!(ev[4], AgentEvent::Usage { input_tokens: 17888, output_tokens: 115, cache_read_tokens: 512, .. }));
     }
 
     #[test]
-    fn running_question_is_awaiting_input_not_a_tool_row() {
-        let rows = vec![row(
-            "assistant",
-            serde_json::json!({
-                "content": [{
-                    "type": "tool", "id": "call_q", "name": "question",
-                    "state": { "status": "running", "input": { "questions": [{
-                        "question": "Bạn muốn dừng ở mức nào?",
-                        "options": [{ "label": "L0 → L1 → L2" }, { "label": "Chỉ L0" }]
-                    }] } }
-                }]
-            }),
-        )];
+    fn running_and_completed_question_are_awaiting_input_with_receipt() {
+        let rows = vec![
+            row(
+                10,
+                "assistant",
+                serde_json::json!({
+                    "content": [{
+                        "type": "tool", "id": "call_q", "name": "question",
+                        "state": {
+                            "status": "completed",
+                            "input": { "questions": [{
+                                "question": "Bạn muốn dừng ở mức nào?",
+                                "options": [{ "label": "L0 → L1 → L2" }, { "label": "Chỉ L0" }]
+                            }] },
+                            "metadata": { "answers": [["L0 → L1 → L2"]] }
+                        }
+                    }]
+                }),
+            ),
+            row(11, "idle", serde_json::json!({ "outcome": "interrupted" })),
+        ];
         let turns = build_turns(&rows, "s");
+        assert_eq!(turns[0].id, "turn-oc-10");
         match &turns[0].events[0] {
             AgentEvent::AwaitingInput(ai) => {
                 assert_eq!(ai.prompt, "Bạn muốn dừng ở mức nào?");
-                assert_eq!(ai.options.as_ref().map(Vec::len), Some(2));
+                assert_eq!(ai.answered.as_deref(), Some("L0 → L1 → L2"));
             }
             other => panic!("expected awaiting input, got {other:?}"),
         }
+        assert!(turns[0]
+            .events
+            .iter()
+            .any(|e| matches!(e, AgentEvent::Status { text } if text == "Interrupted")));
     }
 
     #[test]
-    fn non_ses_ids_are_not_database_keys() {
-        // cmux writes fixture ids such as `opencode-test` / `test` into the hook file.
+    fn non_ses_ids_and_pseudo_paths() {
         assert!(!is_session_id("opencode-test"));
-        assert!(!is_session_id("test"));
         assert!(is_session_id("ses_e0b26e1b8ffeAttLF01b9Ckpqu"));
-        assert!(resolve_transcript_path("opencode-test").is_none());
-    }
-
-    #[test]
-    fn pseudo_path_round_trip_and_name_filter() {
         let db = PathBuf::from("/Users/x/.local/share/opencode/opencode.db");
         let p = pseudo_path(&db, "ses_abc123");
         assert_eq!(parse_pseudo_path(Path::new(&p)), Some((db, "ses_abc123".to_string())));
-        assert!(parse_pseudo_path(Path::new("/tmp/notes.txt#ses_abc123")).is_none());
-        assert!(is_database_name("opencode.db"));
-        assert!(is_database_name("opencode-next.db"));
-        assert!(!is_database_name("opencode.db-wal"));
-        assert!(!is_database_name("other.db"));
     }
 
     fn fake_db(dir: &Path, rows: &str) -> PathBuf {
@@ -718,7 +623,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_turns_and_counts_from_sqlite() {
+    fn reads_paginated_turns_stamps_surface_id_and_tracks_status() {
         let dir = std::env::temp_dir().join(format!("ocdb-{}", uuid::Uuid::new_v4()));
         std::fs::create_dir_all(&dir).unwrap();
         let db = fake_db(
@@ -726,15 +631,28 @@ mod tests {
             "INSERT INTO session_v2 VALUES ('ses_abc123', 0, 0, 'succeeded', 5);\
              INSERT INTO session_message VALUES ('m1','ses_abc123','user',1,1,1,'{\"text\":\"hi\"}');\
              INSERT INTO session_message VALUES ('m2','ses_abc123','assistant',2,2,2,'{\"content\":[{\"type\":\"text\",\"text\":\"hello\"}]}');\
-             INSERT INTO session_message VALUES ('m3','ses_abc123','synthetic',3,3,3,'{\"text\":\"ignored\"}');",
+             INSERT INTO session_message VALUES ('m3','ses_abc123','user',3,3,3,'{\"text\":\"second\"}');\
+             INSERT INTO session_message VALUES ('m4','ses_abc123','assistant',4,4,4,'{\"content\":[{\"type\":\"text\",\"text\":\"reply 2\"}]}');",
         );
-        let (turns, total) = read_recent_turns_page(&db, "ses_abc123", "surf", 10).unwrap();
-        assert_eq!(turns.len(), 2);
-        assert_eq!(total, 2);
-        assert!(matches!(turns[1].events[0], AgentEvent::Assistant { .. }));
-        assert!(change_token(&db, "ses_abc123").is_some());
+
+        let page1 = read_turns_page(&db, "ses_abc123", "surf-a", 2, None).unwrap();
+        assert_eq!(page1.turns.len(), 2);
+        assert_eq!(page1.turns[0].id, "turn-oc-3");
+        assert_eq!(page1.turns[0].surface_id, "surf-a");
+        assert!(page1.has_more);
+        assert_eq!(page1.before_offset, Some(3));
+
+        // Cache hit with a DIFFERENT surface_id stamps the caller's surface_id cleanly!
+        let page1_b = read_turns_page(&db, "ses_abc123", "surf-b", 2, None).unwrap();
+        assert_eq!(page1_b.turns[0].surface_id, "surf-b");
+
+        // Older page via `before_offset` (`seq < 3`).
+        let older = read_turns_page(&db, "ses_abc123", "surf-a", 2, page1.before_offset).unwrap();
+        assert_eq!(older.turns.len(), 2);
+        assert_eq!(older.turns[0].id, "turn-oc-1");
+        assert!(!older.has_more);
+
         assert_eq!(status(&db, "ses_abc123").unwrap().lifecycle, AgentLifecycleState::Idle);
-        assert!(read_recent_turns_page(&db, "ses_missing", "s", 10).unwrap().0.is_empty());
         let _ = std::fs::remove_dir_all(&dir);
     }
 

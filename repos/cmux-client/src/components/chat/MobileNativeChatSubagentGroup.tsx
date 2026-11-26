@@ -1,31 +1,33 @@
-import { memo, useState } from "react";
+import { memo } from "react";
 import {
+  AlertCircle,
   Bot,
+  CheckCircle2,
   ChevronDown,
   ChevronUp,
-  CheckCircle2,
-  XCircle,
   Clock,
-  AlertCircle,
   StopCircle,
+  XCircle,
 } from "lucide-react";
 import type { SubagentEntry, SubagentState } from "../../protocol/event";
-import { LiveElapsedText } from "./MobileNativeChatComposerTray";
+import { useChatDisclosure } from "../../state/useChatDisclosure";
+import { LiveElapsedText } from "./ChatWorkPrimitives";
 
 interface MobileNativeChatSubagentGroupProps {
   groupId: string;
   agents: SubagentEntry[];
+  surfaceKey?: string;
 }
 
 export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubagentGroup({
-  groupId: _groupId,
+  groupId,
   agents,
+  surfaceKey,
 }: MobileNativeChatSubagentGroupProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, toggleExpanded] = useChatDisclosure(surfaceKey, `subagents:${groupId}`, false);
 
   if (agents.length === 0) return null;
 
-  // Derive group status & timing
   const workingCount = agents.filter((a) => a.state === "working").length;
   const isWorking = workingCount > 0;
   const hasFailed = agents.some((a) => a.state === "failed");
@@ -44,8 +46,6 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
   } else if (allStopped) {
     groupStateText = "stopped";
   } else if (!allCompleted) {
-    // Orca keeps silent children as "unverifiable" instead of claiming they finished
-    // (ref/orca/src/shared/agent-status/presentation/agent-row-decay-state.ts).
     groupStateText = "no update";
   }
 
@@ -67,7 +67,8 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
     <div className="w-full rounded-xl border border-accent/30 bg-surface text-xs font-mono overflow-hidden my-1.5 shadow-sm">
       <button
         type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
+        aria-expanded={isExpanded}
+        onClick={toggleExpanded}
         className="w-full flex items-center justify-between px-3 py-2 bg-accent/10 hover:bg-accent/15 text-accent-soft transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">

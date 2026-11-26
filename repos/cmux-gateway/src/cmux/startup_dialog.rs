@@ -101,7 +101,7 @@ fn parse_choice_row(line: &str) -> Option<(bool, String)> {
 }
 
 pub fn analyze(screen: &str) -> Option<DialogInfo> {
-    let original: Vec<&str> = screen.lines().map(str::trim).filter(|l| !l.is_empty()).collect();
+    let original: Vec<String> = crate::domain::dialog::strip_screen_box_lines(screen);
     let lowered: Vec<String> = original.iter().map(|l| l.to_lowercase()).collect();
     let last = lowered.last()?;
     if !is_key_footer(last) {
@@ -151,7 +151,7 @@ pub fn analyze(screen: &str) -> Option<DialogInfo> {
     for row in rows {
         match parse_choice_row(row) {
             Some(c) => choice_rows.push(c),
-            None => text_rows.push(row),
+            None => text_rows.push(row.as_str()),
         }
     }
     let cursors = choice_rows.iter().filter(|(c, _)| *c).count();
@@ -332,5 +332,22 @@ mod tests {
         assert_eq!(detect(screen), Some(DialogKind::StartupMenu));
         // The same words in a normal reply (no key footer) must not match.
         assert!(detect("I suggest we try new model settings or use existing model defaults.\n› _").is_none());
+    }
+
+    #[test]
+    fn analyze_detects_boxed_tui_startup_dialog() {
+        let boxed = "\
+╭──────────────────────────────────────────────────╮
+│ Trust this folder?                               │
+│   ~/work/cmux-mobile                             │
+│ › 1. Trust and continue                          │
+│   2. Quit                                        │
+│   enter continue · esc back                      │
+╰──────────────────────────────────────────────────╯\n";
+        let d = analyze(boxed).expect("boxed startup dialog");
+        assert_eq!(d.kind, DialogKind::FolderTrust);
+        assert_eq!(d.title, "Trust this folder?");
+        assert_eq!(d.choices.len(), 2);
+        assert_eq!(d.choices[0].label, "Trust and continue");
     }
 }

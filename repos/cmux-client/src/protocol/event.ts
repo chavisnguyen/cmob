@@ -48,6 +48,7 @@ export interface AskQuestionItem {
 export interface AwaitingInput {
   input_kind: "permission" | "question" | "options" | "other";
   prompt: string;
+  tool_id?: string;
   options?: string[];
   default_choice?: string;
   multi_select?: boolean;
@@ -104,4 +105,6 @@ export interface AgentTurn {
   role: AgentRole;
   timestamp?: number;
   events: AgentEvent[];
+  /** True when persisted storage trimmed oversized event text; never overrides live wire turns. */
+  truncated?: boolean;
 }

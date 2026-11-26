@@ -1,80 +1,14 @@
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
-import type { CreateSurfaceParams } from "../components/surface/NewSurfaceModal";
-import {
-  ChevronDown,
-  ChevronLeft,
-  GitFork,
-  MessageSquare,
-  MoreHorizontal,
-  Pencil,
-  Plus,
-  RefreshCw,
-  Terminal,
-  X,
-} from "lucide-react";
-import { RPC_EVENTS, RPC_METHODS, type SurfaceNode, type WorkspaceNode } from "../protocol/rpc";
-import type { AgentTurn, AgentLifecycleState, StartupDialogInfo } from "../protocol/event";
+import { useState } from "react";
 import { OrcaChatView } from "../components/chat/OrcaChatView";
-import type { QuestionAnswerPayload } from "../components/chat/MobileNativeChatPromptCard";
-import { RawTerminalView } from "../components/terminal/RawTerminalView";
-import { SurfaceSwitchSheet } from "../components/surface/SurfaceSwitchSheet";
-import { displaySurfaceTitle } from "../components/surface/surfaceTitle";
-import { NewSurfaceModal } from "../components/surface/NewSurfaceModal";
-import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
 import { CloseSurfaceDialog } from "../components/surface/CloseSurfaceDialog";
-import { wsClient, type ConnectionState } from "../transport/wsClient";
-import { PartialSendError, formatImagePastePath } from "../components/chat/imageAttach";
-import {
-  buildTranscriptCacheKey,
-  mergeIncomingSessionFrame,
-  peekCachedChatTranscript,
-  prependOlderTurns,
-  writeCachedChatTranscript,
-  type WireSessionFrame,
-} from "../components/chat/chatTranscriptCache";
-
-/** One short line only: collapse whitespace, take the first line, cap length (never show prose). */
-function cleanActivity(text: string | null | undefined): string | null {
-  const line = text?.split("\n")[0]?.replace(/\s+/g, " ").trim();
-  if (!line) return null;
-  return line.length > 60 ? `${line.slice(0, 59)}…` : line;
-}
-
-interface PendingSend {
-  id: string;
-  text: string;
-  /** How many user turns already had this exact text when it was sent. */
-  baseline: number;
-  createdAt: number;
-}
-
-/** A pending send that never shows up in the transcript is dropped after this long. */
-const PENDING_SEND_TTL_MS = 90_000;
-/** While a fresh send is unconfirmed, keep showing "Thinking…" even if the hook still says idle. */
-const PENDING_WORKING_GRACE_MS = 20_000;
-
-function normalizeText(text: string): string {
-  return text.replace(/\s+/g, " ").trim();
-}
-
-function userTurnTexts(turns: AgentTurn[]): string[] {
-  return turns
-    .filter((t) => t.role === "user")
-    .map((t) => normalizeText(t.events.map((e) => (e.kind === "user" ? e.text : "")).join(" ")));
-}
-
-function countUserTurnsWithText(turns: AgentTurn[], text: string): number {
-  const wanted = normalizeText(text);
-  return userTurnTexts(turns).filter((t) => t === wanted).length;
-}
-
-/** Turns fetched on initial open and per "load older" page (Orca-style tail windowing). */
-const INITIAL_TURN_PAGE_SIZE = 25;
-const OLDER_TURN_PAGE_SIZE = 30;
-/** Gateway caps `max_turns` at 500 (server.rs handle_subscription / readSession). */
-const MAX_TURN_LIMIT = 500;
-
-type SessionSnapshot = WireSessionFrame;
+import { NewSurfaceModal, type CreateSurfaceParams } from "../components/surface/NewSurfaceModal";
+import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
+import { SurfaceDetailHeader } from "../components/surface/SurfaceDetailHeader";
+import { SurfaceSwitchSheet } from "../components/surface/SurfaceSwitchSheet";
+import { RawTerminalView } from "../components/terminal/RawTerminalView";
+import { surfaceIdentity } from "../domain/workspaceTree";
+import type { SurfaceNode, WorkspaceNode } from "../protocol/rpc";
+import { useChatSessionController } from "../state/useChatSessionController";
 
 interface SurfaceDetailViewProps {
   surface: SurfaceNode;
@@ -85,14 +19,9 @@ interface SurfaceDetailViewProps {
   onCreateSurface?: (params: CreateSurfaceParams) => Promise<void>;
   onRenameSurface?: (surfaceId: string, title: string) => Promise<void>;
   onCloseSurface?: (surfaceId: string) => Promise<void>;
-  /** Re-reads the workspace tree (used after forking so the new tab shows up). */
   onRefresh?: () => void;
-  /** Renders full-width without mobile back button / switch sheet when inside the desktop shell. */
   desktopLayout?: boolean;
 }
-
-/** Agents the gateway can fork from here (mirror of `fork` in gateway cmux/agents.rs; the gateway decides). */
-const FORKABLE_AGENTS = new Set(["claude"]);
 
 export function SurfaceDetailView({
   surface,
@@ -106,626 +35,31 @@ export function SurfaceDetailView({
   onRefresh,
   desktopLayout = false,
 }: SurfaceDetailViewProps) {
-  const hasAgent = Boolean(surface.agent);
-  const surfaceKey = surface.id || surface.ref;
-  const agentSid = surface.agent?.session_id;
-  const agentKd = surface.agent?.agent_kind;
-  const agentTranscriptPath = surface.agent?.transcript_path;
-  const cacheIdentity = useMemo(
-    () =>
-      buildTranscriptCacheKey({
-        endpoint: wsClient.getEndpoint(),
-        surfaceKey,
-        agentKind: agentKd,
-        sessionId: agentSid,
-        transcriptPath: agentTranscriptPath,
-      }),
-    [surfaceKey, agentKd, agentSid, agentTranscriptPath],
-  );
-  const initialCached = useMemo(() => peekCachedChatTranscript(cacheIdentity), [cacheIdentity]);
+  const chat = useChatSessionController({ surface, workspace, onRefresh });
 
-  const [viewMode, setViewMode] = useState<"chat" | "terminal">(hasAgent ? "chat" : "terminal");
-  const [turns, setTurns] = useState<AgentTurn[]>(() => initialCached?.turns ?? []);
-  const [initialLoading, setInitialLoading] = useState<boolean>(
-    () => !initialCached || initialCached.turns.length === 0,
-  );
-  // Unconfirmed cached rows paint immediately on switch, while approval prompts wait for live confirmation.
-  const [snapshotConfirmed, setSnapshotConfirmed] = useState(false);
-  // How many recent turns we ask legacy/non-cursor backends for; cursor backends page via `beforeOffsetRef`.
-  const [turnLimit, setTurnLimit] = useState(INITIAL_TURN_PAGE_SIZE);
-  const [hasMoreHistory, setHasMoreHistory] = useState<boolean>(
-    () => initialCached?.hasMore ?? false,
-  );
-  const beforeOffsetRef = useRef<number | null>(initialCached?.beforeOffset ?? null);
-  const snapshotSeenRef = useRef(false);
-  const [loadingOlder, setLoadingOlder] = useState(false);
-  // Messages sent from this phone that the transcript has not echoed yet (Orca: pendingSendsAsMessages).
-  const [pendingSends, setPendingSends] = useState<PendingSend[]>([]);
-  const [withinGrace, setWithinGrace] = useState(false);
-  const [startupDialog, setStartupDialog] = useState<StartupDialogInfo | null>(null);
-  // A plain shell has nobody to chat with: only agents (and their startup dialogs) get the Chat view.
-  const chatAvailable = hasAgent || Boolean(startupDialog);
-  const activeMode: "chat" | "terminal" = chatAvailable ? viewMode : "terminal";
-  const chatSubscriptionEnabled = hasAgent && activeMode === "chat";
-  const [isWorking, setIsWorking] = useState<boolean>(() => initialCached?.isWorking ?? false);
-  const [lifecycleState, setLifecycleState] = useState<AgentLifecycleState>(
-    () => initialCached?.lifecycleState ?? "idle",
-  );
-  const [activityText, setActivityText] = useState<string | null>(
-    () => initialCached?.activityText ?? null,
-  );
-  const [awaitingPrompt, setAwaitingPrompt] = useState<string | null>(null);
-  const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
-
-  const [showMoreMenu, setShowMoreMenu] = useState(false);
   const [showSwitcher, setShowSwitcher] = useState(false);
-  const [forkStatus, setForkStatus] = useState<string | null>(null);
   const [showNewModal, setShowNewModal] = useState(false);
   const [surfaceToRename, setSurfaceToRename] = useState<SurfaceNode | null>(null);
   const [surfaceToClose, setSurfaceToClose] = useState<SurfaceNode | null>(null);
 
-  useEffect(() => {
-    return wsClient.onStateChange((state) => {
-      setConnState(state);
-    });
-  }, []);
-
-  const prevAgentRef = useRef(surface.agent);
-  useEffect(() => {
-    if (!prevAgentRef.current && surface.agent) {
-      setViewMode("chat");
-    }
-    prevAgentRef.current = surface.agent;
-  }, [surface.agent]);
-
-  const applySnapshot = useCallback((resp: SessionSnapshot) => {
-    let appliedTurns = false;
-    setTurns((prev) => {
-      const merged = mergeIncomingSessionFrame({
-        prevTurns: prev,
-        frame: resp,
-        replaceSnapshot: !snapshotSeenRef.current,
-        maxRetained: MAX_TURN_LIMIT,
-      });
-      if (!merged) return prev;
-      appliedTurns = true;
-      snapshotSeenRef.current = true;
-      if (merged.windowReplaced) {
-        beforeOffsetRef.current = merged.beforeOffset ?? null;
-        if (merged.hasMore !== undefined) {
-          setHasMoreHistory(merged.hasMore);
-        }
-      } else {
-        if (merged.beforeOffset !== undefined) {
-          beforeOffsetRef.current = merged.beforeOffset;
-        }
-        if (merged.hasMore !== undefined) {
-          setHasMoreHistory(merged.hasMore);
-        }
-      }
-      return merged.turns;
-    });
-
-    if (!appliedTurns && resp.has_more !== undefined) {
-      setHasMoreHistory(resp.has_more);
-    }
-    setStartupDialog((prev) => {
-      const next = resp.startup_dialog ?? null;
-      if (prev === next) return prev;
-      if (!prev || !next) return next;
-      if (
-        prev.title === next.title &&
-        prev.description === next.description &&
-        prev.aimed === next.aimed &&
-        prev.choices.length === next.choices.length
-      ) {
-        return prev;
-      }
-      return next;
-    });
-    setAwaitingPrompt(resp.awaiting_prompt ?? null);
-    if (resp.lifecycle_state) {
-      setLifecycleState(resp.lifecycle_state);
-    } else if (resp.is_working !== undefined) {
-      setLifecycleState(resp.is_working ? "working" : "idle");
-    }
-    if (resp.is_working !== undefined) {
-      setIsWorking(resp.is_working);
-      if (resp.is_working) {
-        setActivityText(cleanActivity(resp.activity) ?? "Thinking…");
-      } else {
-        setActivityText(null);
-      }
-    }
-    if (Array.isArray(resp.turns) || Array.isArray(resp.tail_turns)) {
-      setInitialLoading(false);
-      setSnapshotConfirmed(true);
-    }
-  }, []);
-
-  // Persist confirmed turns to the two-tier session cache (memory LRU + localStorage when settled).
-  useEffect(() => {
-    if (!snapshotConfirmed || !hasAgent) return;
-    writeCachedChatTranscript(
-      cacheIdentity,
-      {
-        turns,
-        hasMore: hasMoreHistory,
-        beforeOffset: beforeOffsetRef.current,
-        lifecycleState,
-        isWorking,
-        activityText,
-        savedAt: Date.now(),
-      },
-      !isWorking,
-    );
-  }, [
-    cacheIdentity,
-    hasAgent,
-    snapshotConfirmed,
-    turns,
-    hasMoreHistory,
-    lifecycleState,
-    isWorking,
-    activityText,
-  ]);
-
-  const loadingRef = useRef(false);
-  const turnLimitRef = useRef(turnLimit);
-  useEffect(() => {
-    turnLimitRef.current = turnLimit;
-  }, [turnLimit]);
-
-  const loadSessionTurns = useCallback(
-    async (requestedMaxTurns?: number) => {
-      if (loadingRef.current) return;
-      loadingRef.current = true;
-      try {
-        const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
-          surface_id: surface.id || surface.ref,
-          session_id: agentSid,
-          agent_kind: agentKd,
-          max_turns: requestedMaxTurns ?? turnLimitRef.current,
-        });
-        if (resp) applySnapshot(resp);
-      } catch (err) {
-        console.warn("Failed to load session turns:", err);
-      } finally {
-        loadingRef.current = false;
-      }
-    },
-    [surface.id, surface.ref, agentSid, agentKd, applySnapshot],
-  );
-
-  const [subscribed, setSubscribed] = useState(false);
-  const subscribedRef = useRef(false);
-  useEffect(() => {
-    subscribedRef.current = subscribed;
-  }, [subscribed]);
-
-  const agentSessionId = surface.agent?.session_id;
-  const agentKindForSub = surface.agent?.agent_kind;
-
-  // Single-subscription flow (Orca `use-mobile-native-chat-session.ts`): `mobile.chat.subscribe`
-  // immediately pushes the initial tail snapshot and streams incremental `delta` appends.
-  // `readSession` only runs as a fallback if subscription fails or delivers no frame within 1.5s.
-  useEffect(() => {
-    if (connState !== "connected" || !chatSubscriptionEnabled) {
-      setSubscribed(false);
-      return;
-    }
-    const controller = new AbortController();
-    let fallbackPoll: ReturnType<typeof setInterval> | null = null;
-    const startFallbackPolling = () => {
-      if (controller.signal.aborted || fallbackPoll !== null) return;
-      void loadSessionTurns();
-      fallbackPoll = setInterval(() => {
-        if (typeof document === "undefined" || document.visibilityState === "visible") {
-          void loadSessionTurns();
-        }
-      }, 2000);
-    };
-
-    const initialGuardTimer = setTimeout(() => {
-      if (!snapshotSeenRef.current && !controller.signal.aborted) {
-        void loadSessionTurns();
-      }
-    }, 1500);
-
-    const offEvent = wsClient.onEvent((event, data) => {
-      if (event !== RPC_EVENTS.CHAT_UPDATE) return;
-      const snap = data as SessionSnapshot;
-      if (snap.surface_id && snap.surface_id !== surface.id && snap.surface_id !== surface.ref) {
-        return;
-      }
-      clearTimeout(initialGuardTimer);
-      applySnapshot(snap);
-    });
-    wsClient
-      .call<SessionSnapshot & { subscribed?: boolean }>("mobile.chat.subscribe", {
-        surface_id: surfaceKey,
-        session_id: agentSessionId,
-        agent_kind: agentKindForSub,
-        max_turns: turnLimitRef.current,
-        capabilities: { delta: true },
-      })
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        setSubscribed(true);
-        // Demo mode or inline hosts may return `turns` directly on the subscribe response.
-        if (res && Array.isArray(res.turns)) {
-          clearTimeout(initialGuardTimer);
-          applySnapshot(res);
-        }
-      })
-      .catch((err) => {
-        console.warn("Chat subscribe failed, falling back to polling:", err);
-        clearTimeout(initialGuardTimer);
-        startFallbackPolling();
-      });
-    const mountedEndpoint = wsClient.getEndpoint();
-    return () => {
-      controller.abort();
-      clearTimeout(initialGuardTimer);
-      if (fallbackPoll !== null) clearInterval(fallbackPoll);
-      offEvent();
-      setSubscribed(false);
-      if (wsClient.getEndpoint() === mountedEndpoint && wsClient.getState() === "connected") {
-        void wsClient.call("mobile.chat.unsubscribe", { surface_id: surfaceKey }).catch(() => {});
-      }
-    };
-  }, [
-    connState,
-    chatSubscriptionEnabled,
-    surfaceKey,
-    surface.id,
-    surface.ref,
-    agentSessionId,
-    agentKindForSub,
-    applySnapshot,
-    loadSessionTurns,
-  ]);
-
-  // Hydrate from two-tier cache (instead of wiping to blank) if identity changes without remounting.
-  const prevCacheIdentityRef = useRef(cacheIdentity);
-  useEffect(() => {
-    if (prevCacheIdentityRef.current === cacheIdentity) return;
-    prevCacheIdentityRef.current = cacheIdentity;
-    const cached = peekCachedChatTranscript(cacheIdentity);
-    snapshotSeenRef.current = false;
-    setSnapshotConfirmed(false);
-    setTurnLimit(INITIAL_TURN_PAGE_SIZE);
-    turnLimitRef.current = INITIAL_TURN_PAGE_SIZE;
-    beforeOffsetRef.current = cached?.beforeOffset ?? null;
-    setHasMoreHistory(cached?.hasMore ?? false);
-    setTurns(cached?.turns ?? []);
-    setInitialLoading(!cached || cached.turns.length === 0);
-  }, [cacheIdentity]);
-
-  const handleLoadOlder = useCallback(async () => {
-    if (loadingOlder || !hasMoreHistory) return;
-    setLoadingOlder(true);
-    const capturedCursor = beforeOffsetRef.current;
-    try {
-      if (capturedCursor !== null) {
-        // Cursor-based reverse tail read: fetch only the preceding page before `capturedCursor`.
-        const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
-          surface_id: surface.id || surface.ref,
-          session_id: agentSid,
-          agent_kind: agentKd,
-          max_turns: OLDER_TURN_PAGE_SIZE,
-          before_offset: capturedCursor,
-        });
-        if (resp && Array.isArray(resp.turns) && beforeOffsetRef.current === capturedCursor) {
-          beforeOffsetRef.current = resp.before_offset ?? null;
-          setTurns((prev) => {
-            const next = prependOlderTurns(resp.turns ?? [], prev);
-            return next.length > MAX_TURN_LIMIT ? next.slice(next.length - MAX_TURN_LIMIT) : next;
-          });
-          const more = Boolean(resp.has_more && resp.before_offset != null);
-          setHasMoreHistory(more);
-        }
-      } else {
-        // Non-cursor fallback (OpenCode SQLite or older gateways): grow window while preserving streamed tail.
-        const next = Math.min(
-          MAX_TURN_LIMIT,
-          Math.max(turnLimit, turns.length) + OLDER_TURN_PAGE_SIZE,
-        );
-        const resp = await wsClient.call<SessionSnapshot>("mobile.chat.readSession", {
-          surface_id: surface.id || surface.ref,
-          session_id: agentSid,
-          agent_kind: agentKd,
-          max_turns: next,
-        });
-        if (resp && Array.isArray(resp.turns)) {
-          setTurns((prev) => {
-            const lastOlderId = resp.turns?.[resp.turns.length - 1]?.id;
-            const liveTailIdx = lastOlderId ? prev.findIndex((t) => t.id === lastOlderId) : -1;
-            return liveTailIdx === -1
-              ? resp.turns!
-              : [...resp.turns!, ...prev.slice(liveTailIdx + 1)];
-          });
-          setTurnLimit(next);
-          turnLimitRef.current = next;
-          setHasMoreHistory(Boolean(resp.has_more) && next < MAX_TURN_LIMIT);
-        }
-      }
-    } catch (err) {
-      console.warn("Failed to load older turns:", err);
-    } finally {
-      setLoadingOlder(false);
-    }
-  }, [
-    loadingOlder,
-    hasMoreHistory,
-    turnLimit,
-    turns.length,
-    surface.id,
-    surface.ref,
-    agentSid,
-    agentKd,
-  ]);
-
-  // One-shot startup-dialog check when opening a plain shell surface without an active agent hook.
-  useEffect(() => {
-    if (connState !== "connected" || hasAgent) return;
-    void loadSessionTurns(1);
-  }, [connState, hasAgent, surfaceKey, loadSessionTurns]);
-
-  // Drop pending sends once the transcript shows them (one more user turn with that text than at send time)
-  // or after the TTL. Orca keeps them until the journal echo: native-chat-in-flight-sends.
-  useEffect(() => {
-    if (pendingSends.length === 0) return;
-    const counts = new Map<string, number>();
-    for (const t of userTurnTexts(turns)) counts.set(t, (counts.get(t) ?? 0) + 1);
-    const now = Date.now();
-    const used = new Map<string, number>();
-    const still = pendingSends.filter((p) => {
-      if (now - p.createdAt > PENDING_SEND_TTL_MS) return false;
-      const key = normalizeText(p.text);
-      // Several identical pending sends need several echoes.
-      const needed = p.baseline + 1 + (used.get(key) ?? 0);
-      used.set(key, (used.get(key) ?? 0) + 1);
-      return (counts.get(key) ?? 0) < needed;
-    });
-    if (still.length !== pendingSends.length) setPendingSends(still);
-  }, [turns, pendingSends]);
-
-  // Expire pending sends even when no snapshot arrives.
-  useEffect(() => {
-    if (pendingSends.length === 0) return;
-    const id = setTimeout(
-      () =>
-        setPendingSends((prev) =>
-          prev.filter((p) => Date.now() - p.createdAt <= PENDING_SEND_TTL_MS),
-        ),
-      PENDING_SEND_TTL_MS + 500,
-    );
-    return () => clearTimeout(id);
-  }, [pendingSends]);
-
-  const displayTurns = useMemo<AgentTurn[]>(
-    () => [
-      ...turns,
-      ...pendingSends.map((p) => ({
-        id: p.id,
-        surface_id: surface.id || surface.ref,
-        role: "user" as const,
-        events: [{ kind: "user" as const, text: p.text }],
-      })),
-    ],
-    [turns, pendingSends, surface.id, surface.ref],
-  );
-  const hasFreshPending = withinGrace && pendingSends.length > 0;
-
-  const handleUploadImage = async (base64: string): Promise<string> => {
-    const resp = await wsClient.call<{ path: string }>(
-      RPC_METHODS.UPLOAD_IMAGE,
-      { content_base64: base64 },
-      { timeoutMs: 30_000 },
-    );
-    return resp.path;
-  };
-
-  const handleForkConversation = async () => {
-    const agent = surface.agent;
-    if (!agent?.session_id) return;
-    setForkStatus("Forking…");
-    try {
-      await wsClient.call(RPC_METHODS.CHAT_FORK, {
-        workspace_id: workspace.id,
-        session_id: agent.session_id,
-        agent_kind: agent.agent_kind,
-      });
-      setForkStatus("Forked into a new tab");
-      onRefresh?.();
-    } catch (err) {
-      setForkStatus(err instanceof Error ? err.message : "Could not fork the conversation.");
-    }
-    setTimeout(() => setForkStatus(null), 4000);
-  };
-
-  const handleSendPrompt = async (text: string, imagePaths: string[] = []) => {
-    if (imagePaths.length > 0) {
-      // Each image path goes in as its own paste (no Enter) so the TUI turns it into an attachment, then the
-      // message follows. There is no transcript echo to match a pending bubble against, so none is shown.
-      setIsWorking(true);
-      setActivityText("Thinking…");
-      let delivered = 0;
-      try {
-        for (const path of imagePaths) {
-          const pasted = formatImagePastePath(path);
-          if (!pasted) throw new Error("Attachment path is not valid.");
-          await wsClient.call(
-            "mobile.chat.send",
-            {
-              surface_id: surface.id || surface.ref,
-              agent_kind: surface.agent?.agent_kind,
-              text: pasted,
-              enter: false,
-            },
-            { timeoutMs: 30_000 },
-          );
-          delivered += 1;
-        }
-        await wsClient.call(
-          "mobile.chat.send",
-          {
-            surface_id: surface.id || surface.ref,
-            agent_kind: surface.agent?.agent_kind,
-            text,
-            enter: true,
-          },
-          { timeoutMs: 30_000 },
-        );
-      } catch (err) {
-        setIsWorking(false);
-        setActivityText(null);
-        // Tell the composer which images are already sitting in the agent's input so a retry skips them.
-        throw new PartialSendError(
-          err instanceof Error ? err.message : "Could not send the message.",
-          delivered,
-        );
-      }
-      setTimeout(() => {
-        void loadSessionTurns();
-      }, 600);
-      return;
-    }
-
-    // Show the message and the working state immediately: the gateway answers only after the agent has
-    // taken the text and Enter was pressed, and a brand-new session has no transcript to echo it yet.
-    const pending: PendingSend = {
-      id: `pending-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`,
-      text,
-      baseline: countUserTurnsWithText(turns, text),
-      createdAt: Date.now(),
-    };
-    setPendingSends((prev) => [...prev, pending]);
-    setWithinGrace(true);
-    setTimeout(() => setWithinGrace(false), PENDING_WORKING_GRACE_MS);
-    setIsWorking(true);
-    setActivityText("Thinking…");
-    try {
-      // No "\r" appended: the gateway pastes the text and presses Enter separately, per agent profile.
-      // The gateway holds this call up to 8s for the agent to ingest the paste; allow for that.
-      await wsClient.call(
-        "mobile.chat.send",
-        {
-          surface_id: surface.id || surface.ref,
-          agent_kind: surface.agent?.agent_kind,
-          text,
-          enter: true,
-        },
-        { timeoutMs: 30_000 },
-      );
-    } catch (err) {
-      setPendingSends((prev) => prev.filter((p) => p.id !== pending.id));
-      setIsWorking(false);
-      setActivityText(null);
-      throw err;
-    }
-    setTimeout(() => {
-      void loadSessionTurns();
-    }, 600);
-  };
-
-  const handleAnswerDialog = async (choice: number) => {
-    if (!startupDialog) return;
-    await wsClient.call(RPC_METHODS.CHAT_ANSWER_DIALOG, {
-      surface_id: surface.id || surface.ref,
-      fingerprint: startupDialog.fingerprint,
-      choice,
-    });
-    // The dialog disappears on the next snapshot; refresh now instead of waiting for the poll.
-    setStartupDialog(null);
-    await loadSessionTurns();
-  };
-
-  const handleAnswerQuestion = async (payload: QuestionAnswerPayload) => {
-    setIsWorking(true);
-    setLifecycleState("working");
-    setActivityText("Thinking…");
-    try {
-      await wsClient.call(
-        RPC_METHODS.CHAT_ANSWER_QUESTION,
-        {
-          surface_id: surface.id || surface.ref,
-          agent_kind: surface.agent?.agent_kind || "agent",
-          indices: payload.indices,
-          ...(payload.other ? { other: payload.other } : {}),
-          option_count: payload.optionCount,
-          multi_select: payload.multiSelect,
-        },
-        { timeoutMs: 20_000 },
-      );
-    } catch (err) {
-      setIsWorking(false);
-      setLifecycleState("waiting");
-      setActivityText(null);
-      throw err;
-    }
-    setTimeout(() => {
-      void loadSessionTurns();
-    }, 450);
-  };
-
-  const handleApprove = async () => {
-    // The gateway picks the approval key per agent and requires an explicit kind; never guess one.
-    const agentKind = surface.agent?.agent_kind;
-    if (!agentKind) return;
-    try {
-      await wsClient.call("mobile.chat.approve", {
-        surface_id: surface.id || surface.ref,
-        agent_kind: agentKind,
-      });
-    } catch (err) {
-      // A timeout or dropped socket must not vanish silently: the card would look unchanged.
-      setForkStatus(`Approve failed: ${err instanceof Error ? err.message : "unknown error"}`);
-      setTimeout(() => setForkStatus(null), 4000);
-      return;
-    }
-    await loadSessionTurns();
-  };
-
-  const handleInterrupt = async () => {
-    await wsClient.call("mobile.chat.interrupt", {
-      surface_id: surface.id || surface.ref,
-    });
-  };
-
   const handleConfirmRename = async (nextTitle: string) => {
     if (!surfaceToRename || !onRenameSurface) return;
-    const targetId = surfaceToRename.id || surfaceToRename.ref;
-    await onRenameSurface(targetId, nextTitle);
+    await onRenameSurface(surfaceIdentity(surfaceToRename), nextTitle);
     setSurfaceToRename(null);
-  };
-
-  const handleForceReload = () => {
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set("reload", Date.now().toString());
-      window.location.href = url.toString();
-    } catch {
-      window.location.reload();
-    }
   };
 
   const handleConfirmClose = async () => {
     if (!surfaceToClose || !onCloseSurface) return;
-    const targetId = surfaceToClose.id || surfaceToClose.ref;
-    const isClosingCurrent = targetId === (surface.id || surface.ref);
+    const targetId = surfaceIdentity(surfaceToClose);
+    const isClosingCurrent = targetId === chat.surfaceKey;
 
     await onCloseSurface(targetId);
     setSurfaceToClose(null);
 
     if (isClosingCurrent && allSurfaces && onSelectSurface) {
-      const remaining = allSurfaces.filter((item) => (item.id || item.ref) !== targetId);
-      if (remaining.length > 0) {
-        onSelectSurface(remaining[0]);
-      } else {
-        onBack();
-      }
+      const remaining = allSurfaces.filter((item) => surfaceIdentity(item) !== targetId);
+      if (remaining.length > 0) onSelectSurface(remaining[0]);
+      else onBack();
     }
   };
 
@@ -735,259 +69,31 @@ export function SurfaceDetailView({
         desktopLayout ? "" : "max-w-4xl mx-auto"
       }`}
     >
-      {desktopLayout ? (
-        <header className="flex items-center justify-between gap-3 px-4 h-10 bg-bg border-b border-white/[0.07] shrink-0 z-20 w-full select-none">
-          <div className="flex items-center gap-2 min-w-0">
-            <h1 className="text-[13.5px] font-semibold text-fg truncate">
-              {displaySurfaceTitle(surface.title)}
-            </h1>
-            {connState !== "connected" && (
-              <span
-                className={`w-2 h-2 rounded-full shrink-0 ${
-                  connState === "connecting" ? "bg-amber-400" : "bg-rose-500"
-                }`}
-              />
-            )}
-            <span className="text-[12px] text-dim truncate">· {workspace.title}</span>
-          </div>
-
-          <div className="flex items-center gap-1.5 shrink-0">
-            {chatAvailable && (
-              <div className="flex items-center p-0.5 bg-surface border border-white/[0.08] rounded-lg shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("chat")}
-                  className={`flex items-center gap-1.5 h-6 px-2.5 rounded-md text-[12px] font-medium transition-colors ${
-                    activeMode === "chat"
-                      ? "bg-accent text-white shadow-sm"
-                      : "text-muted hover:text-fg"
-                  }`}
-                >
-                  <MessageSquare className="w-3 h-3" />
-                  <span>Chat</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("terminal")}
-                  className={`flex items-center gap-1.5 h-6 px-2.5 rounded-md text-[12px] font-medium transition-colors ${
-                    activeMode === "terminal"
-                      ? "bg-accent text-white shadow-sm"
-                      : "text-muted hover:text-fg"
-                  }`}
-                >
-                  <Terminal className="w-3 h-3" />
-                  <span>Term</span>
-                </button>
-              </div>
-            )}
-
-            {onRenameSurface && (
-              <button
-                type="button"
-                onClick={() => setSurfaceToRename(surface)}
-                className="h-7 px-2 rounded-lg hover:bg-raised text-muted hover:text-fg text-[12px] inline-flex items-center gap-1 transition-colors"
-                title="Rename tab"
-                aria-label="Rename Tab"
-              >
-                <Pencil className="w-3.5 h-3.5" />
-                <span className="hidden xl:inline">Rename</span>
-              </button>
-            )}
-
-            {surface.agent?.session_id && FORKABLE_AGENTS.has(surface.agent.agent_kind) && (
-              <button
-                type="button"
-                onClick={() => void handleForkConversation()}
-                className="h-7 px-2 rounded-lg hover:bg-raised text-muted hover:text-fg text-[12px] inline-flex items-center gap-1 transition-colors"
-                title="Fork conversation"
-                aria-label="Fork conversation"
-              >
-                <GitFork className="w-3.5 h-3.5" />
-                <span className="hidden xl:inline">Fork</span>
-              </button>
-            )}
-
-            {onCloseSurface && (
-              <button
-                type="button"
-                onClick={() => setSurfaceToClose(surface)}
-                className="h-7 w-7 rounded-lg hover:bg-rose-500/15 text-muted hover:text-rose-300 flex items-center justify-center transition-colors"
-                title="Close tab"
-                aria-label="Close Tab"
-              >
-                <X className="w-3.5 h-3.5" />
-              </button>
-            )}
-          </div>
-        </header>
-      ) : (
-        <header className="relative flex items-center justify-between gap-2 px-2 pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))] bg-surface border-b border-line shrink-0 z-30 w-full">
-          <div className="flex items-center gap-1 min-w-0 flex-1">
-            <button
-              type="button"
-              onClick={onBack}
-              className="w-10 h-10 rounded-xl hover:bg-raised active:opacity-75 text-fg flex items-center justify-center transition-colors shrink-0"
-              title={`Back to ${workspace.title}`}
-              aria-label={`Back to ${workspace.title}`}
-            >
-              <ChevronLeft className="w-5 h-5" />
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setShowSwitcher(true)}
-              disabled={!allSurfaces || allSurfaces.length < 2 || !onSelectSurface}
-              className="min-w-0 flex-1 pr-1 text-left rounded-lg active:opacity-75 disabled:active:opacity-100"
-              aria-label={`Switch tab (current: ${surface.title})`}
-            >
-              <h1 className="text-[15px] font-semibold text-fg truncate leading-tight flex items-center gap-1">
-                <span className="truncate">{displaySurfaceTitle(surface.title)}</span>
-                {allSurfaces && allSurfaces.length > 1 && (
-                  <>
-                    <ChevronDown className="w-4 h-4 text-muted shrink-0" aria-hidden="true" />
-                    <span className="text-[11px] font-medium text-muted shrink-0">
-                      {allSurfaces.length}
-                    </span>
-                  </>
-                )}
-              </h1>
-              <div className="flex items-center gap-1.5 mt-0.5 min-w-0">
-                {connState !== "connected" && (
-                  <span
-                    className={`w-2 h-2 rounded-full shrink-0 ${
-                      connState === "connecting" ? "bg-amber-400" : "bg-rose-500"
-                    }`}
-                  />
-                )}
-                <p className="text-[12px] text-muted truncate leading-none">{workspace.title}</p>
-              </div>
-            </button>
-          </div>
-
-          <div className="flex items-center gap-1.5 shrink-0 pr-1">
-            {chatAvailable && (
-              <div className="flex items-center p-1 bg-surface border border-white/[0.08] rounded-xl shrink-0">
-                <button
-                  type="button"
-                  onClick={() => setViewMode("chat")}
-                  className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-                    activeMode === "chat"
-                      ? "bg-accent text-white shadow-sm"
-                      : "text-muted hover:text-fg"
-                  }`}
-                >
-                  <MessageSquare className="w-3.5 h-3.5" />
-                  <span>Chat</span>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode("terminal")}
-                  className={`flex items-center gap-1.5 h-7 px-2.5 rounded-lg text-[13px] font-medium transition-colors ${
-                    activeMode === "terminal"
-                      ? "bg-accent text-white shadow-sm"
-                      : "text-muted hover:text-fg"
-                  }`}
-                >
-                  <Terminal className="w-3.5 h-3.5" />
-                  <span>Term</span>
-                </button>
-              </div>
-            )}
-
-            <button
-              type="button"
-              onClick={() => setShowMoreMenu((prev) => !prev)}
-              className="w-9 h-9 rounded-xl bg-raised hover:bg-line active:opacity-75 text-fg flex items-center justify-center transition-colors"
-              title="Tab options"
-              aria-label="Tab options"
-            >
-              <MoreHorizontal className="w-5 h-5" />
-            </button>
-          </div>
-
-          {showMoreMenu && (
-            <>
-              <div className="fixed inset-0 z-40" onClick={() => setShowMoreMenu(false)} />
-              <div className="absolute right-3 top-[calc(100%+6px)] z-50 w-52 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
-                {onCreateSurface && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreMenu(false);
-                      setShowNewModal(true);
-                    }}
-                    className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
-                  >
-                    <Plus className="w-4 h-4 text-muted" />
-                    <span>New Tab</span>
-                  </button>
-                )}
-
-                {onRenameSurface && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreMenu(false);
-                      setSurfaceToRename(surface);
-                    }}
-                    className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
-                  >
-                    <Pencil className="w-4 h-4 text-muted" />
-                    <span>Rename Tab</span>
-                  </button>
-                )}
-
-                {surface.agent?.session_id && FORKABLE_AGENTS.has(surface.agent.agent_kind) && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setShowMoreMenu(false);
-                      void handleForkConversation();
-                    }}
-                    className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
-                  >
-                    <GitFork className="w-4 h-4 text-muted" />
-                    <span>Fork conversation</span>
-                  </button>
-                )}
-
-                <button
-                  type="button"
-                  onClick={() => {
-                    setShowMoreMenu(false);
-                    handleForceReload();
-                  }}
-                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
-                >
-                  <RefreshCw className="w-4 h-4 text-muted" />
-                  <span>Reload App</span>
-                </button>
-
-                {onCloseSurface && (
-                  <div className="border-t border-white/[0.08] mt-1 pt-1">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setShowMoreMenu(false);
-                        setSurfaceToClose(surface);
-                      }}
-                      className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-rose-400 hover:bg-rose-500/10 active:bg-rose-500/20 transition-colors"
-                    >
-                      <X className="w-4 h-4" />
-                      <span>Close Tab</span>
-                    </button>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </header>
-      )}
+      <SurfaceDetailHeader
+        surface={surface}
+        workspace={workspace}
+        connState={chat.connState}
+        desktopLayout={desktopLayout}
+        chatAvailable={chat.chatAvailable}
+        activeMode={chat.activeMode}
+        allSurfaces={allSurfaces}
+        canSwitchSurfaces={Boolean(allSurfaces && allSurfaces.length > 1 && onSelectSurface)}
+        canCreateSurface={Boolean(onCreateSurface)}
+        canRenameSurface={Boolean(onRenameSurface)}
+        canCloseSurface={Boolean(onCloseSurface)}
+        onBack={onBack}
+        onOpenSwitcher={() => setShowSwitcher(true)}
+        onSelectMode={chat.setViewMode}
+        onOpenNewModal={() => setShowNewModal(true)}
+        onRequestRename={() => setSurfaceToRename(surface)}
+        onRequestClose={() => setSurfaceToClose(surface)}
+        onForkConversation={() => void chat.handleForkConversation()}
+      />
 
       {showSwitcher && allSurfaces && onSelectSurface && (
         <SurfaceSwitchSheet
           surfaces={allSurfaces}
-          activeSurfaceId={surface.id || surface.ref}
+          activeSurfaceId={chat.surfaceKey}
           onSelect={onSelectSurface}
           onNew={() => setShowNewModal(true)}
           onClose={() => setShowSwitcher(false)}
@@ -995,33 +101,36 @@ export function SurfaceDetailView({
       )}
 
       <div className="flex-1 min-h-0 overflow-hidden min-w-0 max-w-full flex flex-col">
-        {activeMode === "chat" ? (
+        {chat.activeMode === "chat" ? (
           <OrcaChatView
-            // Composer state (queued messages, draft) belongs to one surface; remount on switch.
-            key={surface.id || surface.ref}
-            turns={displayTurns}
-            isLoading={initialLoading}
+            key={chat.surfaceKey}
+            turns={chat.turns}
+            pendingSends={chat.pendingSends}
+            withinGrace={chat.withinGrace}
+            snapshotConfirmed={chat.snapshotConfirmed}
+            isLoading={chat.initialLoading}
             agentKind={surface.agent?.agent_kind || "agent"}
-            startupDialog={snapshotConfirmed ? startupDialog : null}
-            onAnswerDialog={handleAnswerDialog}
-            onAnswerQuestion={handleAnswerQuestion}
-            onOpenTerminal={() => setViewMode("terminal")}
-            hasMoreHistory={hasMoreHistory}
-            isLoadingOlder={loadingOlder}
-            onLoadOlder={handleLoadOlder}
-            isWorking={isWorking || hasFreshPending}
-            lifecycleState={lifecycleState}
-            activityText={activityText}
-            awaitingPrompt={snapshotConfirmed ? awaitingPrompt : null}
-            onSend={handleSendPrompt}
-            onUploadImage={handleUploadImage}
-            surfaceId={surface.id || surface.ref}
-            onApprove={handleApprove}
-            onInterrupt={handleInterrupt}
+            startupDialog={chat.startupDialog}
+            onAnswerDialog={chat.handleAnswerDialog}
+            onAnswerQuestion={chat.handleAnswerQuestion}
+            onOpenTerminal={() => chat.setViewMode("terminal")}
+            hasMoreHistory={chat.hasMoreHistory}
+            isLoadingOlder={chat.loadingOlder}
+            onLoadOlder={chat.handleLoadOlder}
+            isWorking={chat.isWorking}
+            lifecycleState={chat.lifecycleState}
+            activityText={chat.activityText}
+            awaitingPrompt={chat.awaitingPrompt}
+            isApproving={chat.isApproving}
+            onFollowingChange={chat.setFollowing}
+            onSend={chat.handleSendPrompt}
+            onUploadImage={chat.handleUploadImage}
+            surfaceId={chat.surfaceKey}
+            onApprove={chat.handleApprove}
+            onInterrupt={chat.handleInterrupt}
             isDesktop={desktopLayout}
           />
         ) : surface.surface_type && surface.surface_type !== "terminal" ? (
-          // File previews, browsers... have no terminal to replay (cmux answers not_found).
           <div className="h-full flex flex-col items-center justify-center gap-1 px-8 text-center">
             <p className="text-[14px] font-medium text-fg-soft">
               This tab can&apos;t be shown on mobile
@@ -1032,7 +141,7 @@ export function SurfaceDetailView({
           </div>
         ) : (
           <RawTerminalView
-            surfaceId={surface.id || surface.ref}
+            surfaceId={chat.surfaceKey}
             surfaceTitle={surface.title}
             tty={surface.tty}
             isDesktop={desktopLayout}
@@ -1068,12 +177,12 @@ export function SurfaceDetailView({
         />
       )}
 
-      {forkStatus && (
+      {chat.forkStatus && (
         <div
           role="status"
           className="fixed left-1/2 -translate-x-1/2 bottom-[calc(5rem+env(safe-area-inset-bottom,0px))] z-50 max-w-[90vw] px-4 py-2 rounded-xl bg-surface border border-white/[0.12] text-[13px] text-fg shadow-2xl"
         >
-          {forkStatus}
+          {chat.forkStatus}
         </div>
       )}
     </div>

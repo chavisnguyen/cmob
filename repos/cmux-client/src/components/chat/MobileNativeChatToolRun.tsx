@@ -1,14 +1,6 @@
-/**
- * Orca-style Grouped Tool Run Row with Natural Language Sentences
- *
- * Ports `nativeChatToolRunSentence` & `describeToolInput` from:
- * - ref/orca/src/shared/native-chat/tools/native-chat-tool-run-sentence.ts:12-154
- * - ref/orca/src/shared/native-chat/tools/native-chat-tool-summary.ts:61-175
- * - ref/orca/src/shared/native-chat/tools/native-chat-tool-icon.ts:59-85
- */
-
-import { memo, useState } from "react";
+import { memo } from "react";
 import {
+  Brain,
   ChevronDown,
   ChevronRight,
   Cpu,
@@ -23,42 +15,63 @@ import {
   Wrench,
   XCircle,
 } from "lucide-react";
+import type { ThoughtStepItem, ToolCallItem, WorkRunStepItem } from "../../domain/chat/types";
+import { useChatDisclosure } from "../../state/useChatDisclosure";
+import { TaskChecklistRows } from "./ChatWorkPrimitives";
 import { MobileNativeChatDiffCard } from "./MobileNativeChatDiffCard";
-import { TaskChecklistRows } from "./MobileNativeChatComposerTray";
-import { describeTaskToolCall } from "./taskList";
+import { describeTaskToolCall, formatChatDuration } from "./taskList";
 import {
   classifyToolCategory,
   deriveToolRunSentence,
   formatSingleToolMemberLabel,
   parseEditDetails,
-  type ToolCallItem,
   type ToolCategory,
 } from "./toolRunSentence";
 
-export type { ToolCallItem } from "./toolRunSentence";
+export type { ToolCallItem } from "../../domain/chat/types";
 
 interface MobileNativeChatToolRunProps {
   tools: ToolCallItem[];
+  steps?: WorkRunStepItem[];
+  thoughts?: ThoughtStepItem[];
+  totalThoughtSeconds?: number;
   live?: boolean;
+  surfaceKey?: string;
+  blockKey?: string;
 }
 
 export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
   tools,
+  steps,
+  thoughts,
+  totalThoughtSeconds = 0,
   live = false,
+  surfaceKey,
+  blockKey,
 }: MobileNativeChatToolRunProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const disclosureId = `workrun:${blockKey ?? tools[0]?.id ?? "run"}`;
+  const [isExpanded, toggleExpanded] = useChatDisclosure(surfaceKey, disclosureId, false);
 
   if (tools.length === 0) return null;
 
-  const summary = deriveToolRunSentence(tools, live);
+  const toolSentence = deriveToolRunSentence(tools, live);
+  const hasThoughts = Boolean(thoughts && thoughts.length > 0);
+  const thoughtPrefix = hasThoughts
+    ? totalThoughtSeconds > 0
+      ? `Thought for ${formatChatDuration(totalThoughtSeconds)} · `
+      : "Thought · "
+    : "";
+  const summary = `${thoughtPrefix}${toolSentence}`;
   const allSuccess = tools.every((t) => t.ok !== false);
   const primaryCategory = classifyToolCategory(tools[0].name);
+  const effectiveSteps: WorkRunStepItem[] = steps ?? tools.map((tool) => ({ kind: "tool", tool }));
 
   return (
     <div className="w-full my-0.5 text-xs">
       <button
         type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
+        aria-expanded={isExpanded}
+        onClick={toggleExpanded}
         className="w-full flex items-center justify-between py-1 px-1 rounded-md hover:bg-white/[0.04] text-muted hover:text-fg-soft transition-colors min-w-0"
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">
@@ -86,7 +99,29 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
 
       {isExpanded && (
         <div className="ml-5 pl-3 my-1 border-l border-white/10 space-y-1.5">
-          {tools.map((t, idx) => {
+          {effectiveSteps.map((step, idx) => {
+            if (step.kind === "thinking") {
+              return (
+                <div
+                  key={`thought-${step.thought.id}-${idx}`}
+                  className="py-1 space-y-1 text-[11.5px] font-sans text-muted"
+                >
+                  <div className="flex items-center gap-1.5 text-dim font-medium">
+                    <Brain className="w-3.5 h-3.5 shrink-0 text-muted" />
+                    <span>
+                      {step.thought.durationSeconds && step.thought.durationSeconds > 0
+                        ? `Thought for ${formatChatDuration(step.thought.durationSeconds)}`
+                        : "Thought"}
+                    </span>
+                  </div>
+                  <p className="pl-5 whitespace-pre-wrap leading-relaxed max-h-48 overflow-y-auto scrollbar-thin">
+                    {step.thought.text}
+                  </p>
+                </div>
+              );
+            }
+
+            const t = step.tool;
             const cat = classifyToolCategory(t.name);
             const isEdit = cat === "fileChange";
             const editDetails = isEdit ? parseEditDetails(t.inputDetail ?? t.detail) : null;
@@ -130,6 +165,8 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
                     diff={editDetails.diff}
                     added={editDetails.added}
                     removed={editDetails.removed}
+                    surfaceKey={surfaceKey}
+                    itemKey={`${disclosureId}:diff:${t.id}:${idx}`}
                   />
                 )}
               </div>

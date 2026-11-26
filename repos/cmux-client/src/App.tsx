@@ -1,945 +1,147 @@
-/**
- * cmux-mobile Main PWA Application
- * Implements cmux-Native 3-Level Navigation Hierarchy:
- * - Level 1: WorkspaceListView
- * - Level 2: SurfaceListView
- * - Level 3: SurfaceDetailView (Adaptive Orca Chat vs Raw Terminal)
- * Multi-Device & Companion Features:
- * - HostSwitchSheet: switch between paired computers from the connection pill
- * - DeviceListView: Comprehensive device and client token manager
- * Push & PWA Features:
- * - Service Worker & Web Push Registration (RFC 8292 / VAPID)
- * - iOS Safari PWA Onboarding Banner
- * - Deep-link surface navigation on push click
- * Sources:
- * - architecture.md: Section 5
- * - notification_system.md: Section 3
- * - ref/orca/mobile/src/home/tabs/MobileHomeTabBar.tsx
- * - ref/orca/mobile/src/session/tabs/MobileSessionTabStrip.tsx
- */
-
-import { useState, useEffect, useCallback, useRef } from "react";
-import {
-  Bell,
-  ChevronDown,
-  BellRing,
-  FolderGit2,
-  Gauge,
-  KeyRound,
-  MoreHorizontal,
-  Plus,
-  QrCode,
-  RefreshCw,
-  Server,
-  Share2,
-  X,
-} from "lucide-react";
-import type {
-  NotificationAlertPayload,
-  NotificationDismissPayload,
-  SurfaceNode,
-  WorkspaceNode,
-} from "./protocol/rpc";
-import { RPC_EVENTS, RPC_METHODS } from "./protocol/rpc";
-import { wsClient, type ConnectionState } from "./transport/wsClient";
-import { pushManager } from "./notifications/pushManager";
-import { peekCachedWorkspaces, writeCachedWorkspaces } from "./hosts/workspaceCache";
-import {
-  isAlertSuppressedForView,
-  loadLocalNotificationPrefs,
-  parseNotificationAlert,
-  subscribeLocalNotificationPrefs,
-  type LocalNotificationPrefs,
-} from "./notifications/localPrefs";
-import { haptic, installGlobalButtonHaptics } from "./native/haptics";
-import {
-  goBack,
-  pushView,
-  replaceView,
-  showDetailEntry,
-  useHistoryNavigation,
-  type AppView,
-} from "./native/navigation";
-import { useIsDesktop } from "./native/useMediaQuery";
-import {
-  computeIsViewingSurface,
-  pickDefaultSurface,
-  reconcileSelection,
-  viewForSelection,
-} from "./native/desktopState";
-import { WorkspaceListView } from "./views/WorkspaceListView";
-import { SurfaceListView } from "./views/SurfaceListView";
-import { SurfaceDetailView } from "./views/SurfaceDetailView";
-import { DeviceListView } from "./views/DeviceListView";
-import { DesktopTabStrip } from "./components/desktop/DesktopTabStrip";
-import { PairHostModal } from "./components/hosts/PairHostModal";
-import { HostSwitchSheet } from "./components/hosts/HostSwitchSheet";
-import { NewSurfaceModal, type CreateSurfaceParams } from "./components/surface/NewSurfaceModal";
-import { CloseSurfaceDialog } from "./components/surface/CloseSurfaceDialog";
-import { ChangesPanel } from "./components/git/ChangesPanel";
-import { PairingConfirmModal } from "./components/hosts/PairingConfirmModal";
-import { UsageView } from "./components/usage/UsageView";
-import { DesktopUsageWidget } from "./components/usage/DesktopUsageWidget";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Share2, X } from "lucide-react";
+import { AppModals } from "./components/shell/AppModals";
+import { AppTopHeader } from "./components/shell/AppTopHeader";
+import { DesktopWorkspaceShell } from "./components/shell/DesktopWorkspaceShell";
+import { MobileWorkspaceShell } from "./components/shell/MobileWorkspaceShell";
 import { useUsageSnapshot } from "./components/usage/useUsageSnapshot";
-import { useHosts } from "./hosts/useHosts";
-import type { SavedHost } from "./hosts/hostStore";
-import { isDemoMode } from "./demo/demoData";
-
-/** Notification bodies carry raw agent markdown; show them as plain text. */
-const plainText = (md: string) =>
-  md
-    .replace(/^\s*-\s+/gm, "")
-    .replace(/[*_`#>]+/g, "")
-    .replace(/\s+/g, " ")
-    .trim();
-
-function sameSurface(a: SurfaceNode, b: SurfaceNode): boolean {
-  if (
-    a.id !== b.id ||
-    a.ref !== b.ref ||
-    a.title !== b.title ||
-    a.surface_type !== b.surface_type ||
-    a.tty !== b.tty ||
-    a.selected !== b.selected ||
-    a.focused !== b.focused
-  ) {
-    return false;
-  }
-  const aa = a.agent;
-  const ba = b.agent;
-  if (aa === ba) return true;
-  if (!aa || !ba) return false;
-  return (
-    aa.agent_kind === ba.agent_kind &&
-    aa.status === ba.status &&
-    aa.session_id === ba.session_id &&
-    aa.transcript_path === ba.transcript_path
-  );
-}
-
-function sameWorkspace(a: WorkspaceNode, b: WorkspaceNode): boolean {
-  if (
-    a.id !== b.id ||
-    a.ref !== b.ref ||
-    a.title !== b.title ||
-    a.status !== b.status ||
-    a.pinned !== b.pinned ||
-    a.selected !== b.selected ||
-    a.current_directory !== b.current_directory ||
-    a.snippet !== b.snippet ||
-    a.color !== b.color ||
-    a.surfaces.length !== b.surfaces.length
-  ) {
-    return false;
-  }
-  for (let i = 0; i < a.surfaces.length; i += 1) {
-    if (!sameSurface(a.surfaces[i], b.surfaces[i])) return false;
-  }
-  return true;
-}
-
-/**
- * Reconciles workspace snapshots from 5s polls, keeping identical object references intact so
- * downstream views and memoized components do not re-render when nothing changed.
- */
-function mergeWorkspaces(prev: WorkspaceNode[], next: WorkspaceNode[]): WorkspaceNode[] {
-  if (prev.length === 0) return next;
-  const byId = new Map(prev.map((w) => [w.id, w]));
-  let allSame = prev.length === next.length;
-  const merged = next.map((ws, idx) => {
-    const oldWs = byId.get(ws.id);
-    if (!oldWs) {
-      allSame = false;
-      return ws;
-    }
-    if (sameWorkspace(oldWs, ws)) {
-      if (prev[idx] !== oldWs) allSame = false;
-      return oldWs;
-    }
-    allSame = false;
-    const oldSurfById = new Map(oldWs.surfaces.map((s) => [s.id || s.ref, s]));
-    const mergedSurfaces = ws.surfaces.map((s) => {
-      const oldSurf = oldSurfById.get(s.id || s.ref);
-      return oldSurf && sameSurface(oldSurf, s) ? oldSurf : s;
-    });
-    return { ...ws, surfaces: mergedSurfaces };
-  });
-  return allSame ? prev : merged;
-}
+import { peekCachedWorkspaces } from "./hosts/workspaceCache";
+import { installGlobalButtonHaptics } from "./native/haptics";
+import { useIsDesktop } from "./native/useMediaQuery";
+import { useVisualViewportVars } from "./native/useVisualViewportVars";
+import type { SurfaceNode, WorkspaceNode } from "./protocol/rpc";
+import { useHostSession } from "./state/useHostSession";
+import { useNavigationShell } from "./state/useNavigationShell";
+import { useNotificationController } from "./state/useNotificationController";
+import { useWorkspaceStore } from "./state/useWorkspaceStore";
+import { wsClient } from "./transport/wsClient";
 
 export function App() {
   const isDesktop = useIsDesktop();
-  const [connState, setConnState] = useState<ConnectionState>(wsClient.getState());
-  const [workspaces, setWorkspaces] = useState<WorkspaceNode[]>(() =>
-    peekCachedWorkspaces(wsClient.getEndpoint()),
-  );
-  const [loading, setLoading] = useState(false);
-  const [mainTab, setMainTab] = useState<"workspaces" | "usage" | "devices">("workspaces");
-  const [showHostSheet, setShowHostSheet] = useState(false);
-  const [activeView, setActiveView] = useState<"workspaces" | "surfaces" | "detail">("workspaces");
-  const [selectedWorkspace, setSelectedWorkspace] = useState<WorkspaceNode | null>(() =>
-    isDesktop && workspaces.length > 0
-      ? reconcileSelection({
-          workspaces,
-          selectedWorkspace: null,
-          selectedSurface: null,
-          isDesktop: true,
-          hasPendingJump: false,
-        }).workspace
-      : null,
-  );
-  const [selectedSurface, setSelectedSurface] = useState<SurfaceNode | null>(() =>
-    isDesktop && workspaces.length > 0
-      ? reconcileSelection({
-          workspaces,
-          selectedWorkspace: null,
-          selectedSurface: null,
-          isDesktop: true,
-          hasPendingJump: false,
-        }).surface
-      : null,
-  );
-  const [tokenInput, setTokenInput] = useState(wsClient.getToken());
-  const [showTokenModal, setShowTokenModal] = useState(false);
-  const [showAppMenu, setShowAppMenu] = useState(false);
-  const [showPairModal, setShowPairModal] = useState(false);
-  const [pendingPairing, setPendingPairing] = useState(wsClient.getPendingPairing());
+  useVisualViewportVars();
+  useEffect(() => installGlobalButtonHaptics(), []);
 
-  const { hosts, activeHostId, activeHost, switchHost, removeHost, renameHost } = useHosts();
-
-  // Push notification & iOS PWA Onboarding state
-  const [notifPermission, setNotifPermission] = useState<NotificationPermission>(
-    pushManager.getPermission(),
-  );
-  const [showIosPwaBanner, setShowIosPwaBanner] = useState<boolean>(false);
-  const [localPrefs, setLocalPrefs] = useState<LocalNotificationPrefs>(() =>
-    loadLocalNotificationPrefs(),
-  );
-  const [activeToasts, setActiveToasts] = useState<NotificationAlertPayload[]>([]);
-
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const [sidebarNewWs, setSidebarNewWs] = useState<WorkspaceNode | null>(null);
   const [sidebarCloseTarget, setSidebarCloseTarget] = useState<{
     ws: WorkspaceNode;
     surface: SurfaceNode;
   } | null>(null);
   const [changesWs, setChangesWs] = useState<WorkspaceNode | null>(null);
+  const [initialWorkspaces] = useState<WorkspaceNode[]>(() =>
+    peekCachedWorkspaces(wsClient.getEndpoint()),
+  );
 
-  const selectedWorkspaceRef = useRef(selectedWorkspace);
-  const selectedSurfaceRef = useRef(selectedSurface);
-  const workspacesRef = useRef(workspaces);
-  const activeViewRef = useRef(activeView);
-  const isDesktopRef = useRef(isDesktop);
-  const mainTabRef = useRef(mainTab);
-  const isViewingSurfaceRef = useRef(false);
-  const localPrefsRef = useRef(localPrefs);
-  const seenNotifIdsRef = useRef<string[]>([]);
-  const toastTimersRef = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
-  const isFetchingRef = useRef<boolean>(false);
-  const pendingSurfaceJumpRef = useRef<string | null>(null);
+  const nav = useNavigationShell({ isDesktop, initialWorkspaces });
 
-  const isViewingSurface = computeIsViewingSurface({
-    mainTab,
-    selectedSurface,
-    isDesktop,
-    activeView,
+  const dismissToastsForSurfaceRef = useRef<(surface: SurfaceNode | string) => void>(() => {});
+  const clearAllToastsRef = useRef<() => void>(() => {});
+  const resetWorkspacesRef = useRef<(nextEndpoint?: string | null) => void>(() => {});
+  const fetchWorkspacesRef = useRef<(showSpinner?: boolean) => Promise<void>>(async () => {});
+  const workspacesListRef = useRef<WorkspaceNode[]>(initialWorkspaces);
+
+  const handleJumpToSurface = useCallback(
+    (targetSurfaceId: string): boolean => {
+      const matched = nav.jumpToSurfaceInList(workspacesListRef.current, targetSurfaceId);
+      if (matched) {
+        dismissToastsForSurfaceRef.current(matched);
+        return true;
+      }
+      return false;
+    },
+    [nav],
+  );
+
+  const resetForHostChange = useCallback(
+    (nextEndpoint?: string | null) => {
+      nav.resetNavigation();
+      resetWorkspacesRef.current(nextEndpoint);
+      setChangesWs(null);
+      setSidebarNewWs(null);
+      setSidebarCloseTarget(null);
+      clearAllToastsRef.current();
+    },
+    [nav],
+  );
+
+  const hostSession = useHostSession({
+    onResetForHostChange: resetForHostChange,
+    onConnectedHostReady: () => void fetchWorkspacesRef.current(false),
   });
+
+  const {
+    workspaces,
+    workspacesRef,
+    loading,
+    hasPendingSurfaceJump,
+    fetchWorkspaces,
+    resetWorkspacesForHost,
+    createSurface,
+    renameSurface,
+    closeSurface,
+  } = useWorkspaceStore({
+    connState: hostSession.connState,
+    onWorkspacesReconcile: nav.reconcileWithWorkspaces,
+    onJumpToSurface: handleJumpToSurface,
+  });
+
+  useEffect(() => {
+    workspacesListRef.current = workspaces;
+    resetWorkspacesRef.current = resetWorkspacesForHost;
+    fetchWorkspacesRef.current = fetchWorkspaces;
+  }, [workspaces, resetWorkspacesForHost, fetchWorkspaces]);
+
+  const { syncBreakpoint } = nav;
+  useEffect(() => {
+    syncBreakpoint(workspaces, hasPendingSurfaceJump());
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isDesktop, syncBreakpoint, hasPendingSurfaceJump]);
+
+  const notifs = useNotificationController({
+    connState: hostSession.connState,
+    workspaces,
+    workspacesRef,
+    selectedSurface: nav.selectedSurface,
+    isViewingSurface: nav.isViewingSurface,
+    viewingSurfaceId: nav.viewingSurfaceId,
+    onJumpToSurface: (surfaceId) => void handleJumpToSurface(surfaceId),
+  });
+
+  useEffect(() => {
+    dismissToastsForSurfaceRef.current = notifs.dismissToastsForSurface;
+    clearAllToastsRef.current = notifs.clearAllToasts;
+  }, [notifs.dismissToastsForSurface, notifs.clearAllToasts]);
 
   const usageState = useUsageSnapshot({
-    enabled: isDesktop || mainTab === "usage",
-    connState,
-    hostKey: activeHostId || activeHost?.endpoint || "",
-    pollMs: mainTab === "usage" ? 30_000 : 60_000,
-    trackAgeTick: mainTab === "usage",
+    enabled: isDesktop || nav.mainTab === "usage",
+    connState: hostSession.connState,
+    hostKey: hostSession.activeHostId || hostSession.activeHost?.endpoint || "",
+    pollMs: nav.mainTab === "usage" ? 30_000 : 60_000,
+    trackAgeTick: nav.mainTab === "usage",
   });
 
-  useEffect(() => {
-    selectedWorkspaceRef.current = selectedWorkspace;
-  }, [selectedWorkspace]);
-
-  useEffect(() => {
-    selectedSurfaceRef.current = selectedSurface;
-  }, [selectedSurface]);
-
-  useEffect(() => {
-    workspacesRef.current = workspaces;
-  }, [workspaces]);
-
-  useEffect(() => {
-    activeViewRef.current = activeView;
-  }, [activeView]);
-
-  useEffect(() => {
-    isDesktopRef.current = isDesktop;
-  }, [isDesktop]);
-
-  useEffect(() => {
-    mainTabRef.current = mainTab;
-  }, [mainTab]);
-
-  useEffect(() => {
-    isViewingSurfaceRef.current = isViewingSurface;
-  }, [isViewingSurface]);
-
-  useEffect(() => {
-    localPrefsRef.current = localPrefs;
-  }, [localPrefs]);
-
-  useEffect(() => subscribeLocalNotificationPrefs(setLocalPrefs), []);
-
-  // Keep desktop selection populated and sync mobile activeView when resizing across breakpoints.
-  useEffect(() => {
-    if (isDesktop) {
-      if (workspacesRef.current.length > 0) {
-        const next = reconcileSelection({
-          workspaces: workspacesRef.current,
-          selectedWorkspace: selectedWorkspaceRef.current,
-          selectedSurface: selectedSurfaceRef.current,
-          isDesktop: true,
-          hasPendingJump: Boolean(pendingSurfaceJumpRef.current),
-        });
-        if (next.workspace !== selectedWorkspaceRef.current) {
-          setSelectedWorkspace(next.workspace);
-        }
-        if (next.surface !== selectedSurfaceRef.current) {
-          setSelectedSurface(next.surface);
-        }
-      }
-      return;
-    }
-    setActiveView(viewForSelection(selectedWorkspaceRef.current, selectedSurfaceRef.current));
-  }, [isDesktop]);
-
-  const jumpToSurface = useCallback((targetSurfaceId: string) => {
-    const currentWorkspaces = workspacesRef.current;
-    for (const ws of currentWorkspaces) {
-      const match = ws.surfaces.find((s) => s.id === targetSurfaceId || s.ref === targetSurfaceId);
-      if (match) {
-        setMainTab("workspaces");
-        setSelectedWorkspace(ws);
-        setSelectedSurface(match);
-        setActiveView("detail");
-        if (!isDesktopRef.current) {
-          showDetailEntry();
-        }
-        setActiveToasts((prev) => {
-          if (prev.length === 0) return prev;
-          const next = prev.filter((t) => t.surface_id !== match.id);
-          return next.length === prev.length ? prev : next;
-        });
-        return;
-      }
-    }
-  }, []);
-
-  // History API sync: system back / browser back / edge swipe pop one screen at a time.
-  const handlePop = useCallback((view: AppView) => {
-    if (isDesktopRef.current) {
-      if (mainTabRef.current !== "workspaces") {
-        setMainTab("workspaces");
-      }
-      return;
-    }
-    if (mainTabRef.current !== "workspaces") {
-      setMainTab("workspaces");
-      return;
-    }
-    if (view === "workspaces") {
-      setActiveView("workspaces");
-      setSelectedWorkspace(null);
-      setSelectedSurface(null);
-    } else if (view === "surfaces") {
-      setActiveView(selectedWorkspaceRef.current ? "surfaces" : "workspaces");
-      setSelectedSurface(null);
-    } else {
-      setActiveView(selectedSurfaceRef.current ? "detail" : "surfaces");
-    }
-  }, []);
-  useHistoryNavigation(handlePop);
-
-  useEffect(() => installGlobalButtonHaptics(), []);
-
-  // Subscribe to connection state
-  useEffect(() => {
-    return wsClient.onStateChange((state) => {
-      setConnState(state);
-    });
-  }, []);
-
-  useEffect(
-    () => wsClient.onPairingChange(() => setPendingPairing(wsClient.getPendingPairing())),
-    [],
-  );
-
-  // Fetch workspaces tree from Gateway
-  const fetchWorkspaces = useCallback(async (showSpinner = false) => {
-    if (wsClient.getState() !== "connected") return;
-    if (isFetchingRef.current) return;
-    isFetchingRef.current = true;
-    const shouldShowLoading = showSpinner || workspacesRef.current.length === 0;
-    if (shouldShowLoading) setLoading(true);
-    try {
-      const resp = await wsClient.call<{ workspaces: WorkspaceNode[] }>(RPC_METHODS.WORKSPACE_TREE);
-      if (resp?.workspaces) {
-        const merged = mergeWorkspaces(workspacesRef.current, resp.workspaces);
-        if (merged !== workspacesRef.current) {
-          setWorkspaces(merged);
-        }
-        writeCachedWorkspaces(wsClient.getEndpoint(), merged);
-
-        const reconciled = reconcileSelection({
-          workspaces: merged,
-          selectedWorkspace: selectedWorkspaceRef.current,
-          selectedSurface: selectedSurfaceRef.current,
-          isDesktop: isDesktopRef.current,
-          hasPendingJump: Boolean(pendingSurfaceJumpRef.current),
-        });
-        if (reconciled.workspace !== selectedWorkspaceRef.current) {
-          setSelectedWorkspace(reconciled.workspace);
-        }
-        if (reconciled.surface !== selectedSurfaceRef.current) {
-          setSelectedSurface(reconciled.surface);
-        }
-        if (reconciled.fallbackView && !isDesktopRef.current) {
-          setActiveView(reconciled.fallbackView);
-        }
-      }
-    } catch (err) {
-      console.warn("Failed to fetch workspaces:", err);
-    } finally {
-      isFetchingRef.current = false;
-      if (shouldShowLoading) setLoading(false);
-    }
-  }, []);
-
-  const handleSwitchHost = useCallback(
-    (host: SavedHost) => {
-      setSelectedWorkspace(null);
-      setSelectedSurface(null);
-      selectedWorkspaceRef.current = null;
-      selectedSurfaceRef.current = null;
-      setActiveView("workspaces");
-      if (!isDesktopRef.current) {
-        replaceView("workspaces");
-      }
-      const cachedForHost = peekCachedWorkspaces(host.endpoint);
-      setWorkspaces(cachedForHost);
-      workspacesRef.current = cachedForHost;
-      setChangesWs(null);
-      for (const timer of toastTimersRef.current.values()) {
-        clearTimeout(timer);
-      }
-      toastTimersRef.current.clear();
-      setActiveToasts([]);
-      switchHost(host);
-      // In demo mode connState stays "connected", so re-fetch immediately instead of waiting for poll.
-      if (wsClient.getState() === "connected") {
-        void fetchWorkspaces();
-      }
-    },
-    [switchHost, fetchWorkspaces],
-  );
-
-  const handleRemoveHost = useCallback(
-    (id: string) => {
-      if (activeHostId === id) {
-        setSelectedWorkspace(null);
-        setSelectedSurface(null);
-        selectedWorkspaceRef.current = null;
-        selectedSurfaceRef.current = null;
-        setActiveView("workspaces");
-        if (!isDesktopRef.current) {
-          replaceView("workspaces");
-        }
-        setWorkspaces([]);
-        setChangesWs(null);
-        for (const timer of toastTimersRef.current.values()) {
-          clearTimeout(timer);
-        }
-        toastTimersRef.current.clear();
-        setActiveToasts([]);
-      }
-      removeHost(id);
-    },
-    [activeHostId, removeHost],
-  );
-
-  useEffect(() => {
-    setTokenInput(wsClient.getToken());
-  }, [activeHostId]);
-
-  // Connect on mount & initialize Service Worker
-  useEffect(() => {
-    wsClient.connect();
-    void pushManager.registerServiceWorker();
-
-    // Check for cold-start deep link from Web Push notifications: ?surface=<id>
-    if (typeof window !== "undefined") {
-      const urlSurfaceId = new URLSearchParams(window.location.search).get("surface");
-      if (urlSurfaceId) {
-        pendingSurfaceJumpRef.current = urlSurfaceId;
-        jumpToSurface(urlSurfaceId);
-      }
-    }
-
-    // Check iOS PWA status
-    if (pushManager.needsIosPwaInstall()) {
-      setShowIosPwaBanner(true);
-    }
-
-    // Listen for notification click message from Service Worker
-    const handleSwMessage = (event: MessageEvent) => {
-      if (event.data?.type === "cmux.notification.clicked") {
-        const targetSurfaceId = event.data.data?.surfaceId;
-        if (typeof targetSurfaceId === "string" && targetSurfaceId) {
-          jumpToSurface(targetSurfaceId);
-        }
-      }
-    };
-
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.addEventListener("message", handleSwMessage);
-    }
-
-    const toastTimers = toastTimersRef.current;
-    return () => {
-      wsClient.disconnect();
-      for (const timer of toastTimers.values()) {
-        clearTimeout(timer);
-      }
-      toastTimers.clear();
-      if ("serviceWorker" in navigator) {
-        navigator.serviceWorker.removeEventListener("message", handleSwMessage);
-      }
-    };
-  }, [jumpToSurface]);
-
-  useEffect(() => {
-    if (connState !== "connected") return;
-    void fetchWorkspaces(false);
-    const interval = setInterval(() => {
-      if (typeof document === "undefined" || document.visibilityState === "visible") {
-        void fetchWorkspaces(false);
-      }
-    }, 5000);
-    const onVisibility = () => {
-      if (document.visibilityState === "visible") {
-        void fetchWorkspaces(false);
-      }
-    };
-    if (typeof document !== "undefined") {
-      document.addEventListener("visibilitychange", onVisibility);
-    }
-    return () => {
-      clearInterval(interval);
-      if (typeof document !== "undefined") {
-        document.removeEventListener("visibilitychange", onVisibility);
-      }
-    };
-  }, [connState, fetchWorkspaces]);
-
-  // Resolve cold-start deep-link to surface once workspaces are loaded
-  useEffect(() => {
-    if (pendingSurfaceJumpRef.current && workspaces.length > 0) {
-      const target = pendingSurfaceJumpRef.current;
-      jumpToSurface(target);
-      for (const ws of workspaces) {
-        if (ws.surfaces.some((s) => s.id === target || s.ref === target)) {
-          pendingSurfaceJumpRef.current = null;
-          break;
-        }
-      }
-    }
-  }, [workspaces, jumpToSurface]);
-
-  const viewingSurfaceId = selectedSurface?.id ?? null;
-
-  // Report active surface & visibility to the gateway so suppressWhileViewing works across WebSocket and Web Push.
-  useEffect(() => {
-    if (connState !== "connected") return;
-    const sendViewing = () => {
-      const visible =
-        localPrefs.suppressWhileViewing &&
-        (typeof document === "undefined" || document.visibilityState === "visible");
-      const surfaceId =
-        localPrefs.suppressWhileViewing && isViewingSurface ? viewingSurfaceId : null;
-      void wsClient
-        .call(RPC_METHODS.CLIENT_VIEWING, {
-          surface_id: surfaceId,
-          visible,
-        })
-        .catch(() => {});
-    };
-    sendViewing();
-    if (typeof document === "undefined") return;
-    document.addEventListener("visibilitychange", sendViewing);
-    return () => document.removeEventListener("visibilitychange", sendViewing);
-  }, [connState, isViewingSurface, viewingSurfaceId, localPrefs.suppressWhileViewing]);
-
-  // Clear toasts for the surface the user just opened.
-  useEffect(() => {
-    if (isViewingSurface && selectedSurface) {
-      setActiveToasts((prev) => {
-        if (prev.length === 0) return prev;
-        const next = prev.filter((t) => t.surface_id !== selectedSurface.id);
-        return next.length === prev.length ? prev : next;
-      });
-    }
-  }, [isViewingSurface, selectedSurface]);
-
-  // Listen to live gateway notification alerts and dismissals.
-  useEffect(() => {
-    return wsClient.onEvent((event, data) => {
-      if (event === RPC_EVENTS.NOTIFICATION_ALERT) {
-        const alert = parseNotificationAlert(data);
-        if (!alert) return;
-
-        if (seenNotifIdsRef.current.includes(alert.notification_id)) return;
-        seenNotifIdsRef.current.push(alert.notification_id);
-        if (seenNotifIdsRef.current.length > 100) {
-          seenNotifIdsRef.current.shift();
-        }
-
-        const prefs = localPrefsRef.current;
-        const tabVisible =
-          typeof document === "undefined" || document.visibilityState === "visible";
-        const viewingSurfaceId = isViewingSurfaceRef.current
-          ? (selectedSurfaceRef.current?.id ?? null)
-          : null;
-        if (isAlertSuppressedForView(prefs, alert.surface_id, viewingSurfaceId, tabVisible)) {
-          return;
-        }
-
-        if (prefs.inAppToast) {
-          setActiveToasts((prev) => {
-            const withoutSameTag = prev.filter((t) => t.tag !== alert.tag);
-            return [alert, ...withoutSameTag].slice(0, 3);
-          });
-
-          const timer = setTimeout(() => {
-            setActiveToasts((prev) =>
-              prev.filter((t) => t.notification_id !== alert.notification_id),
-            );
-            toastTimersRef.current.delete(alert.notification_id);
-          }, 8000);
-          toastTimersRef.current.set(alert.notification_id, timer);
-        }
-
-        haptic(alert.urgent ? "medium" : "light");
-      } else if (event === RPC_EVENTS.NOTIFICATION_DISMISS) {
-        const payload = data as NotificationDismissPayload;
-        if (payload?.tags) {
-          const dismissTags = new Set(payload.tags);
-          setActiveToasts((prev) =>
-            prev.filter((t) => {
-              if (t.surface_id === payload.surface_id && dismissTags.has(t.tag)) {
-                const timer = toastTimersRef.current.get(t.notification_id);
-                if (timer) {
-                  clearTimeout(timer);
-                  toastTimersRef.current.delete(t.notification_id);
-                }
-                return false;
-              }
-              return true;
-            }),
-          );
-        }
-      }
-    });
-  }, []);
-
-  // Dynamic Visual Viewport tracking for iOS Virtual Keyboard & Standalone PWA: index.css sizes the
-  // fixed root with --app-height/--app-top, so the composer rides above the keyboard.
-  useEffect(() => {
-    if (typeof window === "undefined" || !window.visualViewport) return;
-
-    const preventWindowScroll = () => {
-      if (window.scrollY !== 0) {
-        window.scrollTo(0, 0);
-      }
-    };
-
-    const updateViewportHeight = () => {
-      const vv = window.visualViewport;
-      if (!vv) return;
-      // Ignore desktop trackpad pinch-zoom so #root does not shrink away from the window.
-      if (vv.scale && Math.abs(vv.scale - 1) > 0.02) return;
-      document.documentElement.style.setProperty("--app-height", `${vv.height}px`);
-      // iOS scrolls the visual viewport to reveal a focused input; keep the fixed root glued to it
-      // so no gap opens between the composer and the keyboard.
-      document.documentElement.style.setProperty("--app-top", `${vv.offsetTop}px`);
-      preventWindowScroll();
-    };
-
-    window.visualViewport.addEventListener("resize", updateViewportHeight);
-    window.visualViewport.addEventListener("scroll", updateViewportHeight);
-    window.addEventListener("scroll", preventWindowScroll, { passive: true });
-    updateViewportHeight();
-
-    return () => {
-      window.visualViewport?.removeEventListener("resize", updateViewportHeight);
-      window.visualViewport?.removeEventListener("scroll", updateViewportHeight);
-      window.removeEventListener("scroll", preventWindowScroll);
-    };
-  }, []);
-
-  const handleForceReload = () => {
-    haptic("medium");
-    try {
-      const url = new URL(window.location.href);
-      url.searchParams.set("reload", Date.now().toString());
-      window.location.href = url.toString();
-    } catch {
-      window.location.reload();
-    }
-  };
-
-  const handleSelectWorkspace = (ws: WorkspaceNode) => {
-    setMainTab("workspaces");
-    setSelectedWorkspace(ws);
-    if (isDesktop) {
-      setSelectedSurface(pickDefaultSurface(ws.surfaces));
-      setActiveView("detail");
-      return;
-    }
-    setActiveView("surfaces");
-    pushView("surfaces");
-  };
-
-  const handleSelectSurface = (surf: SurfaceNode) => {
-    setMainTab("workspaces");
-    setSelectedSurface(surf);
-    if (!isDesktop) {
-      showDetailEntry();
-    }
-    setActiveView("detail");
-  };
-
-  const handleBackToWorkspaces = () =>
-    goBack(() => {
-      setActiveView("workspaces");
-      setSelectedWorkspace(null);
-      setSelectedSurface(null);
-    });
-
-  const handleBackToSurfaces = () => {
-    if (isDesktop) {
-      setSelectedSurface(null);
-      return;
-    }
-    goBack(() => {
-      setActiveView("surfaces");
-      setSelectedSurface(null);
-    });
-  };
-
-  const handleForceRefreshWorkspaces = useCallback(() => {
-    void fetchWorkspaces(true);
-  }, [fetchWorkspaces]);
-
-  const handleSaveToken = () => {
-    wsClient.setToken(tokenInput.trim());
-    setShowTokenModal(false);
-  };
-
-  // Subscribe this browser to Web Push using the gateway's VAPID key and register it.
-  const subscribeToPush = useCallback(async () => {
-    const { public_key } = await wsClient.call<{ public_key: string }>(RPC_METHODS.PUSH_VAPID_KEY);
-    const sub = await pushManager.subscribe(public_key);
-    if (sub) await wsClient.call(RPC_METHODS.PUSH_REGISTER, { ...sub });
-  }, []);
-
-  const handleToggleNotifications = async () => {
-    try {
-      const perm = await pushManager.requestPermission();
-      setNotifPermission(perm);
-      if (perm === "granted") {
-        await subscribeToPush();
-        haptic("success");
-      }
-    } catch (err) {
-      console.warn("Failed to enable push notifications:", err);
-    }
-  };
-
-  // Keep the gateway's subscription list fresh (gateway restarts, browser rotated the endpoint).
-  useEffect(() => {
-    if (connState === "connected" && notifPermission === "granted") {
-      void subscribeToPush().catch((err) => console.warn("Push re-registration failed:", err));
-    }
-  }, [connState, notifPermission, subscribeToPush]);
-
-  const handleCreateSurface = useCallback(
-    async (params: CreateSurfaceParams) => {
-      await wsClient.call(RPC_METHODS.SURFACE_NEW, {
-        workspace_id: params.workspaceId,
-        command: params.command,
-        ...(params.launch ? { launch: params.launch } : {}),
-      });
-      await fetchWorkspaces();
-    },
-    [fetchWorkspaces],
-  );
-
-  const handleRenameSurface = useCallback(
-    async (surfaceId: string, title: string) => {
-      await wsClient.call(RPC_METHODS.SURFACE_RENAME, {
-        surface_id: surfaceId,
-        title,
-      });
-      await fetchWorkspaces();
-    },
-    [fetchWorkspaces],
-  );
-
-  const handleCloseSurface = useCallback(
-    async (surfaceId: string, workspaceId?: string) => {
-      await wsClient.call(RPC_METHODS.SURFACE_CLOSE, {
-        surface_id: surfaceId,
-        workspace_id: workspaceId ?? selectedWorkspaceRef.current?.id,
-        force: true,
-      });
-      await fetchWorkspaces();
-    },
-    [fetchWorkspaces],
-  );
-
-  const isConnecting = connState === "connecting" || connState === "authenticating";
-  const hasNoHosts = hosts.length === 0 && connState !== "connected" && !isConnecting;
+  const isConnecting =
+    hostSession.connState === "connecting" || hostSession.connState === "authenticating";
+  const hasNoHosts =
+    hostSession.hosts.length === 0 && hostSession.connState !== "connected" && !isConnecting;
+  const errorMessage = wsClient.getLastErrorMessage();
 
   const topBrandHeader = (
-    <div
-      className={`flex items-center justify-between px-4 ${
-        showIosPwaBanner || isDesktop
-          ? "min-h-[52px]"
-          : "pt-[env(safe-area-inset-top,0px)] min-h-[calc(3.25rem+env(safe-area-inset-top,0px))]"
-      } relative bg-bg border-b border-line shrink-0`}
-    >
-      <div className="flex items-center gap-2.5 min-w-0">
-        <span className="text-[17px] font-bold tracking-tight text-fg shrink-0">Cmob</span>
-        <button
-          type="button"
-          onClick={() => setShowHostSheet(true)}
-          aria-label={`Switch computer (${connState})`}
-          className="inline-flex items-center gap-1.5 min-w-0 max-w-[180px] pl-2.5 pr-2 py-1 rounded-full bg-raised hover:bg-line text-[12.5px] font-medium text-fg-soft transition-colors"
-        >
-          <span
-            className={`w-1.5 h-1.5 rounded-full shrink-0 ${
-              connState === "connected"
-                ? "bg-emerald-400"
-                : connState === "connecting" || connState === "authenticating"
-                  ? "bg-amber-400 animate-pulse"
-                  : "bg-rose-400"
-            }`}
-          />
-          <span className="truncate">{activeHost?.name ?? "No computer"}</span>
-          <ChevronDown className="w-3 h-3 shrink-0 text-muted" />
-        </button>
-        {isDemoMode() && (
-          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-semibold bg-accent/20 text-accent-soft border border-accent/30 shrink-0">
-            Demo
-          </span>
-        )}
-      </div>
-
-      <div className="flex items-center gap-1.5 shrink-0">
-        <button
-          type="button"
-          onClick={handleToggleNotifications}
-          className={`w-9 h-9 rounded-xl bg-raised hover:bg-line flex items-center justify-center transition-colors ${
-            notifPermission === "granted"
-              ? "text-emerald-400"
-              : notifPermission === "denied"
-                ? "text-dim cursor-not-allowed"
-                : "text-amber-300"
-          }`}
-          title={`Notifications: ${notifPermission}`}
-          aria-label="Notifications"
-        >
-          {notifPermission === "granted" ? (
-            <BellRing className="w-[18px] h-[18px]" />
-          ) : (
-            <Bell className="w-[18px] h-[18px]" />
-          )}
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setShowAppMenu((v) => !v)}
-          className="w-9 h-9 rounded-xl bg-raised hover:bg-line text-fg-soft flex items-center justify-center transition-colors"
-          title="Menu"
-          aria-label="Menu"
-          aria-expanded={showAppMenu}
-        >
-          <MoreHorizontal className="w-[18px] h-[18px]" />
-        </button>
-
-        {showAppMenu && (
-          <>
-            <div className="fixed inset-0 z-40" onClick={() => setShowAppMenu(false)} />
-            <div className="absolute right-3 top-[calc(100%-4px)] z-50 w-56 rounded-2xl bg-surface border border-white/[0.12] shadow-2xl py-1.5 overflow-hidden">
-              {[
-                { label: "Pair new device", icon: Plus, run: () => setShowPairModal(true) },
-                { label: "Model usage", icon: Gauge, run: () => setMainTab("usage") },
-                { label: "Hosts & devices", icon: Server, run: () => setMainTab("devices") },
-                { label: "Auth token", icon: KeyRound, run: () => setShowTokenModal(true) },
-                { label: "Reload app", icon: RefreshCw, run: handleForceReload },
-              ].map(({ label, icon: Icon, run }) => (
-                <button
-                  key={label}
-                  type="button"
-                  onClick={() => {
-                    setShowAppMenu(false);
-                    run();
-                  }}
-                  className="w-full min-h-[44px] px-4 flex items-center gap-3 text-[14px] font-medium text-fg hover:bg-white/[0.06] active:bg-white/[0.1] transition-colors"
-                >
-                  <Icon className="w-4 h-4 text-muted" />
-                  <span>{label}</span>
-                </button>
-              ))}
-            </div>
-          </>
-        )}
-      </div>
-    </div>
-  );
-
-  const primaryTabNav = (
-    <nav
-      aria-label="Primary navigation"
-      className="shrink-0 grid grid-cols-3 bg-surface border-t border-line pt-1.5 pb-[max(env(safe-area-inset-bottom,0px),8px)] select-none"
-    >
-      {[
-        { id: "workspaces" as const, label: "Workspaces", icon: FolderGit2 },
-        { id: "usage" as const, label: "Usage", icon: Gauge },
-        { id: "devices" as const, label: "Devices", icon: Server },
-      ].map(({ id, label, icon: Icon }) => {
-        const selected = mainTab === id;
-        return (
-          <button
-            key={id}
-            type="button"
-            onClick={() => {
-              haptic("light");
-              setMainTab(id);
-            }}
-            aria-current={selected ? "page" : undefined}
-            className={`flex flex-col items-center justify-center gap-0.5 py-1 transition-colors ${
-              selected ? "text-fg" : "text-muted hover:text-fg-soft"
-            }`}
-          >
-            <Icon className={`w-5 h-5 ${selected ? "text-accent-soft" : ""}`} />
-            <span className="text-[11px] font-medium">{label}</span>
-          </button>
-        );
-      })}
-    </nav>
+    <AppTopHeader
+      connState={hostSession.connState}
+      activeHost={hostSession.activeHost}
+      notifPermission={notifs.notifPermission}
+      compactTopInset={notifs.showIosPwaBanner || isDesktop}
+      onOpenHostSheet={() => hostSession.setShowHostSheet(true)}
+      onToggleNotifications={() => void notifs.handleToggleNotifications()}
+      onOpenPairModal={() => hostSession.setShowPairModal(true)}
+      onSelectMainTab={nav.setMainTab}
+      onOpenTokenModal={() => hostSession.setShowTokenModal(true)}
+    />
   );
 
   return (
     <div className="flex flex-col h-full w-full max-w-full overflow-hidden bg-bg font-sans antialiased select-none lg:select-text">
-      {showIosPwaBanner && (
+      {notifs.showIosPwaBanner && (
         <div className="flex items-center justify-between gap-2 px-4 pt-[calc(0.5rem+env(safe-area-inset-top,0px))] pb-2 bg-bg border-b border-white/[0.08] text-[13px] text-fg-soft shrink-0">
           <div className="flex items-center gap-2 min-w-0">
             <Share2 className="w-4 h-4 text-accent-soft shrink-0" />
@@ -949,7 +151,7 @@ export function App() {
           </div>
           <button
             type="button"
-            onClick={() => setShowIosPwaBanner(false)}
+            onClick={() => notifs.setShowIosPwaBanner(false)}
             className="w-8 h-8 rounded-lg hover:bg-white/[0.08] text-muted hover:text-white flex items-center justify-center shrink-0"
             aria-label="Dismiss banner"
           >
@@ -958,14 +160,12 @@ export function App() {
         </div>
       )}
 
-      {/* Top Header (Mobile only; desktop mounts topBrandHeader inside its sidebar) */}
-      {!isDesktop && activeView !== "detail" && (
+      {!isDesktop && nav.activeView !== "detail" && (
         <div className="flex flex-col shrink-0 z-30">
           {topBrandHeader}
-
-          {connState === "error" && wsClient.getLastErrorMessage() && (
+          {hostSession.connState === "error" && errorMessage && (
             <div className="mx-4 my-2 px-3.5 py-2.5 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-300 text-[12.5px] flex items-center justify-between gap-2 animate-fade-in">
-              <span className="leading-tight">{wsClient.getLastErrorMessage()}</span>
+              <span className="leading-tight">{errorMessage}</span>
               <button
                 type="button"
                 onClick={() => wsClient.connect()}
@@ -978,399 +178,105 @@ export function App() {
         </div>
       )}
 
-      {/* Main Content Area */}
       <main className="flex-1 overflow-hidden relative flex min-h-0">
         {isDesktop ? (
-          <>
-            {!sidebarCollapsed && (
-              <aside
-                aria-label="Workspaces sidebar"
-                className="w-[350px] xl:w-[380px] shrink-0 h-full flex flex-col bg-bg border-r border-line overflow-hidden"
-              >
-                {topBrandHeader}
-                <div className="flex-1 min-h-0 overflow-hidden">
-                  <WorkspaceListView
-                    workspaces={workspaces}
-                    loading={loading}
-                    onRefresh={handleForceRefreshWorkspaces}
-                    onSelectWorkspace={handleSelectWorkspace}
-                    hostsCount={hosts.length}
-                    connState={connState}
-                    onPairHost={() => setShowPairModal(true)}
-                    selectedWorkspaceId={mainTab === "workspaces" ? selectedWorkspace?.id : null}
-                    hideOnboarding
-                  />
-                </div>
-                {primaryTabNav}
-              </aside>
-            )}
-
-            <div className="flex-1 min-w-0 flex flex-col overflow-hidden bg-bg">
-              <DesktopTabStrip
-                workspace={mainTab === "workspaces" ? selectedWorkspace : null}
-                surfaces={selectedWorkspace?.surfaces ?? []}
-                activeSurface={selectedSurface}
-                sidebarCollapsed={sidebarCollapsed}
-                loading={loading}
-                onToggleSidebar={() => setSidebarCollapsed((v) => !v)}
-                onSelectSurface={handleSelectSurface}
-                onNewSurface={() => {
-                  if (selectedWorkspace) setSidebarNewWs(selectedWorkspace);
-                }}
-                onCloseSurface={(surf) => {
-                  if (selectedWorkspace)
-                    setSidebarCloseTarget({ ws: selectedWorkspace, surface: surf });
-                }}
-                onOpenChanges={() => {
-                  if (selectedWorkspace) setChangesWs(selectedWorkspace);
-                }}
-                onRefresh={handleForceRefreshWorkspaces}
-                usageWidget={
-                  <DesktopUsageWidget
-                    hostName={activeHost?.name ?? "No computer"}
-                    connState={connState}
-                    snapshot={usageState.snapshot}
-                    loading={usageState.loading}
-                    refreshing={usageState.refreshing}
-                    error={usageState.error}
-                    unsupported={usageState.unsupported}
-                    now={usageState.now}
-                    onRefresh={() => void usageState.refresh()}
-                  />
-                }
-              />
-
-              {connState === "error" && wsClient.getLastErrorMessage() && (
-                <div className="mx-4 mt-2 px-3.5 py-2 rounded-xl bg-rose-500/15 border border-rose-500/25 text-rose-300 text-[12.5px] flex items-center justify-between gap-2 shrink-0">
-                  <span className="leading-tight">{wsClient.getLastErrorMessage()}</span>
-                  <button
-                    type="button"
-                    onClick={() => wsClient.connect()}
-                    className="px-2.5 py-1 rounded-lg bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 text-[11.5px] font-semibold shrink-0"
-                  >
-                    Retry
-                  </button>
-                </div>
-              )}
-
-              <div className="flex-1 min-h-0 overflow-hidden">
-                {mainTab === "usage" ? (
-                  <UsageView
-                    hostName={activeHost?.name ?? "No computer"}
-                    connState={connState}
-                    snapshot={usageState.snapshot}
-                    loading={usageState.loading}
-                    refreshing={usageState.refreshing}
-                    error={usageState.error}
-                    unsupported={usageState.unsupported}
-                    now={usageState.now}
-                    onRefresh={() => void usageState.refresh()}
-                  />
-                ) : mainTab === "devices" ? (
-                  <DeviceListView
-                    hosts={hosts}
-                    activeHostId={activeHostId}
-                    connState={connState}
-                    hideBack
-                    onSelectHost={(h) => {
-                      handleSwitchHost(h);
-                      setMainTab("workspaces");
-                    }}
-                    onRemoveHost={handleRemoveHost}
-                    onRenameHost={renameHost}
-                    onBack={() => setMainTab("workspaces")}
-                  />
-                ) : hasNoHosts && !loading ? (
-                  <div className="h-full flex flex-col items-center justify-center px-6 py-16 text-center">
-                    <h2 className="text-[22px] font-bold text-white tracking-tight mb-2">
-                      Welcome to Cmob
-                    </h2>
-                    <p className="text-[14px] text-muted max-w-md leading-relaxed mb-6">
-                      Connect your computer to monitor terminal workspaces and control coding agents
-                      like Claude Code, AGY, and Kiro.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setShowPairModal(true)}
-                      className="inline-flex items-center gap-2 px-5 min-h-[44px] rounded-xl bg-accent hover:bg-accent-strong text-white text-[14px] font-semibold transition-colors cursor-pointer"
-                    >
-                      <QrCode className="w-4 h-4" />
-                      <span>Connect Your Computer</span>
-                    </button>
-                    <code className="mt-5 text-[12.5px] text-emerald-400">
-                      $ cmob qr --tailscale
-                    </code>
-                  </div>
-                ) : selectedWorkspace && selectedSurface ? (
-                  <SurfaceDetailView
-                    key={selectedSurface.id || selectedSurface.ref}
-                    surface={selectedSurface}
-                    workspace={selectedWorkspace}
-                    onBack={handleBackToSurfaces}
-                    allSurfaces={selectedWorkspace.surfaces}
-                    onSelectSurface={handleSelectSurface}
-                    onCreateSurface={handleCreateSurface}
-                    onRenameSurface={handleRenameSurface}
-                    onCloseSurface={handleCloseSurface}
-                    onRefresh={handleForceRefreshWorkspaces}
-                    desktopLayout
-                  />
-                ) : selectedWorkspace ? (
-                  <div className="h-full flex flex-col items-center justify-center gap-4 px-6 text-center text-muted">
-                    <p className="text-[14px]">
-                      No terminal tabs open in{" "}
-                      <span className="text-fg font-medium">{selectedWorkspace.title}</span>.
-                    </p>
-                    <button
-                      type="button"
-                      onClick={() => setSidebarNewWs(selectedWorkspace)}
-                      className="h-10 px-4 rounded-xl bg-accent hover:bg-accent-strong text-white text-[14px] font-semibold inline-flex items-center gap-2 transition-colors"
-                    >
-                      <Plus className="w-4 h-4" />
-                      <span>Open First Tab</span>
-                    </button>
-                  </div>
-                ) : (
-                  <div className="h-full flex items-center justify-center px-6 text-center text-[14px] text-muted">
-                    {loading ? "Loading workspaces…" : "Select a workspace from the sidebar."}
-                  </div>
-                )}
-              </div>
-            </div>
-          </>
+          <DesktopWorkspaceShell
+            topHeader={topBrandHeader}
+            mainTab={nav.mainTab}
+            onSelectMainTab={nav.setMainTab}
+            sidebarCollapsed={nav.sidebarCollapsed}
+            onToggleSidebar={() => nav.setSidebarCollapsed((v) => !v)}
+            workspaces={workspaces}
+            loading={loading}
+            selectedWorkspace={nav.selectedWorkspace}
+            selectedSurface={nav.selectedSurface}
+            hosts={hostSession.hosts}
+            activeHostId={hostSession.activeHostId}
+            activeHost={hostSession.activeHost}
+            connState={hostSession.connState}
+            hasNoHosts={hasNoHosts}
+            errorMessage={errorMessage}
+            usage={usageState}
+            onRefreshWorkspaces={() => void fetchWorkspaces(true)}
+            onSelectWorkspace={nav.selectWorkspace}
+            onSelectSurface={nav.selectSurface}
+            onBackToSurfaces={nav.backToSurfaces}
+            onOpenPairModal={() => hostSession.setShowPairModal(true)}
+            onOpenNewSurface={setSidebarNewWs}
+            onRequestCloseSurface={(ws, surface) => setSidebarCloseTarget({ ws, surface })}
+            onOpenChanges={setChangesWs}
+            onSwitchHost={hostSession.handleSwitchHost}
+            onRemoveHost={hostSession.handleRemoveHost}
+            onRenameHost={hostSession.renameHost}
+            onCreateSurface={createSurface}
+            onRenameSurface={renameSurface}
+            onCloseSurface={(id, wsId) => closeSurface(id, wsId ?? nav.selectedWorkspace?.id)}
+          />
         ) : (
-          <div className="flex-1 min-w-0 h-full overflow-hidden flex flex-col">
-            <div className="flex-1 min-h-0 overflow-hidden">
-              {mainTab === "workspaces" && (
-                <>
-                  {activeView === "workspaces" && (
-                    <WorkspaceListView
-                      workspaces={workspaces}
-                      loading={loading}
-                      onRefresh={handleForceRefreshWorkspaces}
-                      onSelectWorkspace={handleSelectWorkspace}
-                      hostsCount={hosts.length}
-                      connState={connState}
-                      onPairHost={() => setShowPairModal(true)}
-                    />
-                  )}
-
-                  {activeView === "surfaces" && selectedWorkspace && (
-                    <SurfaceListView
-                      workspace={selectedWorkspace}
-                      onBack={handleBackToWorkspaces}
-                      onSelectSurface={handleSelectSurface}
-                      onCreateSurface={handleCreateSurface}
-                      onRenameSurface={handleRenameSurface}
-                      onCloseSurface={handleCloseSurface}
-                      onRefresh={handleForceRefreshWorkspaces}
-                    />
-                  )}
-
-                  {activeView === "detail" && selectedWorkspace && selectedSurface && (
-                    <SurfaceDetailView
-                      // Per-surface state (pending sends, working flag, history paging) must not leak between tabs.
-                      key={selectedSurface.id || selectedSurface.ref}
-                      surface={selectedSurface}
-                      workspace={selectedWorkspace}
-                      onBack={handleBackToSurfaces}
-                      allSurfaces={selectedWorkspace.surfaces}
-                      onSelectSurface={handleSelectSurface}
-                      onCreateSurface={handleCreateSurface}
-                      onRenameSurface={handleRenameSurface}
-                      onCloseSurface={handleCloseSurface}
-                      onRefresh={handleForceRefreshWorkspaces}
-                    />
-                  )}
-                </>
-              )}
-
-              {mainTab === "usage" && (
-                <UsageView
-                  hostName={activeHost?.name ?? "No computer"}
-                  connState={connState}
-                  snapshot={usageState.snapshot}
-                  loading={usageState.loading}
-                  refreshing={usageState.refreshing}
-                  error={usageState.error}
-                  unsupported={usageState.unsupported}
-                  now={usageState.now}
-                  onRefresh={() => void usageState.refresh()}
-                />
-              )}
-
-              {mainTab === "devices" && (
-                <DeviceListView
-                  hosts={hosts}
-                  activeHostId={activeHostId}
-                  connState={connState}
-                  hideBack
-                  onSelectHost={(h) => {
-                    handleSwitchHost(h);
-                    setMainTab("workspaces");
-                  }}
-                  onRemoveHost={handleRemoveHost}
-                  onRenameHost={renameHost}
-                  onBack={() => setMainTab("workspaces")}
-                />
-              )}
-            </div>
-
-            {(mainTab !== "workspaces" || activeView === "workspaces") && primaryTabNav}
-          </div>
+          <MobileWorkspaceShell
+            mainTab={nav.mainTab}
+            onSelectMainTab={nav.setMainTab}
+            activeView={nav.activeView}
+            workspaces={workspaces}
+            loading={loading}
+            selectedWorkspace={nav.selectedWorkspace}
+            selectedSurface={nav.selectedSurface}
+            hosts={hostSession.hosts}
+            activeHostId={hostSession.activeHostId}
+            activeHost={hostSession.activeHost}
+            connState={hostSession.connState}
+            usage={usageState}
+            onRefreshWorkspaces={() => void fetchWorkspaces(true)}
+            onSelectWorkspace={nav.selectWorkspace}
+            onSelectSurface={nav.selectSurface}
+            onBackToWorkspaces={nav.backToWorkspaces}
+            onBackToSurfaces={nav.backToSurfaces}
+            onOpenPairModal={() => hostSession.setShowPairModal(true)}
+            onSwitchHost={hostSession.handleSwitchHost}
+            onRemoveHost={hostSession.handleRemoveHost}
+            onRenameHost={hostSession.renameHost}
+            onCreateSurface={createSurface}
+            onRenameSurface={renameSurface}
+            onCloseSurface={(id, wsId) => closeSurface(id, wsId ?? nav.selectedWorkspace?.id)}
+          />
         )}
       </main>
 
-      {showHostSheet && (
-        <HostSwitchSheet
-          hosts={hosts}
-          activeHostId={activeHostId}
-          connState={connState}
-          onSelect={handleSwitchHost}
-          onAdd={() => setShowPairModal(true)}
-          onManage={() => setMainTab("devices")}
-          onClose={() => setShowHostSheet(false)}
-        />
-      )}
-
-      {/* Floating In-App Toast Banners */}
-      {activeToasts.length > 0 && (
-        <div className="fixed top-[calc(0.75rem+env(safe-area-inset-top,0px))] right-3 left-3 sm:left-auto sm:w-96 z-50 flex flex-col gap-2 pointer-events-none">
-          {activeToasts.map((toast) => (
-            <div
-              key={toast.notification_id}
-              className={`pointer-events-auto flex items-start gap-2.5 rounded-2xl bg-raised border border-line border-l-[3px] pl-3 pr-2 py-2.5 shadow-lg ${
-                toast.category === "agent-error"
-                  ? "border-l-rose-400"
-                  : toast.urgent || toast.category === "needs-permission"
-                    ? "border-l-amber-400"
-                    : "border-l-accent"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => {
-                  setActiveToasts((prev) =>
-                    prev.filter((t) => t.notification_id !== toast.notification_id),
-                  );
-                  jumpToSurface(toast.surface_id);
-                }}
-                className="flex-1 min-w-0 text-left"
-              >
-                <div className="text-[13px] font-semibold leading-snug truncate">{toast.title}</div>
-                <div className="text-[12.5px] text-fg-soft leading-snug line-clamp-2 mt-0.5">
-                  {plainText(toast.body)}
-                </div>
-              </button>
-              <button
-                type="button"
-                onClick={() =>
-                  setActiveToasts((prev) =>
-                    prev.filter((t) => t.notification_id !== toast.notification_id),
-                  )
-                }
-                className="w-7 h-7 rounded-lg hover:bg-white/[0.1] text-muted hover:text-white flex items-center justify-center shrink-0"
-                aria-label="Dismiss notification"
-              >
-                <X className="w-4 h-4" />
-              </button>
-            </div>
-          ))}
-        </div>
-      )}
-
-      {/* Modals */}
-      {showPairModal && (
-        <PairHostModal
-          onClose={() => setShowPairModal(false)}
-          onPaired={() => {
-            void fetchWorkspaces();
-          }}
-        />
-      )}
-
-      {pendingPairing && (
-        <PairingConfirmModal
-          offer={pendingPairing}
-          onAccept={() => wsClient.acceptPendingPairing()}
-          onReject={() => wsClient.rejectPendingPairing()}
-        />
-      )}
-
-      {sidebarNewWs && (
-        <NewSurfaceModal
-          isOpen={Boolean(sidebarNewWs)}
-          workspaceId={sidebarNewWs.id}
-          workspaceTitle={sidebarNewWs.title}
-          onClose={() => setSidebarNewWs(null)}
-          onCreate={handleCreateSurface}
-        />
-      )}
-
-      {sidebarCloseTarget && (
-        <CloseSurfaceDialog
-          isOpen={Boolean(sidebarCloseTarget)}
-          surfaceTitle={sidebarCloseTarget.surface.title}
-          onClose={() => setSidebarCloseTarget(null)}
-          onConfirm={async () => {
-            const id = sidebarCloseTarget.surface.id || sidebarCloseTarget.surface.ref;
-            await handleCloseSurface(id, sidebarCloseTarget.ws.id);
-            setSidebarCloseTarget(null);
-          }}
-        />
-      )}
-
-      {changesWs && (
-        <ChangesPanel
-          workspaceId={changesWs.id}
-          workspaceTitle={changesWs.title}
-          onClose={() => setChangesWs(null)}
-        />
-      )}
-
-      {showTokenModal && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75 backdrop-blur-sm"
-          onClick={() => setShowTokenModal(false)}
-        >
-          <div
-            className="w-full max-w-sm p-5 rounded-2xl bg-bg border border-white/[0.1] text-fg shadow-2xl space-y-4"
-            onClick={(e) => e.stopPropagation()}
-          >
-            <h2 className="text-[16px] font-semibold flex items-center gap-2.5">
-              <KeyRound className="w-5 h-5 text-accent-soft" />
-              <span>Gateway Auth Token</span>
-            </h2>
-            <p className="text-[13px] text-muted leading-relaxed">
-              Enter the bearer token printed in your cmux-gateway terminal or scanned from the QR
-              code.
-            </p>
-            <input
-              type="password"
-              value={tokenInput}
-              onChange={(e) => setTokenInput(e.target.value)}
-              placeholder="cmux_sec_..."
-              className="w-full h-11 bg-bg border border-white/[0.14] focus:border-accent rounded-xl px-3.5 text-[15px] font-mono text-fg placeholder-dim outline-none"
-            />
-            <div className="flex items-center gap-2.5 pt-1">
-              <button
-                type="button"
-                onClick={() => setShowTokenModal(false)}
-                className="flex-1 h-11 rounded-xl bg-raised hover:bg-line text-[14px] font-semibold text-fg-soft transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                type="button"
-                onClick={handleSaveToken}
-                className="flex-1 h-11 rounded-xl bg-accent hover:bg-accent-strong text-[14px] font-semibold text-white transition-colors"
-              >
-                Save & Connect
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <AppModals
+        hosts={hostSession.hosts}
+        activeHostId={hostSession.activeHostId}
+        connState={hostSession.connState}
+        showHostSheet={hostSession.showHostSheet}
+        showPairModal={hostSession.showPairModal}
+        pendingPairing={hostSession.pendingPairing}
+        showTokenModal={hostSession.showTokenModal}
+        tokenInput={hostSession.tokenInput}
+        activeToasts={notifs.activeToasts}
+        sidebarNewWs={sidebarNewWs}
+        sidebarCloseTarget={sidebarCloseTarget}
+        changesWs={changesWs}
+        onSwitchHost={hostSession.handleSwitchHost}
+        onOpenPairModal={() => hostSession.setShowPairModal(true)}
+        onClosePairModal={() => hostSession.setShowPairModal(false)}
+        onPaired={() => void fetchWorkspaces()}
+        onManageDevices={nav.setMainTab}
+        onCloseHostSheet={() => hostSession.setShowHostSheet(false)}
+        onAcceptPairing={hostSession.handleAcceptPairing}
+        onRejectPairing={hostSession.handleRejectPairing}
+        onSelectToast={(toast) => {
+          notifs.dismissToast(toast.notification_id);
+          handleJumpToSurface(toast.surface_id);
+        }}
+        onDismissToast={notifs.dismissToast}
+        onCloseNewSurface={() => setSidebarNewWs(null)}
+        onCreateSurface={createSurface}
+        onCloseSurfaceDialog={() => setSidebarCloseTarget(null)}
+        onConfirmCloseSurface={closeSurface}
+        onCloseChanges={() => setChangesWs(null)}
+        onChangeToken={hostSession.setTokenInput}
+        onSaveToken={hostSession.handleSaveToken}
+        onCloseTokenModal={() => hostSession.setShowTokenModal(false)}
+      />
     </div>
   );
 }

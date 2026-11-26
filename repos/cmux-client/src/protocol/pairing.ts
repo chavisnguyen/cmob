@@ -325,12 +325,12 @@ export function sanitizePairingInAddressBar(token?: string): void {
     const newSearch = searchParams.toString() ? `?${searchParams.toString()}` : "";
     const hash = nextPairingHash(window.location.hash, effectiveToken ?? "");
     const cleanUrl = `${window.location.origin}${window.location.pathname}${newSearch}${hash}`;
-    window.history.replaceState(null, docTitle, cleanUrl);
+    window.history.replaceState(window.history.state ?? null, docTitle, cleanUrl);
   } else if (effectiveToken) {
     const hash = nextPairingHash(window.location.hash, effectiveToken);
     if (hash !== window.location.hash) {
       window.history.replaceState(
-        null,
+        window.history.state ?? null,
         docTitle,
         `${window.location.origin}${window.location.pathname}${window.location.search}${hash}`,
       );
@@ -364,6 +364,6 @@ export function stripPairingCodeFromAddressBar(): void {
     changed = true;
   }
   if (changed) {
-    window.history.replaceState(null, document.title, url.toString());
+    window.history.replaceState(window.history.state ?? null, document.title, url.toString());
   }
 }

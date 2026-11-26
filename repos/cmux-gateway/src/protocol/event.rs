@@ -96,6 +96,8 @@ pub struct AskQuestionItem {
 /// Source: ref/orca/src/shared/native-chat/native-chat-types.ts & ref/cmux/agent-chat/types.ts
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AwaitingInput {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool_id: Option<String>,
     pub input_kind: String, // e.g. "permission", "question", "options"
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]

@@ -1,15 +1,6 @@
-/**
- * Orca-style Reasoning / Thought Disclosure Row
- *
- * Matches `ref/orca/src/shared/native-chat/transcript/native-chat-reasoning-row.ts`:
- * - Live: `"Reasoning"`
- * - Settled with duration: `"Thought for 15s"`
- * - Settled without duration: `"Thought"`
- * Never displays mechanical character counts like `(755 chars)`.
- */
-
-import { memo, useState } from "react";
+import { memo } from "react";
 import { Brain, ChevronDown, ChevronRight } from "lucide-react";
+import { useChatDisclosure } from "../../state/useChatDisclosure";
 import { formatChatDuration } from "./taskList";
 
 interface MobileNativeChatReasoningRowProps {
@@ -17,6 +8,7 @@ interface MobileNativeChatReasoningRowProps {
   text: string;
   live?: boolean;
   durationSeconds?: number;
+  surfaceKey?: string;
 }
 
 function extractFirstLinePreview(text: string): string {
@@ -29,12 +21,13 @@ function extractFirstLinePreview(text: string): string {
 }
 
 export const MobileNativeChatReasoningRow = memo(function MobileNativeChatReasoningRow({
-  id: _id,
+  id,
   text,
   live = false,
   durationSeconds,
+  surfaceKey,
 }: MobileNativeChatReasoningRowProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, toggleExpanded] = useChatDisclosure(surfaceKey, `reasoning:${id}`, false);
 
   if (!text || !text.trim()) {
     return null;
@@ -53,7 +46,8 @@ export const MobileNativeChatReasoningRow = memo(function MobileNativeChatReason
     <div className="w-full my-0.5 text-xs">
       <button
         type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
+        aria-expanded={isExpanded}
+        onClick={toggleExpanded}
         className="w-full flex items-center justify-between py-1 px-1 rounded-md hover:bg-white/[0.04] text-muted hover:text-fg-soft transition-colors min-w-0"
       >
         <div className="flex items-center gap-1.5 min-w-0 flex-1 mr-2">

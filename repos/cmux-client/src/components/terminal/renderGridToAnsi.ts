@@ -241,6 +241,8 @@ export function convertRenderGridToAnsi(grid: RenderGridData): ConvertedRenderGr
     chunks.push("\x1b[?25h");
   }
 
+  chunks.push(modes.applicationCursorKeysMode ? "\x1b[?1h" : "\x1b[?1l");
+  chunks.push(modes.bracketedPasteMode ? "\x1b[?2004h" : "\x1b[?2004l");
   chunks.push("\x1b[?2026l");
 
   return {

@@ -242,9 +242,6 @@ impl WorkspaceTreeBuilder {
                     .cloned()
                     .unwrap_or_else(|| "~".to_string());
 
-                let is_running = hook_index.is_workspace_running(&ws_id);
-                let status = if is_running { "running".to_string() } else { "idle".to_string() };
-
                 // Build surface list
                 let mut surfaces = Vec::new();
                 for pane in raw_ws.panes {
@@ -257,58 +254,19 @@ impl WorkspaceTreeBuilder {
                         let surf_focused = raw_surf.focused.unwrap_or(false);
 
                         all_surface_ids.insert(surf_id.clone());
+                        crate::scanner::liveness::record_surface_meta(
+                            &surf_id,
+                            &surf_ref,
+                            &ws_id,
+                            Some(&current_directory),
+                        );
                         if let Some(tty) = raw_surf.tty.as_deref() {
                             crate::scanner::liveness::record_surface_tty(&surf_id, tty);
                         }
 
-                        // Attach active agent info if known in hook index, or fallback to heuristic recognition, or remembered identity
-                        let discovered_info = hook_index
-                            .get_active_session_for_surface(&surf_id)
-                            .map(|s| {
-                                let status_str = match s.live_lifecycle() {
-                                    AgentLifecycleState::Working => "running",
-                                    AgentLifecycleState::Waiting => "waiting",
-                                    AgentLifecycleState::Error => "error",
-                                    AgentLifecycleState::Done | AgentLifecycleState::Idle => "idle",
-                                };
-                                SurfaceAgentInfo {
-                                    session_id: s.session_id.clone(),
-                                    agent_kind: s.resolved_agent_kind().to_string(),
-                                    status: status_str.to_string(),
-                                    transcript_path: s.transcript_path.clone(),
-                                }
-                            })
-                            .or_else(|| {
-                                if surf_type != "terminal" {
-                                    return None;
-                                }
-                                let k = raw_surf.tty.as_deref().and_then(|t| kiro_by_tty.get(t))?;
-                                Some(SurfaceAgentInfo {
-                                    session_id: k.session_id.clone(),
-                                    agent_kind: "kiro".to_string(),
-                                    status: match k.lifecycle {
-                                        AgentLifecycleState::Working => "running",
-                                        AgentLifecycleState::Waiting => "waiting",
-                                        AgentLifecycleState::Error => "error",
-                                        AgentLifecycleState::Done | AgentLifecycleState::Idle => "idle",
-                                    }
-                                    .to_string(),
-                                    transcript_path: Some(k.transcript_path.to_string_lossy().into_owned()),
-                                })
-                            })
-                            .or_else(|| {
-                                // Process on the tty is authoritative; title is only a fallback
-                                // when we cannot inspect the tty.
-                                if surf_type != "terminal" {
-                                    return None;
-                                }
-                                match Self::live_kinds_for(&live_agents_by_tty, raw_surf.tty.as_deref()) {
-                                    Some(kinds) => kinds.iter().next().map(|k| Self::standby_info(k)),
-                                    None => Self::recognize_standby_agent(&surf_title, &surf_type),
-                                }
-                            });
-
-                        // Drop identities (hook / kiro / cached) whose agent process is gone.
+                        // Compute live agent kinds on this TTY FIRST so stale hook records from an
+                        // exited agent (e.g. Claude exited, Kiro/Codex/zsh now running) are ignored
+                        // and NEVER shadow Kiro's live session!
                         let live_kinds = if surf_type == "terminal" {
                             Self::live_kinds_for(&live_agents_by_tty, raw_surf.tty.as_deref())
                         } else {
@@ -317,42 +275,38 @@ impl WorkspaceTreeBuilder {
                         let still_alive = |info: &SurfaceAgentInfo| match &live_kinds {
                             Some(kinds) => {
                                 !kinds.is_empty()
-                                    && (info.agent_kind == "agent" || kinds.contains(info.agent_kind.as_str()))
+                                    && (info.agent_kind == "agent"
+                                        || kinds.contains(info.agent_kind.as_str()))
                             }
                             None => true,
                         };
-                        let discovered_info = match discovered_info {
-                            Some(info) if still_alive(&info) => Some(info),
-                            Some(_) => live_kinds
-                                .as_ref()
-                                .and_then(|k| k.iter().next())
-                                .map(|k| Self::standby_info(k)),
-                            None => None,
-                        };
+
+                        let discovered_info = Self::resolve_surface_agent_info(
+                            &surf_id,
+                            &surf_title,
+                            &surf_type,
+                            raw_surf.tty.as_deref(),
+                            hook_index,
+                            &kiro_by_tty,
+                            &live_kinds,
+                        );
 
                         let agent_info = if let Some(info) = discovered_info {
-                            // Latch identity into cache
                             if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
                                 cache.insert(surf_id.clone(), info.clone());
                             }
                             Some(info)
-                        } else {
-                            // Missing status is not proof of pane change: retain identity if previously recognized
-                            // Matching Orca's withRememberedNativeChatIdentity (ref/orca/mobile/src/session/native-chat/mobile-native-chat-eligibility.ts:88-113)
-                            if live_kinds.as_ref().is_some_and(|k| k.is_empty()) {
-                                // Agent exited and the tty is back to a plain shell: forget identity.
-                                if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
-                                    cache.remove(&surf_id);
-                                }
-                                None
-                            } else if let Ok(cache) = REMEMBERED_SURFACES.read() {
-                                cache.get(&surf_id).cloned().filter(|i| still_alive(i))
-                            } else {
-                                None
+                        } else if live_kinds.as_ref().is_some_and(|k| k.is_empty()) {
+                            if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
+                                cache.remove(&surf_id);
                             }
+                            None
+                        } else if let Ok(cache) = REMEMBERED_SURFACES.read() {
+                            cache.get(&surf_id).cloned().filter(|i| still_alive(i))
+                        } else {
+                            None
                         };
 
-                        // A startup dialog (trust, update...) is waiting for the user's answer.
                         let agent_info = agent_info.map(|mut a| {
                             if crate::cmux::startup_dialog::registry::is_waiting(&surf_id) {
                                 a.status = "waiting".to_string();
@@ -372,6 +326,10 @@ impl WorkspaceTreeBuilder {
                         });
                     }
                 }
+
+                // Derive workspace status AFTER surface resolution so closed/crashed tabs don't keep
+                // workspace "running" for 30m, and Kiro/OpenCode tabs mark workspace "running"/"waiting"!
+                let status = crate::domain::lifecycle::derive_workspace_status(&surfaces);
 
                 result_workspaces.push(WorkspaceNode {
                     id: ws_id,
@@ -549,6 +507,89 @@ impl WorkspaceTreeBuilder {
             status: "ready".to_string(),
             transcript_path: None,
         }
+    }
+
+    /// Immediately purges a closed surface from `REMEMBERED_SURFACES` and invalidates `LAST_TREE_SNAPSHOT`.
+    pub fn forget_surface(surface_id: &str) {
+        if let Ok(mut cache) = REMEMBERED_SURFACES.write() {
+            cache.remove(surface_id);
+        }
+        if let Ok(mut snap) = LAST_TREE_SNAPSHOT.write() {
+            *snap = None;
+        }
+    }
+
+    /// Pure surface-agent resolution enforcing live TTY `agent_kind` before falling back to Kiro or standby.
+    pub fn resolve_surface_agent_info(
+        surf_id: &str,
+        surf_title: &str,
+        surf_type: &str,
+        raw_tty: Option<&str>,
+        hook_index: &HookStoreIndex,
+        kiro_by_tty: &HashMap<String, crate::scanner::kiro_store::KiroSession>,
+        live_kinds: &Option<HashSet<&'static str>>,
+    ) -> Option<SurfaceAgentInfo> {
+        let clean_tty = raw_tty.map(|t| t.trim_start_matches("/dev/"));
+        hook_index
+            .get_active_session_for_surface_filtered(surf_id, live_kinds.as_ref())
+            .map(|s| {
+                let canonical_kind = crate::cmux::agents::spec_for(s.resolved_agent_kind())
+                    .map(|sp| sp.kind)
+                    .unwrap_or_else(|| s.resolved_agent_kind());
+                let mut lc = s.live_lifecycle();
+                if canonical_kind == "opencode"
+                    && lc != AgentLifecycleState::Waiting
+                    && let Some(path) = s.transcript_path.as_deref()
+                    && let Some(oc_st) =
+                        crate::scanner::opencode_store::status_for_path(std::path::Path::new(path))
+                {
+                    lc = oc_st.lifecycle;
+                }
+                let status_str = match lc {
+                    AgentLifecycleState::Working => "running",
+                    AgentLifecycleState::Waiting => "waiting",
+                    AgentLifecycleState::Error => "error",
+                    AgentLifecycleState::Done | AgentLifecycleState::Idle => "idle",
+                };
+                SurfaceAgentInfo {
+                    session_id: s.session_id.clone(),
+                    agent_kind: canonical_kind.to_string(),
+                    status: status_str.to_string(),
+                    transcript_path: s.transcript_path.clone(),
+                }
+            })
+            .or_else(|| {
+                if surf_type != "terminal" {
+                    return None;
+                }
+                if let Some(kinds) = live_kinds.as_ref()
+                    && !kinds.contains("kiro")
+                {
+                    return None;
+                }
+                let k = clean_tty.and_then(|t| kiro_by_tty.get(t))?;
+                Some(SurfaceAgentInfo {
+                    session_id: k.session_id.clone(),
+                    agent_kind: "kiro".to_string(),
+                    status: match k.lifecycle {
+                        AgentLifecycleState::Working => "running",
+                        AgentLifecycleState::Waiting => "waiting",
+                        AgentLifecycleState::Error => "error",
+                        AgentLifecycleState::Done | AgentLifecycleState::Idle => "idle",
+                    }
+                    .to_string(),
+                    transcript_path: Some(k.transcript_path.to_string_lossy().into_owned()),
+                })
+            })
+            .or_else(|| {
+                if surf_type != "terminal" {
+                    return None;
+                }
+                match live_kinds {
+                    Some(kinds) => kinds.iter().next().map(|k| Self::standby_info(k)),
+                    None => Self::recognize_standby_agent(surf_title, surf_type),
+                }
+            })
     }
 
     /// Recognize an agent from a full process command line (argv0, or argv1 for interpreters).
@@ -844,5 +885,104 @@ mod tests {
         let ps = "ttys019       00:12 codex --foo\nttys000    03-01:00:00 /opt/homebrew/bin/agy --x\n??       00:05 /Users/x/claude --chrome\nttys012    00:04 -zsh\n";
         let recent = WorkspaceTreeBuilder::parse_recent_agent_ttys(ps, 300);
         assert_eq!(recent, vec![("ttys019".to_string(), "codex")]);
+    }
+
+    #[test]
+    fn live_tty_tab_reuse_ignores_exited_claude_and_preserves_kiro_session() {
+        use crate::scanner::hook_store::HookSessionRecord;
+        use crate::scanner::kiro_store::KiroSession;
+        use std::path::PathBuf;
+
+        let mut hook_index = HookStoreIndex::default();
+        let stale_claude = HookSessionRecord {
+            session_id: "claude-old".into(),
+            surface_id: "surf-reuse".into(),
+            workspace_id: "ws-1".into(),
+            cwd: None,
+            agent_lifecycle: Some("idle".into()),
+            runtime_status: Some("completed".into()),
+            transcript_path: Some("/tmp/claude-old.jsonl".into()),
+            last_body: None,
+            last_subtitle: None,
+            hook_event_name: Some("Stop".into()),
+            updated_at: Some(100.0),
+            started_at: None,
+            pid: None,
+            turn_settled: Some(true),
+            launch_command: None,
+            agent_kind: Some("claude".into()),
+            tool_name: None,
+            is_subagent: false,
+        };
+        hook_index
+            .sessions_by_surface
+            .insert("surf-reuse".into(), vec![stale_claude.clone()]);
+        hook_index
+            .sessions_by_id
+            .insert("claude-old".into(), stale_claude);
+
+        let mut kiro_by_tty = HashMap::new();
+        kiro_by_tty.insert(
+            "ttys042".to_string(),
+            KiroSession {
+                session_id: "sess_kiro_live".into(),
+                transcript_path: PathBuf::from("/tmp/kiro/messages.jsonl"),
+                tty: Some("ttys042".into()),
+                lifecycle: AgentLifecycleState::Working,
+                last_subtitle: Some("Running bash".into()),
+                modified: None,
+                turn_completed_at: None,
+            },
+        );
+
+        // 1. Claude exited and Kiro is now live on `ttys042`: Kiro's live session wins (NOT stale Claude, NOT standby_info)!
+        let kiro_live = Some(HashSet::from(["kiro"]));
+        let resolved_kiro = WorkspaceTreeBuilder::resolve_surface_agent_info(
+            "surf-reuse",
+            "claude",
+            "terminal",
+            Some("/dev/ttys042"),
+            &hook_index,
+            &kiro_by_tty,
+            &kiro_live,
+        )
+        .expect("resolved kiro");
+        assert_eq!(resolved_kiro.agent_kind, "kiro");
+        assert_eq!(resolved_kiro.session_id, "sess_kiro_live");
+        assert_eq!(resolved_kiro.status, "running");
+        assert_eq!(
+            resolved_kiro.transcript_path.as_deref(),
+            Some("/tmp/kiro/messages.jsonl")
+        );
+
+        // 2. Claude exited and Codex just launched (standby, no hook record yet): Codex standby wins!
+        let codex_live = Some(HashSet::from(["codex"]));
+        let resolved_codex = WorkspaceTreeBuilder::resolve_surface_agent_info(
+            "surf-reuse",
+            "claude",
+            "terminal",
+            Some("/dev/ttys042"),
+            &hook_index,
+            &kiro_by_tty,
+            &codex_live,
+        )
+        .expect("resolved codex standby");
+        assert_eq!(resolved_codex.agent_kind, "codex");
+        assert_eq!(resolved_codex.status, "ready");
+
+        // 3. Claude exited to plain `zsh` (`live_kinds` empty): returns `None`!
+        let zsh_only: Option<HashSet<&'static str>> = Some(HashSet::new());
+        assert!(
+            WorkspaceTreeBuilder::resolve_surface_agent_info(
+                "surf-reuse",
+                "claude",
+                "terminal",
+                Some("/dev/ttys042"),
+                &hook_index,
+                &kiro_by_tty,
+                &zsh_only,
+            )
+            .is_none()
+        );
     }
 }

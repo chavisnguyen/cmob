@@ -1,36 +1,39 @@
 import { useEffect, useState } from "react";
 import { Loader2, SlidersHorizontal, X } from "lucide-react";
 import { RPC_METHODS } from "../../protocol/rpc";
+import { useComposerState } from "../../state/useComposerState";
 import { wsClient } from "../../transport/wsClient";
-import { effortAfterModelChange, effortsFor, type AgentOptionsInfo } from "./agentOptions";
+import {
+  effortAfterModelChange,
+  resolveDisplayedEfforts,
+  resolveSelectedModel,
+  type AgentOptionsInfo,
+} from "./agentOptions";
 
-/**
- * Change model / effort of a running agent. Claude: the gateway types `/model <id>`, `/effort <level>` or
- * `/fast` into the TUI. Codex: the gateway types `/model` and Codex opens its own picker, which has to be
- * answered in the Terminal tab (Orca: agent-session-option-catalog-claude-codex.ts, midSession).
- */
 export function AgentOptionsSheet({
   surfaceId,
   agentKind,
   currentModel,
+  disabledMidSession = false,
   onClose,
   onOpenTerminal,
 }: {
   surfaceId: string;
   agentKind: string;
-  /** Model id reported by the transcript (e.g. "claude-sonnet-5-5"), used only to hint the selection. */
   currentModel?: string;
+  /** Disables mid-session slash writes while the agent is actively working or awaiting input. */
+  disabledMidSession?: boolean;
   onClose: () => void;
   onOpenTerminal?: () => void;
 }) {
+  const [composerState, updateComposer] = useComposerState(surfaceId);
+  const { chosenModel, chosenEffort } = composerState;
+
   const [info, setInfo] = useState<AgentOptionsInfo | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [note, setNote] = useState<string | null>(null);
-  // Not readable back from a TUI: what this phone last set in this sheet.
-  const [chosenModel, setChosenModel] = useState<string | null>(null);
-  const [chosenEffort, setChosenEffort] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -55,6 +58,7 @@ export function AgentOptionsSheet({
   }, [onClose]);
 
   const apply = async (option: "model" | "effort" | "fast", value?: string) => {
+    if (disabledMidSession) return;
     setBusy(`${option}:${value ?? ""}`);
     setError(null);
     setNote(null);
@@ -70,10 +74,15 @@ export function AgentOptionsSheet({
         return;
       }
       if (option === "model" && value && info) {
-        setChosenModel(value);
-        setChosenEffort(effortAfterModelChange(info, value, chosenEffort));
+        updateComposer((prev) => ({
+          ...prev,
+          chosenModel: value,
+          chosenEffort: effortAfterModelChange(info, value, prev.chosenEffort),
+        }));
       }
-      if (option === "effort" && value) setChosenEffort(value);
+      if (option === "effort" && value) {
+        updateComposer((prev) => ({ ...prev, chosenEffort: value }));
+      }
       setNote("Sent to the agent.");
     } catch (e) {
       setError(e instanceof Error ? e.message : "Could not change the option.");
@@ -82,10 +91,11 @@ export function AgentOptionsSheet({
     }
   };
 
-  const selectedModel =
-    chosenModel ?? info?.models.find((m) => currentModel?.includes(m.id))?.id ?? null;
-  const efforts = info ? effortsFor(info, selectedModel) : [];
+  const selectedModel = resolveSelectedModel(info, chosenModel, currentModel);
+  const activeEffort = chosenEffort ?? info?.default_effort ?? null;
+  const efforts = info ? resolveDisplayedEfforts(info, selectedModel) : [];
   const fastModel = info?.models.find((m) => m.id === selectedModel && m.fast);
+  const actionsDisabled = busy !== null || disabledMidSession;
 
   return (
     <div
@@ -117,6 +127,12 @@ export function AgentOptionsSheet({
         {!info && !loadError && <Loader2 className="w-5 h-5 animate-spin text-accent-soft" />}
         {loadError && <p className="text-[13px] text-amber-300">{loadError}</p>}
 
+        {disabledMidSession && info && (
+          <p className="text-[12.5px] text-amber-300 bg-amber-500/10 border border-amber-500/25 rounded-xl px-3 py-2">
+            Wait for the current turn or prompt to finish before changing options.
+          </p>
+        )}
+
         {info?.mid_session === "picker" && (
           <div className="space-y-3">
             <p className="text-[13.5px] text-fg-soft leading-relaxed">
@@ -125,7 +141,7 @@ export function AgentOptionsSheet({
             </p>
             <button
               type="button"
-              disabled={busy !== null}
+              disabled={actionsDisabled}
               onClick={() => void apply("model")}
               className="w-full h-11 rounded-xl bg-accent disabled:opacity-50 text-[14px] font-semibold text-white"
             >
@@ -142,7 +158,7 @@ export function AgentOptionsSheet({
                 <button
                   key={m.id}
                   type="button"
-                  disabled={busy !== null}
+                  disabled={actionsDisabled}
                   onClick={() => void apply("model", m.id)}
                   className={`w-full text-left rounded-xl border px-3.5 py-2.5 disabled:opacity-50 ${
                     selectedModel === m.id
@@ -164,10 +180,10 @@ export function AgentOptionsSheet({
                     <button
                       key={e.value}
                       type="button"
-                      disabled={busy !== null}
+                      disabled={actionsDisabled}
                       onClick={() => void apply("effort", e.value)}
                       className={`h-9 px-3.5 rounded-lg text-[13px] font-semibold disabled:opacity-50 ${
-                        chosenEffort === e.value ? "bg-accent text-white" : "bg-raised text-fg-soft"
+                        activeEffort === e.value ? "bg-accent text-white" : "bg-raised text-fg-soft"
                       }`}
                     >
                       {e.label}
@@ -180,7 +196,7 @@ export function AgentOptionsSheet({
             {fastModel && (
               <button
                 type="button"
-                disabled={busy !== null}
+                disabled={actionsDisabled}
                 onClick={() => void apply("fast")}
                 className="w-full h-10 rounded-xl bg-raised disabled:opacity-50 text-[13.5px] font-semibold"
               >

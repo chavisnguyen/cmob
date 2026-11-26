@@ -1,6 +1,5 @@
 /**
- * Model / effort options of an agent (data comes from the gateway: `mobile.agent.options`, built from Orca's
- * per-agent catalog, see gateway cmux/agent_options.rs).
+ * Model / effort options of an agent (data comes from the gateway: `mobile.agent.options`).
  */
 
 export interface EffortChoice {
@@ -22,18 +21,23 @@ export interface AgentOptionsInfo {
   models: ModelOption[];
   default_model?: string;
   default_effort?: string;
-  /** `command`: applied by typing a slash command. `picker`: the agent shows its own picker (answer in terminal). */
   mid_session: "command" | "picker";
 }
 
-/** Agents that have an option catalog in the gateway (the gateway decides; this only hides the button). */
-const OPTION_AGENTS = new Set(["claude", "openclaude", "codex", "antigravity"]);
+const OPTION_AGENTS = new Set([
+  "claude",
+  "claude-code",
+  "openclaude",
+  "codex",
+  "antigravity",
+  "agy",
+]);
 
 export function hasAgentOptions(agentKind: string | null | undefined): boolean {
-  return OPTION_AGENTS.has((agentKind ?? "").toLowerCase());
+  return OPTION_AGENTS.has((agentKind ?? "").trim().toLowerCase());
 }
 
-/** Effort levels offered for `modelId`; an unknown model offers nothing (the gateway still accepts it). */
+/** Effort levels offered specifically for `modelId`; an unknown model returns `[]`. */
 export function effortsFor(
   info: AgentOptionsInfo,
   modelId: string | null | undefined,
@@ -41,7 +45,54 @@ export function effortsFor(
   return info.models.find((m) => m.id === modelId)?.efforts ?? [];
 }
 
-/** After switching model, keep the effort if the new model supports it, otherwise drop it. */
+/** Widest effort set across all models in `info`, used when current model id is unset/unlisted. */
+export function widestEfforts(info: AgentOptionsInfo): EffortChoice[] {
+  let best: EffortChoice[] = [];
+  for (const m of info.models) {
+    if (m.efforts.length > best.length) {
+      best = m.efforts;
+    }
+  }
+  return best;
+}
+
+/** Resolves active model selection: `chosenModel` > transcript `currentModel` match > `default_model`. */
+export function resolveSelectedModel(
+  info: AgentOptionsInfo | null | undefined,
+  chosenModel: string | null,
+  currentModel?: string | null,
+): string | null {
+  if (chosenModel) return chosenModel;
+  if (!info) return null;
+  if (currentModel) {
+    const normCurrent = currentModel.toLowerCase();
+    const exactOrSub = info.models.find(
+      (m) => normCurrent === m.id.toLowerCase() || normCurrent.includes(m.id.toLowerCase()),
+    );
+    if (exactOrSub) return exactOrSub.id;
+  }
+  if (info.default_model) {
+    const def = info.models.find((m) => m.id === info.default_model);
+    return def ? def.id : info.default_model;
+  }
+  return null;
+}
+
+/**
+ * Efforts shown in `AgentOptionsSheet`: uses the selected model's efforts when `selectedModel` is
+ * a known catalog entry, or falls back to `widestEfforts(info)` when no catalog model matched yet.
+ */
+export function resolveDisplayedEfforts(
+  info: AgentOptionsInfo,
+  selectedModel: string | null | undefined,
+): EffortChoice[] {
+  if (selectedModel) {
+    const matched = info.models.find((m) => m.id === selectedModel);
+    if (matched) return matched.efforts;
+  }
+  return widestEfforts(info);
+}
+
 export function effortAfterModelChange(
   info: AgentOptionsInfo,
   newModelId: string,
@@ -57,7 +108,6 @@ export interface LaunchChoice {
   effort?: string;
 }
 
-/** `launch` payload for `mobile.surface.new`, or undefined when nothing was chosen. */
 export function launchChoice(
   agentKind: string,
   model: string | null,

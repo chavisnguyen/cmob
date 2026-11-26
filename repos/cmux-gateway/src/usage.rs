@@ -170,70 +170,7 @@ pub fn parse_reset_timestamp(val: &Value) -> Option<u64> {
             return Some(ms as u64);
         }
     }
-    parse_iso8601_ms(s)
-}
-
-fn parse_iso8601_ms(s: &str) -> Option<u64> {
-    // Expected: YYYY-MM-DDTHH:MM:SS[.fff](Z|+HH:MM|-HH:MM)
-    let (date_part, rest) = s.split_once(['T', 't'])?;
-    let mut d_parts = date_part.split('-');
-    let year: i64 = d_parts.next()?.parse().ok()?;
-    let month: u32 = d_parts.next()?.parse().ok()?;
-    let day: u32 = d_parts.next()?.parse().ok()?;
-    if d_parts.next().is_some() || !(1..=12).contains(&month) || !(1..=31).contains(&day) {
-        return None;
-    }
-
-    let (time_str, tz_offset_secs): (&str, i64) = if let Some(stripped) = rest.strip_suffix(['Z', 'z']) {
-        (stripped, 0)
-    } else if let Some(idx) = rest.rfind(['+', '-']) {
-        let (t, off) = rest.split_at(idx);
-        let sign: i64 = if off.starts_with('-') { -1 } else { 1 };
-        let off = &off[1..];
-        let (oh, om) = if let Some((h, m)) = off.split_once(':') {
-            (h.parse::<i64>().ok()?, m.parse::<i64>().ok()?)
-        } else if off.len() == 4 {
-            (off[..2].parse::<i64>().ok()?, off[2..].parse::<i64>().ok()?)
-        } else {
-            return None;
-        };
-        (t, sign * (oh * 3600 + om * 60))
-    } else {
-        (rest, 0)
-    };
-
-    let (hms, frac_ms): (&str, i64) = match time_str.split_once('.') {
-        Some((hms, frac)) => {
-            let digits: String = frac.chars().take(3).collect();
-            let padded = format!("{digits:0<3}");
-            (hms, padded.parse::<i64>().unwrap_or(0))
-        }
-        None => (time_str, 0),
-    };
-    let mut t_parts = hms.split(':');
-    let hour: i64 = t_parts.next()?.parse().ok()?;
-    let min: i64 = t_parts.next()?.parse().ok()?;
-    let sec: i64 = t_parts.next()?.parse().ok()?;
-    if !(0..=23).contains(&hour) || !(0..=59).contains(&min) || !(0..=60).contains(&sec) {
-        return None;
-    }
-
-    let days = days_from_civil(year, month as i64, day as i64);
-    let secs = days * 86_400 + hour * 3600 + min * 60 + sec - tz_offset_secs;
-    if secs < 0 {
-        return None;
-    }
-    Some((secs as u64) * 1000 + frac_ms as u64)
-}
-
-/// Howard Hinnant civil-to-days algorithm (days since 1970-01-01).
-fn days_from_civil(y: i64, m: i64, d: i64) -> i64 {
-    let y = y - if m <= 2 { 1 } else { 0 };
-    let era = y.div_euclid(400);
-    let yoe = y.rem_euclid(400);
-    let doy = (153 * (m + if m > 2 { -3 } else { 9 }) + 2) / 5 + d - 1;
-    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
-    era * 146_097 + doe - 719_468
+    crate::domain::noise_filter::parse_rfc3339_ms(s)
 }
 
 // ---------------------------------------------------------------------------
@@ -265,14 +202,23 @@ fn find_agy_bin() -> Option<PathBuf> {
     fixed.into_iter().find(|p| p.is_file())
 }
 
-fn parse_agy_version_ok(stdout: &str) -> bool {
+pub fn parse_agy_version_ok(stdout: &str) -> bool {
     // Require >= 1.1.11 so `/usage` never executes as a billed model turn (Orca antigravity-usage-command.ts:22).
+    // Tolerates leading `v` and semver pre-release / build suffixes (`1.2.0-beta.1`, `v1.1.11+sha`).
     let trimmed = stdout.trim();
     let token = trimmed
         .split_whitespace()
-        .find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()))
+        .map(|w| w.trim_start_matches(['v', 'V']))
+        .find(|w| w.chars().next().is_some_and(|c| c.is_ascii_digit()) && w.contains('.'))
         .unwrap_or("");
-    let nums: Vec<u32> = token.split('.').take(3).filter_map(|p| p.parse().ok()).collect();
+    let nums: Vec<u32> = token
+        .split('.')
+        .take(3)
+        .filter_map(|part| {
+            let digits: String = part.chars().take_while(|c| c.is_ascii_digit()).collect();
+            (!digits.is_empty()).then(|| digits.parse().ok()).flatten()
+        })
+        .collect();
     if nums.len() < 3 {
         return false;
     }
@@ -835,8 +781,12 @@ async fn curl_get_json(url: &str, headers: &[String]) -> Result<(u16, String), S
     Ok((code, body.to_string()))
 }
 
-fn escape_curl_cfg(s: &str) -> String {
-    s.replace('\\', "\\\\").replace('"', "\\\"")
+pub fn escape_curl_cfg(s: &str) -> String {
+    s.chars()
+        .filter(|c| !matches!(c, '\r' | '\n' | '\0'))
+        .collect::<String>()
+        .replace('\\', "\\\\")
+        .replace('"', "\\\"")
 }
 
 #[cfg(test)]
@@ -896,5 +846,16 @@ mod tests {
         assert_eq!(xu.plan_type.as_deref(), Some("plus"));
         assert_eq!(xu.session.as_ref().unwrap().used_percent, 42);
         assert_eq!(xu.weekly.as_ref().unwrap().used_percent, 12);
+    }
+
+    #[test]
+    fn parses_prerelease_agy_semver_and_strips_curl_cfg_newlines() {
+        assert!(parse_agy_version_ok("agy 1.2.0-beta.1"));
+        assert!(parse_agy_version_ok("v1.1.11-rc.2+build9"));
+        assert!(!parse_agy_version_ok("agy 1.1.10-beta.5"));
+        assert_eq!(
+            escape_curl_cfg("Authorization: Bearer tok\r\nurl = \"https://evil.test\"\0"),
+            "Authorization: Bearer tokurl = \\\"https://evil.test\\\""
+        );
     }
 }

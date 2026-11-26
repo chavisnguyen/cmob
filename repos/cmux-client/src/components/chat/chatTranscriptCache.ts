@@ -1,24 +1,9 @@
-import type { AgentLifecycleState, AgentTurn, StartupDialogInfo } from "../../protocol/event";
+import type { AgentLifecycleState, AgentTurn } from "../../protocol/event";
+import { mergeIncomingSessionFrame, prependOlderTurns } from "../../domain/chat/transcriptReducer";
+import type { WireSessionFrame } from "../../domain/chat/types";
 
-export interface WireSessionFrame {
-  update_kind?: "snapshot" | "delta";
-  turns?: AgentTurn[];
-  after_turn_id?: string;
-  tail_turns?: AgentTurn[];
-  agent_kind?: string;
-  session_id?: string;
-  is_working?: boolean;
-  lifecycle_state?: AgentLifecycleState;
-  last_event?: string;
-  last_subtitle?: string;
-  awaiting_prompt?: string | null;
-  activity?: string | null;
-  surface_id?: string;
-  startup_dialog?: StartupDialogInfo | null;
-  has_more?: boolean;
-  before_offset?: number | null;
-  total_turns?: number;
-}
+export { mergeIncomingSessionFrame, prependOlderTurns };
+export type { WireSessionFrame };
 
 export interface CachedChatTranscript {
   turns: AgentTurn[];
@@ -73,7 +58,7 @@ function hydrateStorageOnce(): void {
   }
 }
 
-function trimTurnForStorage(turn: AgentTurn): AgentTurn {
+export function trimTurnForStorage(turn: AgentTurn): AgentTurn {
   let mutated = false;
   const events = turn.events.map((ev) => {
     if (
@@ -88,7 +73,7 @@ function trimTurnForStorage(turn: AgentTurn): AgentTurn {
     }
     return ev;
   });
-  return mutated ? { ...turn, events } : turn;
+  return mutated ? { ...turn, events, truncated: true } : turn;
 }
 
 function persistMemoryCache(): void {
@@ -135,7 +120,6 @@ export function peekCachedChatTranscript(identity: string): CachedChatTranscript
   hydrateStorageOnce();
   const hit = memoryCache.get(identity);
   if (!hit) return null;
-  // Refresh LRU order.
   memoryCache.delete(identity);
   memoryCache.set(identity, hit);
   return hit;
@@ -163,133 +147,4 @@ export function clearChatTranscriptCacheForTests(): void {
   memoryCache.clear();
   hydratedFromStorage = true;
   safeLocalStorage()?.removeItem(STORAGE_KEY);
-}
-
-/**
- * Merge an incoming `snapshot` or `delta` frame into the retained turn list in O(k)
- * without stringifying historical turns (Orca `applyMobileNativeChatStreamFrame` pattern).
- */
-export function mergeIncomingSessionFrame(args: {
-  prevTurns: AgentTurn[];
-  frame: WireSessionFrame;
-  replaceSnapshot: boolean;
-  maxRetained: number;
-}): {
-  turns: AgentTurn[];
-  windowReplaced: boolean;
-  cursorInvalidated: boolean;
-  hasMore?: boolean;
-  beforeOffset?: number | null;
-} | null {
-  const { prevTurns, frame, replaceSnapshot, maxRetained } = args;
-
-  // 1. Incremental delta frame (`update_kind: "delta"`): splice after `after_turn_id` in O(1).
-  if (
-    frame.update_kind === "delta" &&
-    typeof frame.after_turn_id === "string" &&
-    Array.isArray(frame.tail_turns)
-  ) {
-    let anchorIdx = -1;
-    for (let i = prevTurns.length - 1; i >= 0; i -= 1) {
-      if (prevTurns[i]?.id === frame.after_turn_id) {
-        anchorIdx = i;
-        break;
-      }
-    }
-    if (anchorIdx !== -1) {
-      const prevFirstId = prevTurns[0]?.id;
-      let merged = [...prevTurns.slice(0, anchorIdx + 1), ...frame.tail_turns];
-      if (merged.length > maxRetained) {
-        merged = merged.slice(merged.length - maxRetained);
-      }
-      const cursorInvalidated = Boolean(prevFirstId && merged[0]?.id !== prevFirstId);
-      return {
-        turns: merged,
-        windowReplaced: false,
-        cursorInvalidated,
-        ...(cursorInvalidated ? { hasMore: true, beforeOffset: null } : {}),
-      };
-    }
-  }
-
-  if (!Array.isArray(frame.turns)) {
-    return null;
-  }
-
-  const incoming = frame.turns;
-  if (prevTurns.length === 0 && incoming.length === 0) {
-    return {
-      turns: prevTurns,
-      windowReplaced: true,
-      cursorInvalidated: false,
-      hasMore: frame.has_more ?? false,
-      beforeOffset: frame.before_offset ?? null,
-    };
-  }
-
-  const prevById = new Map<string, AgentTurn>();
-  const prevIndexById = new Map<string, number>();
-  for (let i = 0; i < prevTurns.length; i += 1) {
-    const t = prevTurns[i];
-    prevById.set(t.id, t);
-    prevIndexById.set(t.id, i);
-  }
-
-  const reuseTurnRefs = (list: AgentTurn[]): AgentTurn[] =>
-    list.map((nextTurn, idx) => {
-      const oldTurn = prevById.get(nextTurn.id);
-      if (
-        oldTurn &&
-        idx < list.length - 1 &&
-        oldTurn.role === nextTurn.role &&
-        oldTurn.events.length === nextTurn.events.length
-      ) {
-        return oldTurn;
-      }
-      return nextTurn;
-    });
-
-  // 2. Reconnect replay preservation: if the reader already loaded older pages (`!replaceSnapshot`)
-  // and the new tail snapshot cleanly overlaps the end of `prevTurns`, retain the older prefix.
-  if (!replaceSnapshot && prevTurns.length > 0 && incoming.length > 0) {
-    const overlapStart = prevIndexById.get(incoming[0].id);
-    if (
-      overlapStart !== undefined &&
-      overlapStart > 0 &&
-      frame.has_more !== false &&
-      overlapStart + incoming.length >= prevTurns.length
-    ) {
-      const prefix = prevTurns.slice(0, overlapStart);
-      let combined = [...prefix, ...reuseTurnRefs(incoming)];
-      const prevFirstId = prevTurns[0]?.id;
-      if (combined.length > maxRetained) {
-        combined = combined.slice(combined.length - maxRetained);
-      }
-      const cursorInvalidated = Boolean(prevFirstId && combined[0]?.id !== prevFirstId);
-      return {
-        turns: combined,
-        windowReplaced: false,
-        cursorInvalidated,
-        ...(cursorInvalidated ? { hasMore: true, beforeOffset: null } : {}),
-      };
-    }
-  }
-
-  // 3. Authoritative snapshot window.
-  const reused = prevTurns.length > 0 ? reuseTurnRefs(incoming) : incoming;
-  return {
-    turns: reused,
-    windowReplaced: true,
-    cursorInvalidated: false,
-    hasMore: frame.has_more,
-    beforeOffset: frame.before_offset ?? null,
-  };
-}
-
-/** Prepend an older cursor page before current turns while deduplicating overlapping turn IDs. */
-export function prependOlderTurns(olderTurns: AgentTurn[], currentTurns: AgentTurn[]): AgentTurn[] {
-  if (olderTurns.length === 0) return currentTurns;
-  const olderIds = new Set(olderTurns.map((t) => t.id));
-  const tail = currentTurns.filter((t) => !olderIds.has(t.id));
-  return [...olderTurns, ...tail];
 }

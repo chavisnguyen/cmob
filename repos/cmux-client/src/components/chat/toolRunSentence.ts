@@ -8,15 +8,9 @@
  */
 
 import { describeTaskToolCall, isTaskListToolName } from "./taskList";
+import type { ToolCallItem } from "../../domain/chat/types";
 
-export interface ToolCallItem {
-  id: string;
-  name: string;
-  inputDetail?: string;
-  detail?: string;
-  ok?: boolean;
-  isEnd?: boolean;
-}
+export type { ToolCallItem };
 
 export type ToolCategory =
   | "read"

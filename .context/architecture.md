@@ -99,18 +99,15 @@ The Gateway runs locally on the user's Mac alongside `cmux` and serves as both t
   2. Calling `Notification.requestPermission()` **MUST be triggered by a direct user gesture** (e.g., tapping an explicit "Enable Notifications" button).
 * **Resolution:** The Web PWA includes an automatic iOS detection hook displaying an Onboarding Guide: *"Tap Share $\to$ Add to Home Screen to enable instant lock screen notifications"*, followed by an explicit permission prompt.
 
-### 3.4. Edge Case 4: Agent-Specific Approval Keystrokes
-* **Source Evidence:** Different coding agents present different interactive confirmation prompts:
-  - **Claude Code & Codex:** Terminal displays a numbered list where selecting `1` approves and `2` denies ([`ref/orca/src/shared/native-chat/native-chat-agent-support.ts:66-68`](./ref/orca/src/shared/native-chat/native-chat-agent-support.ts#L66-L68)).
-  - **Antigravity (AGY) & Kiro:** Dialog defaults to the confirmation option; approving requires the **Enter (`\r`)** keystroke.
-* **Resolution:** Gateway's `mobile.chat.approve` inspects session `agentKind`:
-  - `claude` / `codex` $\to$ dispatches key `"1"`.
-  - `antigravity` / `kiro` $\to$ dispatches key `"\r"`.
+### 3.4. Edge Case 4: Screen-Guarded Agent Approval Keystrokes
+* **Source Evidence:** Different coding agents present different interactive confirmation prompts (`ref/orca/src/shared/native-chat/native-chat-agent-support.ts:66-68`, `repos/cmux-gateway/src/domain/dialog.rs:498-530`, `repos/cmux-gateway/src/cmux/agent_profile.rs`):
+  - **Claude Code & Codex:** Terminal displays a numbered list where selecting `"1"` approves.
+  - **Antigravity (AGY), Kiro & OpenCode:** Dialog confirms via `"enter"`, moving the highlight cursor up (`"up"`) first if a numbered menu currently highlights row `> 0`.
+* **Resolution:** Gateway's `mobile.chat.approve` captures the terminal screen (`cmux/bridge.rs`), refuses startup dialogs and idle composer screens (preventing accidental `"1"` or `Enter` injection when already approved on desktop), and dispatches the profile-matched approval sequence.
 
-### 3.5. Edge Case 5: Process Interruption (SIGINT)
-* **Source Evidence:** When an agent enters an infinite loop or needs immediate termination, the standard Unix interrupt signal `SIGINT` (ASCII code `\x03` / `Ctrl+C`) must be sent.
-* **Resolution:** Gateway maps `mobile.chat.interrupt` to:
-  `cmux send-key --surface=<surfaceId> $'\x03'`.
+### 3.5. Edge Case 5: Turn Interruption (`Escape` vs OpenCode Double-`Escape`)
+* **Source Evidence:** In Claude Code, Codex, Antigravity, Kiro, and OpenCode TUIs, cancelling an in-flight turn or dismissing a prompt modal uses **`Escape`** (`ref/orca/src/shared/native-chat/native-chat-agent-support.ts:45-48`), whereas `SIGINT` (`Ctrl+C`) exits several agent CLIs if a turn just settled.
+* **Resolution:** Gateway's `mobile.chat.interrupt` (`repos/cmux-gateway/src/services/agent_control.rs:13-29`, `domain/dialog.rs:534-549`, `cmux/bridge.rs:276-289`) resolves `agent_kind` and sends `"escape"` for Claude/Codex/Antigravity/Kiro, and two `"escape"` keys separated by `60ms` for OpenCode (`opencode` / `opencode2`).
 
 ---
 
@@ -187,3 +184,49 @@ Verified live (gateway `mobile.workspace.tree` vs `cmux tree --json` + `ps -axo 
 - `recognize_standby_agent` stripped the path from a cwd-style title (`…/personal/tool/tool-x` -> `tool-x` -> `starts_with("agy")`), and `REMEMBERED_SURFACES` latched it forever (ttys012).
 
 Fix (`repos/cmux-gateway/src/scanner/workspace_tree.rs`): `scan_agent_processes_by_tty()` (`ps -axo tty=,command=`) is authoritative. Hook/Kiro/cached identities are kept only while an agent process of that kind owns the surface's tty; otherwise the cache entry is dropped. Title heuristic is fallback only when the tty is unknown, and only strips absolute paths. If `ps` fails, legacy behaviour is retained. Limitation: assumes the gateway runs on the same host as cmux (same as the existing Kiro tty scan).
+
+---
+
+## 6. Clean Architecture Layering (2026-11-26 Overhaul)
+
+To eliminate monolithic "God-files" and state drift across providers, both Gateway and Client enforce strict inward dependency rules inspired by `ref/orca`:
+
+### 6.1 Gateway Layers (`repos/cmux-gateway/src/`)
+```text
+transport/ (http_routes.rs, http_guard.rs, ws_session.rs, client_registry.rs,
+            rpc/{mod, chat, chat_options, terminal, workspace, push_device, host_tools}.rs)
+    │
+    ▼
+services/  (session_state.rs [SessionStateService — Single Source of Truth],
+            agent_control.rs, chat_stream.rs, terminal_stream.rs,
+            notification_dispatcher.rs, notification_sources.rs)
+    │
+    ▼
+domain/    (Pure zero-I/O: lifecycle.rs, canonical_turn.rs, noise_filter.rs,
+            receipt_normalizer.rs, dialog.rs [box-aware TUI dialog & menu planners])
+    ▲
+    │
+providers/ & io/ (providers/{claude, codex, antigravity, kiro, opencode, common}.rs
+                  + io/jsonl_window.rs [safe \n-bounded 64 KiB window + 64B boundary digest])
+```
+* **Invariants:**
+  - `SessionStateService` (`services/session_state.rs`) is the single authority for surface agent resolution (requiring live TTY `agent_kind` match), lifecycle state (`Working | Waiting | Done | Error | Idle`), awaiting prompts, and notifications across all 5 agents (including Kiro and OpenCode).
+  - `io/jsonl_window.rs`, `providers/*`, and `domain/canonical_turn.rs` enforce stable byte-offset/row-anchored turn IDs (`turn-@<offset>`, `turn-oc-<seq>`), FIFO tool pairing (`VecDeque` in `providers/antigravity.rs`), `clean_agy_args_json` unquoting, harness noise stripping (`domain/noise_filter.rs`), and structural `turn_digest` hashing so `services/chat_stream.rs` pushes every in-place mutation over `delta` frames.
+
+### 6.2 Client Layers (`repos/cmux-client/src/`)
+```text
+views/ & components/ (Thin <300-line presentational shells: App, Desktop/MobileWorkspaceShell,
+                      SurfaceDetailView, OrcaChatView, ChatTimelineRow, ChatBottomDock, RawTerminalView)
+    │
+    ▼
+state/     (Focused hooks/controllers: useHostSession, useWorkspaceStore, useNavigationShell,
+            useNotificationController, useChatSessionController, useTerminalController)
+    │
+    ▼
+domain/    (100% pure reducers & scoped stores: chat/{transcriptReducer, toolPairing,
+            workRunGrouping, liveStatus, dockSelector, disclosureStore, composerStore, chatViewModel},
+            workspaceTree, notificationCenter, terminalState)
+    │
+    ▼
+transport/ (tokenVault, pairingClient, wsClient) ──▶ protocol/ (wire types)
+```

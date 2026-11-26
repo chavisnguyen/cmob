@@ -1,16 +1,10 @@
 import type { NotificationAlertPayload } from "../protocol/rpc";
+import {
+  DEFAULT_LOCAL_NOTIFICATION_PREFS,
+  type LocalNotificationPrefs,
+} from "../domain/notificationCenter";
 
-export interface LocalNotificationPrefs {
-  inAppToast: boolean;
-  desktopBrowserNotif: boolean;
-  suppressWhileViewing: boolean;
-}
-
-export const DEFAULT_LOCAL_NOTIFICATION_PREFS: LocalNotificationPrefs = {
-  inAppToast: true,
-  desktopBrowserNotif: true,
-  suppressWhileViewing: true,
-};
+export { DEFAULT_LOCAL_NOTIFICATION_PREFS, type LocalNotificationPrefs };
 
 const STORAGE_KEY = "cmux_local_notif_prefs";
 const PREFS_EVENT = "cmux:local-notif-prefs-changed";

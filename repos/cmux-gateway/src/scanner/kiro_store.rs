@@ -29,12 +29,14 @@ pub struct KiroSession {
     pub lifecycle: AgentLifecycleState,
     pub last_subtitle: Option<String>,
     pub modified: Option<SystemTime>,
+    pub turn_completed_at: Option<f64>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct KiroStatus {
     pub lifecycle: AgentLifecycleState,
     pub last_subtitle: Option<String>,
+    pub turn_completed_at: Option<f64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -127,7 +129,11 @@ impl KiroSessionIndex {
             let status = Self::analyze_file(&transcript_path).unwrap_or(KiroStatus {
                 lifecycle: AgentLifecycleState::Idle,
                 last_subtitle: None,
+                turn_completed_at: None,
             });
+            let modified_secs = modified
+                .and_then(|m| m.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs_f64());
             let candidate = KiroSession {
                 session_id,
                 transcript_path,
@@ -135,6 +141,11 @@ impl KiroSessionIndex {
                 lifecycle: status.lifecycle,
                 last_subtitle: status.last_subtitle,
                 modified,
+                turn_completed_at: status.turn_completed_at.or_else(|| {
+                    (status.lifecycle == AgentLifecycleState::Done)
+                        .then_some(modified_secs)
+                        .flatten()
+                }),
             };
             match by_tty.get(&tty) {
                 Some(existing) if existing.modified >= candidate.modified => {}
@@ -191,10 +202,7 @@ impl KiroSessionIndex {
         let mut in_turn = false;
         let mut pending: Option<String> = None;
         let mut last_stop: Option<String> = None;
-        // Live activity of the CURRENT turn only (Orca: "Journal rows are history, not the present, so
-        // none of them ever becomes this line", ref/orca/src/shared/native-chat/transcript/
-        // native-chat-turn-activity.ts:76-77). Assistant prose is already a chat row, so the line is
-        // the tool still running (tool_call without its tool_result); otherwise the client says "Thinking…".
+        let mut last_stop_at: Option<f64> = None;
         let mut running_tools: Vec<(String, String)> = Vec::new();
 
         for line in lines {
@@ -204,12 +212,20 @@ impl KiroSessionIndex {
                 "turn_start" => {
                     in_turn = true;
                     last_stop = None;
+                    last_stop_at = None;
                     running_tools.clear();
                 }
                 "turn_end" => {
                     in_turn = false;
                     running_tools.clear();
-                    last_stop = p.get("stopReason").and_then(|s| s.as_str()).map(str::to_string);
+                    last_stop = Some(
+                        p.get("stopReason")
+                            .and_then(|s| s.as_str())
+                            .unwrap_or("end_turn")
+                            .to_string(),
+                    );
+                    last_stop_at = crate::domain::noise_filter::record_timestamp_ms(&v)
+                        .map(|ms| ms as f64 / 1000.0);
                 }
                 "pending_interaction" => {
                     pending = Some(
@@ -243,14 +259,24 @@ impl KiroSessionIndex {
             AgentLifecycleState::Working
         } else if last_stop.as_deref() == Some("error") {
             AgentLifecycleState::Error
+        } else if last_stop.is_some() {
+            AgentLifecycleState::Done
         } else {
             AgentLifecycleState::Idle
         };
         let last_subtitle = match lifecycle {
-            AgentLifecycleState::Working => running_tools.last().map(|(_, name)| format!("Running {name}")),
+            AgentLifecycleState::Working => {
+                running_tools.last().map(|(_, name)| format!("Running {name}"))
+            }
             _ => None,
         };
-        KiroStatus { lifecycle, last_subtitle }
+        let turn_completed_at =
+            (lifecycle == AgentLifecycleState::Done).then_some(last_stop_at).flatten();
+        KiroStatus {
+            lifecycle,
+            last_subtitle,
+            turn_completed_at,
+        }
     }
 }
 
@@ -309,9 +335,13 @@ mod tests {
         let s = KiroSessionIndex::analyze_lines(resolved.iter().map(String::as_str));
         assert_eq!(s.lifecycle, AgentLifecycleState::Working);
 
-        let done = [rec("turn_start", ""), rec("turn_end", r#","stopReason":"end_turn""#)];
+        let done = [
+            r#"{"id":"x","timestamp":"2026-11-25T10:00:00Z","payload":{"type":"turn_start"}}"#.to_string(),
+            r#"{"id":"y","timestamp":"2026-11-25T10:00:05Z","payload":{"type":"turn_end","stopReason":"end_turn"}}"#.to_string(),
+        ];
         let s = KiroSessionIndex::analyze_lines(done.iter().map(String::as_str));
-        assert_eq!(s.lifecycle, AgentLifecycleState::Idle);
+        assert_eq!(s.lifecycle, AgentLifecycleState::Done);
+        assert!(s.turn_completed_at.is_some());
 
         let err = [rec("turn_start", ""), rec("turn_end", r#","stopReason":"error""#)];
         let s = KiroSessionIndex::analyze_lines(err.iter().map(String::as_str));

@@ -94,10 +94,18 @@ self.addEventListener("notificationclick", (event) => {
 
   const data = event.notification.data || {};
   const surfaceId = data.surfaceId;
-  const targetUrl = new URL(
-    surfaceId ? `?surface=${encodeURIComponent(surfaceId)}` : "./",
-    self.registration.scope,
-  ).href;
+  const query = new URLSearchParams();
+  if (surfaceId) {
+    query.set("surface", surfaceId);
+    if (event.action === "approve") {
+      query.set("approve", "1");
+      if (typeof data.agent === "string" && data.agent) {
+        query.set("agent", data.agent);
+      }
+    }
+  }
+  const targetUrl = new URL(query.size > 0 ? `?${query.toString()}` : "./", self.registration.scope)
+    .href;
 
   event.waitUntil(
     self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clientList) => {

@@ -198,11 +198,19 @@ pub fn resolve_codex_top_level_rollout(path: &str) -> String {
         return hit;
     }
     let mut current = PathBuf::from(path);
+    let mut all_complete_lines = true;
     for _ in 0..4 {
         let Ok(file) = fs::File::open(&current) else { return path.to_string() };
         let mut first = String::new();
-        if BufReader::new(std::io::Read::take(file, MAX_FIRST_LINE_BYTES)).read_line(&mut first).is_err() || first.trim().is_empty() {
+        if BufReader::new(std::io::Read::take(file, MAX_FIRST_LINE_BYTES))
+            .read_line(&mut first)
+            .is_err()
+            || first.trim().is_empty()
+        {
             return path.to_string(); // not written yet: do not cache
+        }
+        if !first.ends_with('\n') {
+            all_complete_lines = false;
         }
         match codex_parent_thread_id(&first).and_then(|id| find_codex_rollout(&id, &current)) {
             Some(parent) => current = parent,
@@ -210,7 +218,9 @@ pub fn resolve_codex_top_level_rollout(path: &str) -> String {
         }
     }
     let resolved = current.to_string_lossy().into_owned();
-    if let Ok(mut c) = CODEX_ROLLOUT_CACHE.lock() {
+    if all_complete_lines
+        && let Ok(mut c) = CODEX_ROLLOUT_CACHE.lock()
+    {
         if c.len() >= MAX_STATIC_CACHE {
             c.clear();
         }
@@ -220,7 +230,7 @@ pub fn resolve_codex_top_level_rollout(path: &str) -> String {
 }
 
 /// transcript path -> parent session id (`None` = top-level). The first transcript line never
-/// changes, so it is read once per path.
+/// changes once newline-terminated, so it is read once per path.
 static PARENT_CACHE: LazyLock<Mutex<HashMap<String, Option<String>>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static SIDECHAIN_CACHE: LazyLock<Mutex<HashMap<String, bool>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
 static CODEX_IS_SUBAGENT_CACHE: LazyLock<Mutex<HashMap<String, bool>>> =
@@ -242,7 +252,9 @@ pub fn is_codex_subagent_rollout(path: &str) -> bool {
         return false;
     }
     let res = codex_parent_thread_id(&first).is_some();
-    if let Ok(mut c) = CODEX_IS_SUBAGENT_CACHE.lock() {
+    if first.ends_with('\n')
+        && let Ok(mut c) = CODEX_IS_SUBAGENT_CACHE.lock()
+    {
         if c.len() >= MAX_STATIC_CACHE {
             c.clear();
         }
@@ -270,7 +282,12 @@ pub fn is_claude_sidechain_file(path: &str) -> bool {
         .ok()
         .and_then(|v| v.get("isSidechain").and_then(|s| s.as_bool()))
         == Some(true);
-    if let Ok(mut c) = SIDECHAIN_CACHE.lock() {
+    if first.ends_with('\n')
+        && let Ok(mut c) = SIDECHAIN_CACHE.lock()
+    {
+        if c.len() >= MAX_STATIC_CACHE {
+            c.clear();
+        }
         c.insert(path.to_string(), sidechain);
     }
     sidechain
@@ -325,13 +342,40 @@ impl HookSessionRecord {
     pub fn turn_completed_stamp(&self) -> Option<f64> {
         use crate::scanner::turn_marks::{cached_claude_mark, cached_codex_mark, TurnMark};
         let kind = crate::cmux::agents::spec_for(self.resolved_agent_kind()).map(|s| s.kind)?;
-        let path = self.transcript_path.as_deref()?;
-        let mark = match kind {
-            "claude" => cached_claude_mark(path),
-            "codex" => cached_codex_mark(path),
+        match kind {
+            "claude" => {
+                let path = self.transcript_path.as_deref()?;
+                let mark = cached_claude_mark(path)?;
+                (mark.state == TurnMark::Completed).then_some(mark.at).flatten()
+            }
+            "codex" => {
+                let path = self.transcript_path.as_deref()?;
+                let mark = cached_codex_mark(path)?;
+                (mark.state == TurnMark::Completed).then_some(mark.at).flatten()
+            }
+            "antigravity" => {
+                if let Some(path) = self.transcript_path.as_deref()
+                    && let Some(last) = last_jsonl_record(path)
+                    && antigravity_record_is_final_reply(&last)
+                {
+                    if let Some(ms) = crate::domain::noise_filter::record_timestamp_ms(&last) {
+                        return Some(ms as f64 / 1000.0);
+                    }
+                    if let Some((mtime_ns, _)) = file_mtime_and_len(Path::new(path)) {
+                        return Some(mtime_ns as f64 / 1_000_000_000.0);
+                    }
+                }
+                (self.turn_settled == Some(true) || self.hook_event_name.as_deref() == Some("Stop"))
+                    .then_some(self.updated_at)
+                    .flatten()
+            }
+            "kiro" | "opencode" => {
+                (self.turn_settled == Some(true) || self.hook_event_name.as_deref() == Some("Stop"))
+                    .then_some(self.updated_at)
+                    .flatten()
+            }
             _ => None,
-        }?;
-        (mark.state == TurnMark::Completed).then_some(mark.at).flatten()
+        }
     }
 
     /// `Some(parent_id)` when this session is a subagent spawned by another conversation.
@@ -347,7 +391,9 @@ impl HookSessionRecord {
             return None; // not written yet; do not cache
         }
         let parent = parse_subagent_parent(&first);
-        if let Ok(mut c) = PARENT_CACHE.lock() {
+        if first.ends_with('\n')
+            && let Ok(mut c) = PARENT_CACHE.lock()
+        {
             if c.len() >= MAX_STATIC_CACHE {
                 c.clear();
             }
@@ -447,17 +493,42 @@ impl HookSessionRecord {
         if !matches!(base, AgentLifecycleState::Working | AgentLifecycleState::Waiting) {
             return base;
         }
-        if let Some(updated) = self.updated_at {
-            if unix_now() - updated > STALE_AFTER_SECS {
-                return AgentLifecycleState::Idle;
-            }
-        }
-        if matches!(base, AgentLifecycleState::Working | AgentLifecycleState::Waiting) {
-            if let Some(state) = self.transcript_override() {
-                return state;
-            }
-        }
-        base
+        let age = self.updated_at.map(|u| unix_now() - u);
+        let process_alive = if base == AgentLifecycleState::Waiting
+            && age.is_some_and(|a| a > STALE_AFTER_SECS)
+        {
+            crate::scanner::liveness::surface_has_agent_process(&self.surface_id)
+        } else {
+            None
+        };
+        self.live_lifecycle_with_liveness_and_age(base, age, process_alive)
+    }
+
+    pub fn live_lifecycle_with_liveness(&self, process_alive: Option<bool>) -> AgentLifecycleState {
+        let base = self.resolved_lifecycle();
+        let age = self.updated_at.map(|u| unix_now() - u);
+        self.live_lifecycle_with_liveness_and_age(base, age, process_alive)
+    }
+
+    fn live_lifecycle_with_liveness_and_age(
+        &self,
+        base: AgentLifecycleState,
+        age: Option<f64>,
+        process_alive: Option<bool>,
+    ) -> AgentLifecycleState {
+        let override_state = if matches!(base, AgentLifecycleState::Working | AgentLifecycleState::Waiting)
+            && age.is_none_or(|a| a <= STALE_AFTER_SECS || base == AgentLifecycleState::Waiting)
+        {
+            self.transcript_override()
+        } else {
+            None
+        };
+        crate::domain::lifecycle::apply_staleness_and_override(
+            base,
+            age,
+            process_alive,
+            override_state,
+        )
     }
 
     /// What the transcript says about a turn the hook still reports as Working (see `turn_marks`):
@@ -722,7 +793,33 @@ impl HookStoreIndex {
     /// conversation: subagents share the surface/pid with their parent and are updated more
     /// recently, but they are not the chat the user is having.
     pub fn get_active_session_for_surface(&self, surface_id: &str) -> Option<&HookSessionRecord> {
+        self.get_active_session_for_surface_filtered(surface_id, None)
+    }
+
+    /// Like `get_active_session_for_surface`, optionally filtering to hook sessions whose canonical
+    /// `agent_kind` matches one of the live processes currently attached to the surface's TTY.
+    pub fn get_active_session_for_surface_filtered(
+        &self,
+        surface_id: &str,
+        live_kinds: Option<&std::collections::HashSet<&'static str>>,
+    ) -> Option<&HookSessionRecord> {
         let list = self.sessions_by_surface.get(surface_id)?;
+        let kind_matches = |r: &&HookSessionRecord| match live_kinds {
+            None => true,
+            Some(kinds) => {
+                if kinds.is_empty() {
+                    return false;
+                }
+                let raw = r.resolved_agent_kind();
+                if raw == "agent" {
+                    return true;
+                }
+                let canonical = crate::cmux::agents::spec_for(raw)
+                    .map(|s| s.kind)
+                    .unwrap_or(raw);
+                kinds.contains(canonical)
+            }
+        };
         let by_latest = |a: &&HookSessionRecord, b: &&HookSessionRecord| {
             let a_time = a.updated_at.unwrap_or(0.0);
             let b_time = b.updated_at.unwrap_or(0.0);
@@ -733,10 +830,14 @@ impl HookStoreIndex {
         let mut current = list
             .iter()
             .filter(|r| !r.is_subagent_session())
+            .filter(kind_matches)
             .max_by(by_latest)
-            .or_else(|| list.iter().max_by(by_latest))?;
+            .or_else(|| list.iter().filter(kind_matches).max_by(by_latest))?;
         for _ in 0..8 {
-            match current.parent_session_id().and_then(|p| self.sessions_by_id.get(&p)) {
+            match current
+                .parent_session_id()
+                .and_then(|p| self.sessions_by_id.get(&p))
+            {
                 Some(parent) => current = parent,
                 None => break,
             }

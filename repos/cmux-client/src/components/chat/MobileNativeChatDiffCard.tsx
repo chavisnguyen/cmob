@@ -1,6 +1,7 @@
-import { memo, useMemo, useRef, useState, type Key } from "react";
+import { memo, useMemo, useRef, type Key } from "react";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { FileCode, ChevronDown, ChevronUp } from "lucide-react";
+import { ChevronDown, ChevronUp, FileCode } from "lucide-react";
+import { useChatDisclosure } from "../../state/useChatDisclosure";
 
 const DIFF_VIRTUAL_THRESHOLD = 60;
 const DIFF_LINE_HEIGHT_PX = 18;
@@ -66,6 +67,8 @@ interface MobileNativeChatDiffCardProps {
   diff?: string;
   added?: number;
   removed?: number;
+  surfaceKey?: string;
+  itemKey?: string;
 }
 
 export const MobileNativeChatDiffCard = memo(function MobileNativeChatDiffCard({
@@ -73,8 +76,14 @@ export const MobileNativeChatDiffCard = memo(function MobileNativeChatDiffCard({
   diff,
   added = 0,
   removed = 0,
+  surfaceKey,
+  itemKey,
 }: MobileNativeChatDiffCardProps) {
-  const [isExpanded, setIsExpanded] = useState(false);
+  const [isExpanded, toggleExpanded] = useChatDisclosure(
+    surfaceKey,
+    `diff:${itemKey ?? path}`,
+    false,
+  );
 
   const { addCount, remCount } = useMemo(() => {
     if (added || removed || !diff) {
@@ -95,7 +104,8 @@ export const MobileNativeChatDiffCard = memo(function MobileNativeChatDiffCard({
     <div className="w-full rounded-lg border border-line bg-bg text-xs font-mono overflow-hidden my-1.5 shadow-sm">
       <button
         type="button"
-        onClick={() => setIsExpanded((prev) => !prev)}
+        aria-expanded={isExpanded}
+        onClick={toggleExpanded}
         className="w-full flex items-center justify-between px-3 py-2 bg-surface hover:bg-raised text-fg-soft transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">

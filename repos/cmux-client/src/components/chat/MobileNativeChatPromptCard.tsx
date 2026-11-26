@@ -1,22 +1,8 @@
-/**
- * Orca-style Docked Question Prompt Card & Collapsible Strip
- *
- * Rises above the chat composer when an agent asks a structured question (`ask_question` / `AskUserQuestion`):
- * - Single-select options submit on tap (`autoAdvance`) using option indices so TUI selectors navigate cleanly.
- * - Multi-select options toggle checkmarks and submit together.
- * - `Write-in / Other…` opens a focused free-text box.
- * - Collapses into a 1-line `PromptStrip` when the reader wants full viewport room to read history.
- *
- * Sources:
- * - ref/orca/mobile/src/session/native-chat/input/MobileNativeChatPromptCard.tsx
- * - ref/orca/mobile/src/session/native-chat/input/MobileNativeChatAsk.tsx
- * - ref/orca/mobile/src/session/native-chat/input/MobileNativeChatPromptStrip.tsx
- */
-
-import { useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import {
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronUp,
   Loader2,
   MessageSquareMore,
@@ -25,36 +11,56 @@ import {
   X,
 } from "lucide-react";
 import type { AwaitingInput } from "../../protocol/event";
+import { shouldSubmitComposerKey } from "./composerKey";
 import { NativeChatProse } from "./NativeChatProse";
+import {
+  EMPTY_STEP_DRAFT,
+  buildStepAnswer,
+  buildWizardSubmission,
+  normalizePromptSteps,
+  type QuestionAnswerPayload,
+  type QuestionStepAnswer,
+  type StepDraft,
+} from "./promptCardModel";
 
-export interface QuestionAnswerPayload {
-  indices: number[];
-  other?: string;
-  optionCount: number;
-  multiSelect: boolean;
-  displayText: string;
-}
+export type { QuestionAnswerPayload, QuestionStepAnswer };
 
 interface MobileNativeChatPromptCardProps {
   awaiting: AwaitingInput;
+  isDesktop?: boolean;
   onAnswer: (payload: QuestionAnswerPayload) => Promise<void>;
   onCancel?: () => Promise<void>;
 }
 
 export function MobileNativeChatPromptCard({
   awaiting,
+  isDesktop = false,
   onAnswer,
   onCancel,
 }: MobileNativeChatPromptCardProps) {
+  const steps = useMemo(() => normalizePromptSteps(awaiting), [awaiting]);
+  const totalSteps = steps.length;
   const [collapsed, setCollapsed] = useState(false);
-  const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
-  const [isOtherOpen, setIsOtherOpen] = useState(false);
-  const [otherText, setOtherText] = useState("");
+  const [stepIndex, setStepIndex] = useState(0);
+  const [drafts, setDrafts] = useState<Record<number, StepDraft>>({});
   const [submitting, setSubmitting] = useState(false);
+  const lastCompositionEndRef = useRef(0);
 
-  const options = awaiting.options ?? [];
-  const isMulti = awaiting.multi_select === true;
+  const activeStep = steps[Math.min(stepIndex, totalSteps - 1)];
+  const currentDraft = drafts[stepIndex] ?? EMPTY_STEP_DRAFT;
+  const { selectedIndices, isOtherOpen, otherText } = currentDraft;
+
+  const updateDraft = (patch: Partial<StepDraft>) => {
+    setDrafts((prev) => ({
+      ...prev,
+      [stepIndex]: { ...(prev[stepIndex] ?? EMPTY_STEP_DRAFT), ...patch },
+    }));
+  };
+
+  const options = activeStep.options ?? [];
+  const isMulti = activeStep.multi_select === true;
   const freeTextOnly = options.length === 0;
+  const isLastStep = stepIndex >= totalSteps - 1;
 
   if (collapsed) {
     return (
@@ -67,10 +73,15 @@ export function MobileNativeChatPromptCard({
         <div className="flex items-center gap-2 min-w-0 flex-1">
           <MessageSquareMore className="w-4 h-4 text-accent-soft shrink-0" />
           <span className="text-xs font-medium text-fg truncate">
-            {awaiting.prompt || "Question awaiting your answer"}
+            {activeStep.question || awaiting.prompt || "Question awaiting your answer"}
           </span>
         </div>
         <div className="flex items-center gap-1 text-[11px] font-semibold text-accent-soft shrink-0">
+          {totalSteps > 1 && (
+            <span className="font-mono">
+              {stepIndex + 1}/{totalSteps} ·{" "}
+            </span>
+          )}
           <span>Answer</span>
           <ChevronUp className="w-3.5 h-3.5" />
         </div>
@@ -78,23 +89,29 @@ export function MobileNativeChatPromptCard({
     );
   }
 
-  const submitPayload = async (indices: number[], customText?: string) => {
+  const commitStepOrSubmit = async (indices: number[], customText?: string) => {
     if (submitting) return;
-    const trimmedOther = (customText ?? "").trim();
-    if (indices.length === 0 && !trimmedOther) return;
+    const currentAnswer = buildStepAnswer(activeStep, indices, customText);
+    if (!currentAnswer) return;
 
-    const labels = indices.map((i) => options[i]).filter(Boolean);
-    const displayParts = [...labels, ...(trimmedOther ? [trimmedOther] : [])];
+    const nextDrafts: Record<number, StepDraft> = {
+      ...drafts,
+      [stepIndex]: {
+        selectedIndices: indices,
+        isOtherOpen: Boolean(customText?.trim()),
+        otherText: customText ?? "",
+      },
+    };
+    setDrafts(nextDrafts);
+
+    if (!isLastStep) {
+      setStepIndex((i) => Math.min(totalSteps - 1, i + 1));
+      return;
+    }
 
     setSubmitting(true);
     try {
-      await onAnswer({
-        indices,
-        ...(trimmedOther ? { other: trimmedOther } : {}),
-        optionCount: options.length,
-        multiSelect: isMulti,
-        displayText: displayParts.join(", "),
-      });
+      await onAnswer(buildWizardSubmission(steps, stepIndex, currentAnswer, nextDrafts));
     } finally {
       setSubmitting(false);
     }
@@ -103,14 +120,14 @@ export function MobileNativeChatPromptCard({
   const handleOptionPress = (idx: number) => {
     if (submitting) return;
     if (isMulti) {
-      setSelectedIndices((prev) =>
-        prev.includes(idx) ? prev.filter((i) => i !== idx) : [...prev, idx],
-      );
+      const nextIndices = selectedIndices.includes(idx)
+        ? selectedIndices.filter((i) => i !== idx)
+        : [...selectedIndices, idx];
+      updateDraft({ selectedIndices: nextIndices });
       return;
     }
-    setSelectedIndices([idx]);
-    setIsOtherOpen(false);
-    void submitPayload([idx]);
+    updateDraft({ selectedIndices: [idx], isOtherOpen: false });
+    void commitStepOrSubmit([idx]);
   };
 
   const canSubmitManual =
@@ -124,16 +141,32 @@ export function MobileNativeChatPromptCard({
       data-testid="docked-prompt-card"
       className="rounded-2xl border border-accent/35 bg-surface shadow-xl overflow-hidden"
     >
-      {/* Header */}
       <div className="flex items-start justify-between gap-2 px-3.5 pt-2.5 pb-2 bg-accent/[0.08] border-b border-white/[0.06]">
         <div className="flex items-start gap-2 min-w-0 flex-1">
-          <MessageSquareMore className="w-4 h-4 text-accent-soft shrink-0 mt-0.5" />
+          {stepIndex > 0 ? (
+            <button
+              type="button"
+              disabled={submitting}
+              onClick={() => setStepIndex((i) => Math.max(0, i - 1))}
+              aria-label="Previous question"
+              className="w-6 h-6 -ml-1 rounded-lg hover:bg-white/[0.08] text-accent-soft flex items-center justify-center shrink-0"
+            >
+              <ChevronLeft className="w-4 h-4" />
+            </button>
+          ) : (
+            <MessageSquareMore className="w-4 h-4 text-accent-soft shrink-0 mt-0.5" />
+          )}
           <div className="min-w-0 flex-1">
-            <div className="text-[11px] font-semibold uppercase tracking-wider text-accent-soft">
-              {isMulti ? "Select all that apply" : "Question"}
+            <div className="flex items-center gap-2 text-[11px] font-semibold uppercase tracking-wider text-accent-soft">
+              <span>{isMulti ? "Select all that apply" : "Question"}</span>
+              {totalSteps > 1 && (
+                <span className="px-1.5 py-0.2 rounded bg-accent/20 font-mono tabular-nums">
+                  {stepIndex + 1}/{totalSteps}
+                </span>
+              )}
             </div>
             <div className="mt-0.5 text-[13.5px] font-medium text-fg leading-snug">
-              <NativeChatProse content={awaiting.prompt} compact />
+              <NativeChatProse content={activeStep.question || awaiting.prompt} compact />
             </div>
           </div>
         </div>
@@ -162,13 +195,12 @@ export function MobileNativeChatPromptCard({
         </div>
       </div>
 
-      {/* Options + Write-in */}
       <div className="p-2.5 space-y-1.5 max-h-[44vh] overflow-y-auto scrollbar-sleek">
         {options.map((opt, idx) => {
           const selected = selectedIndices.includes(idx);
           return (
             <button
-              key={`q-opt-${idx}`}
+              key={`q-opt-${stepIndex}-${idx}`}
               type="button"
               disabled={submitting}
               onClick={() => handleOptionPress(idx)}
@@ -210,10 +242,12 @@ export function MobileNativeChatPromptCard({
           <button
             type="button"
             disabled={submitting}
-            onClick={() => {
-              setIsOtherOpen((prev) => !prev);
-              if (!isMulti) setSelectedIndices([]);
-            }}
+            onClick={() =>
+              updateDraft({
+                isOtherOpen: !isOtherOpen,
+                ...(isMulti ? {} : { selectedIndices: [] }),
+              })
+            }
             className={`w-full flex items-center gap-2.5 px-3 py-2 rounded-xl border text-left transition-colors ${
               isOtherOpen
                 ? "bg-accent/15 border-accent/60 text-fg"
@@ -229,12 +263,26 @@ export function MobileNativeChatPromptCard({
           <div className="pt-1 flex items-end gap-2">
             <textarea
               value={otherText}
-              onChange={(e) => setOtherText(e.target.value)}
+              onChange={(e) => updateDraft({ otherText: e.target.value })}
+              onCompositionEnd={() => {
+                lastCompositionEndRef.current =
+                  typeof performance !== "undefined" ? performance.now() : Date.now();
+              }}
               onKeyDown={(e) => {
-                if (e.key === "Enter" && !e.shiftKey) {
+                if (
+                  shouldSubmitComposerKey({
+                    key: e.key,
+                    shiftKey: e.shiftKey,
+                    isComposing: e.nativeEvent.isComposing,
+                    keyCode: e.keyCode,
+                    isDesktop,
+                    hasSlashMenu: false,
+                    lastCompositionEndAt: lastCompositionEndRef.current,
+                  })
+                ) {
                   e.preventDefault();
                   if (otherText.trim()) {
-                    void submitPayload(isMulti ? selectedIndices : [], otherText);
+                    void commitStepOrSubmit(isMulti ? selectedIndices : [], otherText);
                   }
                 }
               }}
@@ -247,7 +295,7 @@ export function MobileNativeChatPromptCard({
               <button
                 type="button"
                 disabled={submitting || !otherText.trim()}
-                onClick={() => void submitPayload([], otherText)}
+                onClick={() => void commitStepOrSubmit([], otherText)}
                 className="h-9 px-3 rounded-xl bg-accent hover:bg-accent-soft text-white font-semibold text-xs flex items-center gap-1.5 shrink-0 disabled:opacity-40 transition-colors"
               >
                 {submitting ? (
@@ -255,7 +303,7 @@ export function MobileNativeChatPromptCard({
                 ) : (
                   <Send className="w-3.5 h-3.5" />
                 )}
-                <span>Send</span>
+                <span>{isLastStep ? "Send" : "Next"}</span>
               </button>
             )}
           </div>
@@ -267,7 +315,9 @@ export function MobileNativeChatPromptCard({
           <button
             type="button"
             disabled={submitting || !canSubmitManual}
-            onClick={() => void submitPayload(selectedIndices, isOtherOpen ? otherText : undefined)}
+            onClick={() =>
+              void commitStepOrSubmit(selectedIndices, isOtherOpen ? otherText : undefined)
+            }
             className="h-8 px-3.5 rounded-xl bg-accent hover:bg-accent-soft text-white font-semibold text-xs flex items-center gap-1.5 disabled:opacity-40 transition-colors"
           >
             {submitting ? (
@@ -275,7 +325,7 @@ export function MobileNativeChatPromptCard({
             ) : (
               <Send className="w-3.5 h-3.5" />
             )}
-            <span>Submit</span>
+            <span>{isLastStep ? "Submit" : "Next"}</span>
           </button>
         </div>
       )}

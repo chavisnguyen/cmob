@@ -1,17 +1,22 @@
-/**
- * Inline Background Task Card inside the conversation timeline.
- * Mirrors Orca's `nativeChatBackgroundTaskRun` (`ref/orca/src/shared/native-chat/transcript/native-chat-background-task-run.ts`).
- */
-
-import { memo, useState } from "react";
+import { memo } from "react";
 import { ChevronDown, ChevronUp } from "lucide-react";
 import type { BackgroundTaskEntry } from "../../protocol/event";
-import { BackgroundKindIcon, LiveElapsedText } from "./MobileNativeChatComposerTray";
+import { useChatDisclosure } from "../../state/useChatDisclosure";
+import { BackgroundKindIcon, LiveElapsedText } from "./ChatWorkPrimitives";
 import { formatWorkTokens } from "./taskList";
 
 export const MobileNativeChatBackgroundTasksCard = memo(
-  function MobileNativeChatBackgroundTasksCard({ tasks }: { tasks: BackgroundTaskEntry[] }) {
-    const [expanded, setExpanded] = useState(false);
+  function MobileNativeChatBackgroundTasksCard({
+    tasks,
+    surfaceKey,
+    itemKey,
+  }: {
+    tasks: BackgroundTaskEntry[];
+    surfaceKey?: string;
+    itemKey?: string;
+  }) {
+    const resolvedKey = `bgtasks:${itemKey ?? tasks[0]?.id ?? "bg"}`;
+    const [expanded, toggleExpanded] = useChatDisclosure(surfaceKey, resolvedKey, false);
 
     if (tasks.length === 0) return null;
 
@@ -48,7 +53,8 @@ export const MobileNativeChatBackgroundTasksCard = memo(
       >
         <button
           type="button"
-          onClick={() => setExpanded((prev) => !prev)}
+          aria-expanded={expanded}
+          onClick={toggleExpanded}
           className="w-full flex items-center justify-between px-3 py-2 hover:bg-white/[0.03] text-fg-soft transition-colors"
         >
           <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">

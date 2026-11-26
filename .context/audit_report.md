@@ -1,10 +1,54 @@
 # Context Verification & Audit Report
 
 **Project:** `cmux-mobile`  
-**Date:** 2026-11-18  
-**Audit:** Tri-Agent Parallel Clean-Context Review (GitHub Pages PWA Deployment, CORS, Multi-Host Support)  
-**Auditors:** Subagents 1, 2, and 3 (Independent clean-context reviewers)  
+**Date:** 2026-11-26  
+**Audit:** Quad-Agent Full-System Bug & Clean Architecture Audit (Gateway + Providers + Client Shell/Terminal + Chat UI vs Orca)  
 **Standard:** Strict Evidence-Based Standard (100% verified citations, zero guessing, per `AGENTS.md`)  
+
+---
+
+## 0A. Full-System Clean Architecture & 60-Bug Audit (2026-11-26)
+
+Four independent clean-context research subagents audited all ~18.1k lines of `repos/cmux-gateway` and ~17.3k lines of `repos/cmux-client` against `ref/orca`. Below are the highest-impact verified root causes and the Clean Architecture remediation blueprint:
+
+### Gateway Lifecycle & Server Findings (`server.rs`, `hook_store.rs`, `workspace_tree.rs`, `bridge.rs`, `notifications.rs`)
+1. **[P0] Four Divergent Lifecycle Sources (`server.rs:359-372, 1590-1605, 1881-1885`, `kiro_store.rs:247`, `opencode_store.rs:590-607`, `hook_store.rs:445-496`):** Kiro is invisible to `NotificationEngine` and maps `turn_end` to `Idle` instead of `Done`; OpenCode SQLite `question`/`error` states never reach `NotificationEngine` or `WorkspaceTreeBuilder`, and `res.from_tree` discards OpenCode `last_subtitle` activity.
+2. **[P0] `METHOD_CHAT_INTERRUPT` Sends `ctrl+c` Instead of `escape` (`cmux/bridge.rs:261-265`, `server.rs:2235-2249`):** Kills agent CLIs when a turn settles instead of sending `escape` (and double-`escape` for OpenCode per `ref/orca/src/shared/native-chat/native-chat-agent-support.ts:45-48`).
+3. **[P0] Tab Reuse Serves Dead Previous Agent Session (`workspace_tree.rs:265-332`, `server.rs:1574-1633`, `liveness.rs:56-60`):** Stale Claude hook records shadow live Kiro/Codex/AGY sessions on the same `surface_id`.
+4. **[P0] `spawn_dialog_watcher` Drops Unanswered Dialogs at 5m (`server.rs:421-480`):** `scan_recent_agent_ttys(300)` stops polling at `t=301s`, auto-dismissing unanswered trust dialogs, and passes `workspace_id: ""` on dialog alerts (`server.rs:461`).
+5. **[P1] Workspace Badge & 30m Waiting Decay (`workspace_tree.rs:245`, `hook_store.rs:450-454, 760-765`):** Workspace `"running"` badge reads stale/closed surface hooks for 30m while ignoring Kiro; `live_lifecycle` decays live unanswered `Waiting` approvals to `Idle` after 30m.
+6. **[P1] Box-Bordered TUIs Bypass `startup_dialog` & `answer_question` (`startup_dialog.rs:89-109`, `bridge.rs:269-280, 357-385, 661-729`):** Missing Unicode border stripping (`│`/`╰`), missing `startup_dialog` guard in `answer_question`, blind `approve()` when prompt already cleared, and inline blocking `terminal_set_viewport` + shared `client_id = "pwa"` collision (`server.rs:970-975, 1253`).
+7. **[P2] Sync `fsync` on Tokio Threads, Mid-Flush Cache Poisoning, & `surface.close` (`pairing_store.rs:182`, `push.rs:45`, `hook_store.rs:237-276`, `turn_marks.rs:95, 172`, `server.rs:1077, 2860`, `notifications.rs:454`, `usage.rs:275, 839`).**
+
+### Gateway Transcript & Provider Findings (`transcript.rs`, `opencode_store.rs`, `kiro_store.rs`)
+1. **[P0] Claude Harness XML, Mixed `[tool_result, <system-reminder>]`, & Interrupts Leak as User Bubbles (`transcript.rs:1648-1832` vs `ref/orca/src/shared/harness-injected-user-turns.ts:5-54`):** Missing Orca's 19 harness XML tags & 7 prose prefixes, `<bash-input>`/`<pasted_content>`/`<command-name>` unwrappers, and `interruptedMessageId` status conversion.
+2. **[P0] `chat_watcher_stream` Delta-Mode Drops In-Place Mutations (`server.rs:2100-2127`, `opencode_store.rs:448-514`):** Digesting turns as `(id, events.len())` at `len - 2` silently drops subagent/task completions, `AwaitingInput.answered` receipts, `Thinking.duration_secs`, and OpenCode streaming updates; OpenCode sliding `turn-1..N` IDs corrupt deltas.
+3. **[P0] Antigravity `GENERIC` LIFO Inversion & Raw Prose Leak (`transcript.rs:2510-2604`):** `.iter().rev().find_map(...)` pairs parallel `tool_calls` in reverse order, and unmatched `GENERIC` frames leak raw tool output as `Assistant` prose.
+4. **[P0] Codex Paginated Mode Drops All `response_item` Tools & `Thinking`/`Usage` (`transcript.rs:918-1041` vs `ref/orca/src/main/native-chat/transcript-line-decoders-codex.ts:14-29`):** `"response_item" if !state.paginated` drops `apply_patch`, `function_call`, and `local_shell_call`; `<skill>` dumps leak; `Reasoning`, `Usage`, `turn_aborted`, and real `ToolEnd.ok` are missing.
+5. **[P1] Claude `<synthetic>` Zero-Token Usage (`transcript.rs:2120-2133`), `128 KiB` `turn-N` vs `turn-@<offset>` ID Flip (`transcript.rs:443, 606`), Partial Trailing Line Advance Past `\n` (`transcript.rs:378-390`), OpenCode Pagination/Cache/Question Receipt Bugs (`opencode_store.rs:298-515`), & AGY `"REQUEST"` + Unclosed `<USER_REQUEST>` (`transcript.rs:729, 2144-2166`).**
+
+### Client Shell, Transport & Terminal Findings (`wsClient.ts`, `App.tsx`, `SurfaceDetailView.tsx`, `RawTerminalView.tsx`)
+1. **[P0] Auto-Reconnect Killed in `"error"` State & Retryable Ticket Dead-End (`wsClient.ts:407-414, 571-577`).**
+2. **[P0] Same-Origin `#token=` Overwritten by Stale `cmux_hosts` (`wsClient.ts:202-233`).**
+3. **[P0] Terminal Scrollback Yanked to Bottom Every 150ms (`RawTerminalView.tsx:365-381, 517-526`): `\x1b[3J` fires `term.onScroll` mid-write (`0 >= -1`), setting `shouldAutoScrollRef = true`.**
+4. **[P0] `handleLoadOlder` Past 500 Turns Slices Off Newly Prepended Older Turns (`SurfaceDetailView.tsx:419-426`).**
+5. **[P0] Desktop Web Defaults to `"mobile"` PTY Mode, Shrinking Mac `cmux` Window (`RawTerminalView.tsx:123-133`).**
+6. **[P1/P2] Missing `\x1b[?1h]` (`DECCKM`) & `\x1b[?2004h]` (bracketed paste) in `renderGridToAnsi.ts:192-245`; mobile PTY stuck shrunk on unmount/host-switch (`RawTerminalView.tsx:627-634`); incomplete `frameKey` (`RawTerminalView.tsx:342`); impure `setTurns` updater under `<StrictMode>` (`SurfaceDetailView.tsx:183-210`); stale session state on agent restart (`SurfaceDetailView.tsx:390-403`); cross-host `fetchWorkspaces` cache race & `PairingConfirmModal` stale selection (`App.tsx:375-441, 1295`); dead `desktopBrowserNotif` & SW `approve` action (`App.tsx:491, 591`); `replaceState(null)` wiping back-stack (`pairing.ts:328`); touch `"Bottom"` pill focusing keyboard (`RawTerminalView.tsx:1039`).**
+
+### Client Chat UI & Orca Parity Findings (`components/chat/*`)
+1. **[P0] `reuseTurnRefs` Freezes 8,000-Char Truncated `localStorage` Text & Drops In-Place Updates (`chatTranscriptCache.ts:76-92, 238-250`).**
+2. **[P0] Toggling `Chat | Term` Unmounts `OrcaChatView` & Destroys Draft, Attachments, and Queue (`SurfaceDetailView.tsx:998-1040`, `ChatComposer.tsx:77-110`).**
+3. **[P0] Virtualizer Unmount Wipes Local `useState(false)` Disclosures & Causes Scroll Jumps (`MobileNativeChat*.tsx`).**
+4. **[P0] iOS Safari `onViewportChange` Unconditionally Calls `scrollToTail("instant")`, Hijacking Scroll While Typing (`OrcaChatView.tsx:418-425`).**
+5. **[P1/P2] Custom `shouldAdjustScrollPositionOnItemSizeChange` yanks expanded headers off-screen (`OrcaChatView.tsx:258`); single-consume `programmaticScrollMarks` breaks smooth jump-to-tail (`chatVirtual.ts:162`); intra-turn `flushTools` orphans `tool-end` (`OrcaChatView.tsx:853-892`); missing Orca Work-Run grouping & `delta`+`assistant` duplication (`OrcaChatView.tsx:885-940`); multi-question wizard & `PromptCard` key collisions (`MobileNativeChatPromptCard.tsx:55`, `OrcaChatView.tsx:653`); unconfirmed cache `PromptCard` flash & double-tap `Approve` (`OrcaChatView.tsx:678-685`); duplicate live spinners & missing `stopping` prop (`OrcaChatView.tsx:630`); `AgentOptionsSheet` state reset & Safari IME `compositionend` Enter race (`ChatComposer.tsx:279`).**
+
+### Post-Refactor Clean Architecture Remediation Matrix (Verified 2026-11-26)
+| Subsystem | Pre-Refactor Monolith | Post-Refactor Clean Modules | Verification |
+|---|---|---|---|
+| **Gateway Server & Services** | `server.rs` (3,530L) | `server.rs` (70L facade), `services/{session_state, agent_control, chat_stream, terminal_stream, notification_dispatcher, notification_sources}.rs`, `transport/{http_guard, http_routes, ws_session, client_registry, rpc/*}.rs` | **PASS (`cargo test --all` 172/172)** |
+| **Gateway Domain & Providers** | `scanner/transcript.rs` (3,243L) | `scanner/transcript.rs` (336L facade), `domain/{canonical_turn, dialog, lifecycle, noise_filter, receipt_normalizer}.rs`, `io/jsonl_window.rs`, `providers/{claude, codex, antigravity, kiro, opencode, common}.rs` | **PASS (0 warnings)** |
+| **Client App Shell & State** | `App.tsx` (1,378L), `SurfaceDetailView.tsx` (1,081L), `wsClient.ts` (784L) | `App.tsx` (284L), `SurfaceDetailView.tsx` (190L), `domain/{workspaceTree, notificationCenter, terminalState}.ts`, `transport/{tokenVault, pairingClient, wsLifecycle, wsClient}.ts`, `state/use*.ts`, `components/shell/*.tsx` | **PASS (`vp check` 0 warnings)** |
+| **Client Chat & Terminal** | `OrcaChatView.tsx` (969L), `RawTerminalView.tsx` (1,142L) | `OrcaChatView.tsx` (258L), `RawTerminalView.tsx` (201L), `domain/chat/{types, cleanPrompt, turnMerge, transcriptReducer, toolPairing, workRunGrouping, liveStatus, dockSelector, disclosureStore, composerStore, heightEstimator, chatViewModel}.ts`, `components/{chat,terminal}/*.tsx` | **PASS (`vp test` 164/164, `make build` OK)** |
 
 ---
 

@@ -1,157 +1,32 @@
-/**
- * WebSocket JSON-RPC 2.0 Transport Client with Auto-Reconnect & Auth Handshake
- * Sources:
- * - ref/orca/src/renderer/src/web/web-pairing.ts
- * - ref/cmux-pocket/crates/cmux-pocket-gateway/src/server.rs
- */
-
+import { isDemoMode } from "../demo/demoData";
+import { handleDemoRpc } from "../demo/demoMode";
+import { setActiveHostId, type SavedHost } from "../hosts/hostStore";
 import {
-  getActiveHostId,
-  loadHosts,
-  setActiveHostId,
-  upsertHost,
-  type SavedHost,
-} from "../hosts/hostStore";
-import {
-  collectTokenCandidates,
-  endpointToHttpBase,
   isStaticHostOrigin,
   isValidGatewayEndpoint,
-  readPairingFromLocation,
-  type PairingOffer,
   sameOriginEndpoint,
   sanitizePairingInAddressBar,
   stripPairingCodeFromAddressBar,
+  type PairingOffer,
 } from "../protocol/pairing";
+import type { JsonRpcResponse } from "../protocol/rpc";
 import {
-  CODE_BACKEND_UNAVAILABLE,
-  createRpcRequest,
-  type JsonRpcRequest,
-  type JsonRpcResponse,
-  type RequestId,
-} from "../protocol/rpc";
-import { isDemoMode } from "../demo/demoData";
-import { handleDemoRpc } from "../demo/demoMode";
-
-function getCookie(name: string): string | null {
-  if (typeof document === "undefined") return null;
-  const match = document.cookie.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
-  if (!match) return null;
-  try {
-    return decodeURIComponent(match[1]);
-  } catch {
-    // A malformed cookie must never throw: wsClient is constructed at module load.
-    return null;
-  }
-}
-
-function setCookie(name: string, value: string, days = 365): void {
-  if (typeof document === "undefined") return;
-  const expires = new Date(Date.now() + days * 864e5).toUTCString();
-  document.cookie = `${name}=${encodeURIComponent(value)}; expires=${expires}; path=/; SameSite=Lax`;
-}
-
-/**
- * An offer that points at a different host than the one serving this page. It is never applied
- * silently: a phishing link could otherwise pin the app to an attacker's gateway and send terminal
- * input and approvals there. The user must confirm it first.
- */
-function isForeignOffer(offer: PairingOffer | null): boolean {
-  if (!offer || typeof window === "undefined") return false;
-  return (
-    isValidGatewayEndpoint(offer.endpoint) && offer.endpoint !== sameOriginEndpoint(window.location)
-  );
-}
-
-/** Short label shown in the gateway's device list. */
-function deviceLabel(): string {
-  if (typeof navigator === "undefined") return "Browser";
-  const ua = navigator.userAgent;
-  const platform = /iPhone/.test(ua)
-    ? "iPhone"
-    : /iPad/.test(ua)
-      ? "iPad"
-      : /Android/.test(ua)
-        ? "Android"
-        : /Mac/.test(ua)
-          ? "Mac"
-          : /Windows/.test(ua)
-            ? "Windows"
-            : "Browser";
-  const standalone =
-    typeof window !== "undefined" && window.matchMedia?.("(display-mode: standalone)").matches;
-  return standalone ? `${platform} (app)` : platform;
-}
-
-/** Every token this browser could use, best guess first (see `collectTokenCandidates`). */
-function readTokenCandidates(): string[] {
-  if (typeof window === "undefined") return [];
-  const offer = readPairingFromLocation(window.location);
-  const urlToken = offer?.token && !isForeignOffer(offer) ? offer.token : undefined;
-  let local: string | null = null;
-  let session: string | null = null;
-  try {
-    local = localStorage.getItem("cmux_token");
-  } catch {
-    // Ignore storage quota or access errors
-  }
-  try {
-    session = sessionStorage.getItem("cmux_token");
-  } catch {
-    // Ignore
-  }
-  return collectTokenCandidates(urlToken, [local, session, getCookie("cmux_token")]);
-}
-
-function clearStoredToken(): void {
-  if (typeof window === "undefined") return;
-  try {
-    localStorage.removeItem("cmux_token");
-    sessionStorage.removeItem("cmux_token");
-  } catch {
-    // Ignore
-  }
-  setCookie("cmux_token", "", -1);
-}
-
-function persistStoredToken(token: string): void {
-  if (typeof window === "undefined" || !token) return;
-  try {
-    localStorage.setItem("cmux_token", token);
-  } catch {
-    // Ignore
-  }
-  try {
-    sessionStorage.setItem("cmux_token", token);
-  } catch {
-    // Ignore
-  }
-  setCookie("cmux_token", token, 365);
-  // Only sanitize address bar if we are connected to the same origin; never write a remote token to the host origin's address bar.
-  if (!getStoredEndpoint() && !isStaticHostOrigin(window.location)) {
-    sanitizePairingInAddressBar(token);
-  }
-}
-
-const ENDPOINT_KEY = "cmux_endpoint";
-
-function getStoredEndpoint(): string | null {
-  try {
-    const v = localStorage.getItem(ENDPOINT_KEY);
-    return v && isValidGatewayEndpoint(v) ? v : null;
-  } catch {
-    return null;
-  }
-}
-
-function persistEndpoint(endpoint: string | null): void {
-  try {
-    if (endpoint) localStorage.setItem(ENDPOINT_KEY, endpoint);
-    else localStorage.removeItem(ENDPOINT_KEY);
-  } catch {
-    // Ignore storage errors
-  }
-}
+  exchangePairingTicket,
+  recordAuthenticatedHost,
+  resolveInitialPairingState,
+} from "./pairingClient";
+import {
+  clearStoredToken,
+  getStoredEndpoint,
+  persistEndpoint,
+  persistStoredToken,
+} from "./tokenVault";
+import {
+  RpcRequestTracker,
+  computeReconnectDelayMs,
+  installPageWakeListeners,
+  syncHeartbeatTimer,
+} from "./wsLifecycle";
 
 export type ConnectionState =
   | "disconnected"
@@ -165,182 +40,68 @@ export type EventHandler = (event: string, data: unknown) => void;
 export class GatewayWsClient {
   private ws: WebSocket | null = null;
   private token: string;
-  private pendingRequests = new Map<
-    RequestId,
-    {
-      resolve: (val: unknown) => void;
-      reject: (err: Error) => void;
-      timer: ReturnType<typeof setTimeout>;
-    }
-  >();
+  private rpcTracker = new RpcRequestTracker();
   private eventListeners = new Set<EventHandler>();
   private stateChangeListeners = new Set<(state: ConnectionState) => void>();
+  private pairingListeners = new Set<() => void>();
   private currentState: ConnectionState = "disconnected";
   private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+  private lifecycleCleanup: (() => void) | null = null;
   private shouldReconnect = true;
-  /** Consecutive failed connection attempts; drives exponential backoff. */
   private reconnectAttempts = 0;
-  /** Gateway WebSocket URL from a pairing offer; null means "same origin as this page". */
-  private endpoint: string | null = null;
-  /** One-time ticket from a pairing offer, redeemed before the first connection. */
-  private pendingTicket: { ticket: string; endpoint: string } | null = null;
   private redeeming = false;
-  /** Bumped whenever the target host changes; lets an in-flight ticket redemption notice it is stale. */
+  private probing = false;
   private hostGeneration = 0;
-  /** A pairing offer for another host waiting for the user's confirmation. */
-  private pendingPairing: PairingOffer | null = null;
-  private pairingListeners = new Set<() => void>();
-  private hostNameHint: string | null = null;
-  /** Other remembered tokens to try, in order, when the gateway rejects the current one. */
-  private fallbackTokens: string[] = [];
-  /** Descriptive message explaining why the last connection or pairing attempt failed. */
+  private endpoint: string | null;
+  private pendingTicket: { ticket: string; endpoint: string } | null;
+  private pendingPairing: PairingOffer | null;
+  private hostNameHint: string | null;
+  private fallbackTokens: string[];
   private lastErrorMessage: string | null = null;
 
   constructor() {
-    // Nothing is written back yet: a token from the address bar may be stale, and overwriting the
-    // remembered one with it would destroy the only valid credential. It is saved on auth_ok.
-    const candidates = readTokenCandidates();
-    this.token = candidates[0] ?? "";
-    this.fallbackTokens = candidates.slice(1);
-
-    if (typeof window !== "undefined") {
-      const offer = readPairingFromLocation(window.location);
-      if (offer && isForeignOffer(offer)) {
-        // Another host (e.g. Tailscale MagicDNS): wait for explicit confirmation, keep the current host.
-        this.pendingPairing = offer;
-        this.endpoint = getStoredEndpoint();
-      } else if (offer) {
-        // Offer targets this origin: forget any stale remembered endpoint.
-        persistEndpoint(null);
-      } else {
-        this.endpoint = getStoredEndpoint();
-      }
-
-      // If no endpoint is stored in ENDPOINT_KEY, fallback to active host from hostStore
-      if (!this.endpoint) {
-        try {
-          const activeId = getActiveHostId(localStorage);
-          const hosts = loadHosts(localStorage);
-          const activeHost = (activeId ? hosts.find((h) => h.id === activeId) : null) ?? hosts[0];
-          if (activeHost) {
-            this.endpoint = activeHost.endpoint;
-            this.token = activeHost.token;
-            this.hostNameHint = activeHost.name;
-          }
-        } catch {
-          // ignore localStorage access errors
-        }
-      }
-
-      if (offer?.ticket && !offer.token && !this.pendingPairing) {
-        this.pendingTicket = { ticket: offer.ticket, endpoint: offer.endpoint };
-      }
-    }
+    const init = resolveInitialPairingState();
+    this.token = init.token;
+    this.fallbackTokens = init.fallbackTokens;
+    this.endpoint = init.endpoint;
+    this.pendingPairing = init.pendingPairing;
+    this.pendingTicket = init.pendingTicket;
+    this.hostNameHint = init.hostNameHint;
   }
 
-  /** WebSocket URL this client connects to. */
   public getEndpoint(): string {
     if (this.endpoint) return this.endpoint;
-    if (typeof window !== "undefined") {
-      if (isStaticHostOrigin(window.location)) {
-        return "";
-      }
+    if (typeof window !== "undefined" && !isStaticHostOrigin(window.location)) {
       return sameOriginEndpoint(window.location);
     }
     return "";
   }
 
-  /**
-   * Redeems a pairing ticket for a per-device token. Single-use: the gateway rejects replays.
-   */
-  private async redeemPendingTicket(): Promise<"ok" | "rejected" | "retryable"> {
-    const pending = this.pendingTicket;
-    if (!pending) return "ok";
-    if (!isValidGatewayEndpoint(pending.endpoint)) {
-      this.lastErrorMessage = `Invalid gateway endpoint: ${pending.endpoint}`;
-      return "rejected";
-    }
-    const generation = this.hostGeneration;
-    try {
-      const resp = await fetch(`${endpointToHttpBase(pending.endpoint)}/api/pair/exchange`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ticket: pending.ticket, label: deviceLabel() }),
-      });
-      if (generation !== this.hostGeneration) return "ok";
-      if (!resp.ok) {
-        if (resp.status === 403) {
-          this.lastErrorMessage =
-            "Gateway rejected pairing request (forbidden origin). Please restart gateway: cmob restart";
-          return "rejected";
-        } else if (resp.status === 401) {
-          this.lastErrorMessage =
-            "Pairing ticket expired or already used. Run `cmob qr --tailscale` for a new code.";
-          return "rejected";
-        } else {
-          this.lastErrorMessage = `Pairing ticket exchange failed (HTTP ${resp.status}).`;
-          return resp.status >= 400 && resp.status < 500 ? "rejected" : "retryable";
-        }
-      }
-      const body = (await resp.json()) as { token?: string };
-      if (!body.token) {
-        this.lastErrorMessage = "Gateway did not return a device token.";
-        return "rejected";
-      }
-      // The user switched host / confirmed another pairing while this request was in flight: this token
-      // belongs to the old host and must not be adopted. Report success so connect() re-runs and redeems
-      // whatever ticket is pending now.
-      if (generation !== this.hostGeneration) return "ok";
-      this.token = body.token;
-      this.lastErrorMessage = null;
-      persistStoredToken(body.token);
-      this.pendingTicket = null;
-      stripPairingCodeFromAddressBar();
-      if (!getStoredEndpoint() && !isStaticHostOrigin(window.location)) {
-        sanitizePairingInAddressBar(body.token); // keep the device token in the hash for iOS WebClips
-      }
-      return "ok";
-    } catch {
-      if (generation !== this.hostGeneration) return "ok";
-      this.lastErrorMessage = `Cannot reach gateway at ${pending.endpoint}. Ensure Tailscale is connected and gateway is running.`;
-      return "retryable";
-    }
-  }
-
   public getLastErrorMessage(): string | null {
     return this.lastErrorMessage;
   }
-
   public clearLastErrorMessage(): void {
     this.lastErrorMessage = null;
   }
-
   public getToken(): string {
     return this.token;
+  }
+  public getState(): ConnectionState {
+    return isDemoMode() ? "connected" : this.currentState;
+  }
+  public getPendingPairing(): PairingOffer | null {
+    return this.pendingPairing;
   }
 
   public setToken(token: string): void {
     const trimmed = token.trim();
     this.token = trimmed;
     this.fallbackTokens = [];
-    if (trimmed) {
-      persistStoredToken(trimmed);
-    } else if (typeof window !== "undefined") {
-      try {
-        localStorage.removeItem("cmux_token");
-        sessionStorage.removeItem("cmux_token");
-      } catch {
-        // Ignore
-      }
-      setCookie("cmux_token", "", -1);
-    }
+    if (trimmed) persistStoredToken(trimmed);
+    else clearStoredToken();
     this.shouldReconnect = true;
     this.reconnect();
-  }
-
-  public getState(): ConnectionState {
-    if (isDemoMode()) return "connected";
-    return this.currentState;
   }
 
   public dispatchDemoEvent(event: string, data: unknown): void {
@@ -355,7 +116,7 @@ export class GatewayWsClient {
 
   public onStateChange(listener: (state: ConnectionState) => void): () => void {
     this.stateChangeListeners.add(listener);
-    listener(this.currentState);
+    listener(this.getState());
     return () => this.stateChangeListeners.delete(listener);
   }
 
@@ -364,71 +125,49 @@ export class GatewayWsClient {
     return () => this.eventListeners.delete(listener);
   }
 
-  private setState(state: ConnectionState): void {
-    this.currentState = state;
-    this.syncHeartbeat();
-    for (const listener of this.stateChangeListeners) {
-      listener(state);
-    }
+  public onPairingChange(listener: () => void): () => void {
+    this.pairingListeners.add(listener);
+    return () => this.pairingListeners.delete(listener);
   }
 
-  /**
-   * A half-open socket (Wi-Fi to cellular handoff, host asleep without a TCP FIN) never fires `onclose`, so
-   * the UI would keep saying "Connected" while every call times out. While connected we probe the gateway
-   * periodically and when the page returns to the foreground or the network comes back; a probe that
-   * times out forces a fresh connection.
-   */
-  private heartbeatTimer: ReturnType<typeof setInterval> | null = null;
-  private probing = false;
-  private lifecycleHooked = false;
-
-  private syncHeartbeat(): void {
-    const want = this.currentState === "connected";
-    if (want && !this.heartbeatTimer) {
-      this.heartbeatTimer = setInterval(() => {
-        if (typeof document === "undefined" || document.visibilityState === "visible") {
-          void this.probe(8000);
-        }
-      }, 20_000);
-      this.hookPageLifecycle();
-    } else if (!want && this.heartbeatTimer) {
-      clearInterval(this.heartbeatTimer);
-      this.heartbeatTimer = null;
-    }
+  private setState(state: ConnectionState): void {
+    this.currentState = state;
+    this.heartbeatTimer = syncHeartbeatTimer(this.heartbeatTimer, state === "connected", () => {
+      void this.probe(8000);
+    });
+    const reported = this.getState();
+    for (const listener of this.stateChangeListeners) listener(reported);
   }
 
   private hookPageLifecycle(): void {
-    if (this.lifecycleHooked || typeof window === "undefined") return;
-    this.lifecycleHooked = true;
-    const wake = () => {
+    if (this.lifecycleCleanup) return;
+    this.lifecycleCleanup = installPageWakeListeners(() => {
       if (!this.shouldReconnect) return;
       if (this.currentState === "connected") {
         void this.probe(4000);
       } else if (this.currentState === "disconnected" || this.currentState === "error") {
-        // Back online / foregrounded: do not wait out the remaining backoff delay.
         if (this.reconnectTimer) {
           clearTimeout(this.reconnectTimer);
           this.reconnectTimer = null;
         }
-        if (this.currentState === "disconnected") this.connect();
+        this.connect();
       }
-    };
-    window.addEventListener("online", wake);
-    document.addEventListener("visibilitychange", () => {
-      if (document.visibilityState === "visible") wake();
     });
   }
 
   private async probe(timeoutMs: number): Promise<void> {
-    if (isDemoMode()) return;
-    if (this.probing || this.currentState !== "connected") return;
+    if (isDemoMode() || this.probing || this.currentState !== "connected") return;
     const socket = this.ws;
     this.probing = true;
     try {
       await this.call("mobile.host.status", undefined, { timeoutMs });
     } catch (err) {
-      const timedOut = err instanceof Error && err.message.startsWith("RPC timeout");
-      if (timedOut && this.ws === socket && this.currentState === "connected") {
+      if (
+        err instanceof Error &&
+        err.message.startsWith("RPC timeout") &&
+        this.ws === socket &&
+        this.currentState === "connected"
+      ) {
         this.reconnect();
       }
     } finally {
@@ -436,20 +175,43 @@ export class GatewayWsClient {
     }
   }
 
-  public getPendingPairing(): PairingOffer | null {
-    return this.pendingPairing;
-  }
-
-  public onPairingChange(listener: () => void): () => void {
-    this.pairingListeners.add(listener);
-    return () => this.pairingListeners.delete(listener);
+  private async redeemPendingTicket(): Promise<"ok" | "rejected" | "retryable"> {
+    const pending = this.pendingTicket;
+    if (!pending) return "ok";
+    const generation = this.hostGeneration;
+    const outcome = await exchangePairingTicket(pending.endpoint, pending.ticket);
+    if (generation !== this.hostGeneration) return "ok";
+    if (outcome.status !== "ok") {
+      this.lastErrorMessage = outcome.errorMessage;
+      return outcome.status;
+    }
+    this.token = outcome.token;
+    this.lastErrorMessage = null;
+    persistStoredToken(outcome.token);
+    this.pendingTicket = null;
+    stripPairingCodeFromAddressBar();
+    if (
+      !getStoredEndpoint() &&
+      typeof window !== "undefined" &&
+      !isStaticHostOrigin(window.location)
+    ) {
+      sanitizePairingInAddressBar(outcome.token);
+    }
+    return "ok";
   }
 
   private notifyPairing(): void {
     for (const l of this.pairingListeners) l();
   }
 
-  /** Queues an offer (pasted link, scanned QR) for confirmation. */
+  private saveActiveHost(id: string): void {
+    try {
+      setActiveHostId(localStorage, id);
+    } catch {
+      // ignore
+    }
+  }
+
   public proposePairing(offer: PairingOffer): boolean {
     if (!isValidGatewayEndpoint(offer.endpoint)) return false;
     this.pendingPairing = offer;
@@ -457,7 +219,6 @@ export class GatewayWsClient {
     return true;
   }
 
-  /** Applies the confirmed offer: switch endpoint, redeem its ticket or use its token, reconnect. */
   public acceptPendingPairing(): void {
     const offer = this.pendingPairing;
     if (!offer) return;
@@ -467,14 +228,9 @@ export class GatewayWsClient {
     const here = typeof window !== "undefined" ? sameOriginEndpoint(window.location) : null;
     this.endpoint = offer.endpoint === here ? null : offer.endpoint;
     persistEndpoint(this.endpoint);
-    try {
-      setActiveHostId(localStorage, offer.endpoint);
-    } catch {
-      // ignore
-    }
+    this.saveActiveHost(offer.endpoint);
     this.pendingTicket =
       offer.ticket && !offer.token ? { ticket: offer.ticket, endpoint: offer.endpoint } : null;
-    // Never present the previous host's credential to the new host.
     this.token = "";
     this.fallbackTokens = [];
     clearStoredToken();
@@ -492,15 +248,10 @@ export class GatewayWsClient {
     this.reconnect();
   }
 
-  /** Switches to an already saved host. */
   public switchHost(host: SavedHost): void {
+    this.hostNameHint = host.name;
+    this.saveActiveHost(host.id);
     if (isDemoMode()) {
-      this.hostNameHint = host.name;
-      try {
-        setActiveHostId(localStorage, host.id);
-      } catch {
-        // ignore
-      }
       this.setState("connected");
       return;
     }
@@ -509,16 +260,9 @@ export class GatewayWsClient {
     this.endpoint = host.endpoint === here ? null : host.endpoint;
     persistEndpoint(this.endpoint);
     this.pendingTicket = null;
-    this.hostNameHint = host.name;
-    try {
-      setActiveHostId(localStorage, host.id);
-    } catch {
-      // ignore
-    }
     this.setToken(host.token);
   }
 
-  /** Drops the current host: closes the socket and forgets its endpoint and token. */
   public forgetHost(): void {
     this.hostGeneration += 1;
     this.disconnect();
@@ -531,69 +275,40 @@ export class GatewayWsClient {
     clearStoredToken();
   }
 
-  /** Remembers the host that just authenticated so it shows up in the host list. */
-  private recordCurrentHost(): void {
-    if (typeof window === "undefined" || !this.token) return;
-    try {
-      const endpoint = this.getEndpoint();
-      const existing = loadHosts(localStorage).find((h) => h.id === endpoint);
-      upsertHost(localStorage, {
-        endpoint,
-        token: this.token,
-        name: existing?.name || this.hostNameHint || undefined,
-      });
-      if (!getActiveHostId(localStorage) || getActiveHostId(localStorage) !== endpoint) {
-        setActiveHostId(localStorage, endpoint);
-      }
-    } catch {
-      // ignore storage errors
-    }
-  }
-
   public connect(): void {
-    if (isDemoMode()) {
-      this.setState("connected");
-      return;
-    }
-    if (this.pendingPairing) {
-      // Waiting for the user to confirm pairing with another host.
-      this.setState("disconnected");
-      return;
-    }
+    if (isDemoMode()) return this.setState("connected");
+    this.hookPageLifecycle();
+    if (this.pendingPairing) return this.setState("disconnected");
+
     if (this.pendingTicket) {
       if (this.redeeming) return;
+      this.shouldReconnect = true;
       this.redeeming = true;
       this.setState("connecting");
       void this.redeemPendingTicket().then((result) => {
         this.redeeming = false;
-        if (result === "ok") {
-          this.connect();
-        } else {
-          if (result === "rejected") {
-            this.pendingTicket = null; // spent or invalid: fall back to manual token entry
-            stripPairingCodeFromAddressBar();
-          }
-          this.setState("error");
+        if (result === "ok") return this.connect();
+        if (result === "rejected") {
+          this.pendingTicket = null;
+          this.shouldReconnect = false;
+          stripPairingCodeFromAddressBar();
         }
+        this.setState("error");
+        if (result === "retryable" && this.shouldReconnect) this.scheduleReconnect();
       });
       return;
     }
 
     if (!this.token) {
       if (typeof window !== "undefined" && isStaticHostOrigin(window.location)) {
-        this.setState("disconnected");
-        return;
+        return this.setState("disconnected");
       }
-      this.setState("error");
-      return;
+      this.shouldReconnect = false;
+      return this.setState("error");
     }
 
     const wsUrl = this.getEndpoint();
-    if (!wsUrl) {
-      this.setState("disconnected");
-      return;
-    }
-
+    if (!wsUrl) return this.setState("disconnected");
     if (
       this.ws &&
       (this.ws.readyState === WebSocket.OPEN || this.ws.readyState === WebSocket.CONNECTING)
@@ -603,119 +318,87 @@ export class GatewayWsClient {
 
     this.shouldReconnect = true;
     this.setState("connecting");
-
     try {
       const socket = new WebSocket(wsUrl);
       this.ws = socket;
-
       socket.onopen = () => {
         if (this.ws !== socket) return;
         this.setState("authenticating");
-        // Mandatory First Frame Authentication Handshake (ref: auth.rs / server.rs)
-        const authPayload = JSON.stringify({ type: "auth", token: this.token });
-        this.ws?.send(authPayload);
+        this.ws?.send(JSON.stringify({ type: "auth", token: this.token }));
       };
-
-      socket.onmessage = (event) => {
-        if (this.ws !== socket) return;
-        try {
-          const raw = JSON.parse(event.data);
-          // Handle auth response frame
-          if (raw.type === "auth_ok") {
-            this.lastErrorMessage = null;
-            this.reconnectAttempts = 0;
-            this.fallbackTokens = [];
-            persistStoredToken(this.token);
-            this.recordCurrentHost();
-            this.setState("connected");
-            return;
-          }
-          if (raw.type === "auth_error") {
-            this.lastErrorMessage = "Authentication failed: invalid token.";
-            if (this.useNextToken()) return;
-            this.shouldReconnect = false;
-            this.setState("error");
-            return;
-          }
-
-          // Handle standard JSON-RPC 2.0 Response
-          const resp = raw as JsonRpcResponse;
-          if (resp.id !== undefined && this.pendingRequests.has(resp.id)) {
-            const pending = this.pendingRequests.get(resp.id)!;
-            this.pendingRequests.delete(resp.id);
-            clearTimeout(pending.timer);
-            if (resp.error) {
-              pending.reject(new Error(resp.error.message));
-            } else {
-              pending.resolve(resp.result);
-            }
-            return;
-          }
-
-          // Handle push event
-          if (resp.event) {
-            for (const listener of this.eventListeners) {
-              listener(resp.event, resp.data);
-            }
-          }
-        } catch (err) {
-          console.error("Failed to parse incoming WebSocket frame:", err);
-        }
-      };
-
+      socket.onmessage = (event) => this.handleMessage(socket, event.data);
       socket.onclose = (ev) => {
-        // A superseded socket (token change, manual reconnect) must not touch current state.
         if (this.ws !== socket) return;
-        this.cleanupPendingRequests();
-        this.setState("disconnected");
-        // Do not auto-reconnect if closed due to authentication failure (close code 1008)
+        this.ws = null;
+        this.rpcTracker.rejectAll();
         if (ev.code === 1008) {
           if (this.useNextToken()) return;
           this.shouldReconnect = false;
-          this.setState("error");
-          return;
+          return this.setState("error");
         }
-        if (this.shouldReconnect) {
-          this.scheduleReconnect();
-        }
+        this.setState("disconnected");
+        if (this.shouldReconnect) this.scheduleReconnect();
       };
-
       socket.onerror = () => {
-        if (this.ws !== socket) return;
-        this.setState("error");
+        if (this.ws === socket) this.setState("error");
       };
     } catch (err) {
       console.error("WebSocket connection failure:", err);
       this.setState("error");
-      this.scheduleReconnect();
+      if (this.shouldReconnect) this.scheduleReconnect();
+    }
+  }
+
+  private handleMessage(socket: WebSocket, rawText: string): void {
+    if (this.ws !== socket) return;
+    try {
+      const raw = JSON.parse(rawText);
+      if (raw.type === "auth_ok") {
+        this.lastErrorMessage = null;
+        this.reconnectAttempts = 0;
+        this.fallbackTokens = [];
+        persistStoredToken(this.token);
+        recordAuthenticatedHost(this.getEndpoint(), this.token, this.hostNameHint);
+        return this.setState("connected");
+      }
+      if (raw.type === "auth_error") {
+        this.lastErrorMessage = "Authentication failed: invalid token.";
+        if (this.useNextToken()) return;
+        this.shouldReconnect = false;
+        return this.setState("error");
+      }
+      const resp = raw as JsonRpcResponse;
+      if (this.rpcTracker.settleResponse(resp)) return;
+      if (resp.event) {
+        for (const listener of this.eventListeners) listener(resp.event, resp.data);
+      }
+    } catch (err) {
+      console.error("Failed to parse incoming WebSocket frame:", err);
     }
   }
 
   public disconnect(): void {
     this.shouldReconnect = false;
-    if (this.reconnectTimer) {
-      clearTimeout(this.reconnectTimer);
-      this.reconnectTimer = null;
-    }
+    if (this.reconnectTimer) clearTimeout(this.reconnectTimer);
+    this.reconnectTimer = null;
+    this.lifecycleCleanup?.();
+    this.lifecycleCleanup = null;
     if (this.ws) {
       const old = this.ws;
-      this.ws = null; // handlers compare against this.ws, so the old socket goes quiet
+      this.ws = null;
       old.close();
     }
-    this.cleanupPendingRequests();
+    this.rpcTracker.rejectAll();
     this.setState("disconnected");
   }
 
   public reconnect(): void {
-    if (isDemoMode()) {
-      this.setState("connected");
-      return;
-    }
+    if (isDemoMode()) return this.setState("connected");
     this.disconnect();
+    this.shouldReconnect = true;
     this.connect();
   }
 
-  /** The gateway rejected the current token: retry with the next remembered one, if any. */
   private useNextToken(): boolean {
     const next = this.fallbackTokens.shift();
     if (!next) return false;
@@ -726,25 +409,12 @@ export class GatewayWsClient {
 
   private scheduleReconnect(): void {
     if (this.reconnectTimer) return;
-    // Exponential backoff 1s, 2s, 4s ... capped at 30s, with up to 25% jitter, so a down gateway is
-    // not hammered by every open tab / phone at a fixed 2s cadence.
-    const base = Math.min(30_000, 1000 * 2 ** this.reconnectAttempts);
-    const delay = Math.round(base * (1 + Math.random() * 0.25));
+    const delay = computeReconnectDelayMs(this.reconnectAttempts);
     this.reconnectAttempts += 1;
     this.reconnectTimer = setTimeout(() => {
       this.reconnectTimer = null;
-      if (this.shouldReconnect) {
-        this.connect();
-      }
+      if (this.shouldReconnect) this.connect();
     }, delay);
-  }
-
-  private cleanupPendingRequests(): void {
-    for (const [, pending] of this.pendingRequests) {
-      clearTimeout(pending.timer);
-      pending.reject(new Error("Connection closed"));
-    }
-    this.pendingRequests.clear();
   }
 
   public async call<T = unknown>(
@@ -755,29 +425,13 @@ export class GatewayWsClient {
     if (isDemoMode()) {
       return handleDemoRpc<T>(method, params, (event, data) => this.dispatchDemoEvent(event, data));
     }
-
-    if (!this.ws || this.ws.readyState !== WebSocket.OPEN || this.currentState !== "connected") {
-      throw new Error(`Gateway unavailable (code ${CODE_BACKEND_UNAVAILABLE})`);
-    }
-
-    const req: JsonRpcRequest = createRpcRequest(method, params);
-    return new Promise<T>((resolve, reject) => {
-      // Default 10s request timeout; callers whose gateway work is slow (chat.send waits for the agent to
-      // ingest a paste) pass a longer one so a delivered message is not reported as failed.
-      const timer = setTimeout(() => {
-        if (this.pendingRequests.has(req.id)) {
-          this.pendingRequests.delete(req.id);
-          reject(new Error(`RPC timeout for method: ${method}`));
-        }
-      }, options?.timeoutMs ?? 10000);
-
-      this.pendingRequests.set(req.id, {
-        resolve: resolve as (val: unknown) => void,
-        reject,
-        timer,
-      });
-      this.ws?.send(JSON.stringify(req));
-    });
+    return this.rpcTracker.send<T>(
+      this.ws,
+      this.currentState === "connected",
+      method,
+      params,
+      options?.timeoutMs,
+    );
   }
 }
 
