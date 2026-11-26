@@ -1,6 +1,8 @@
 pub mod hook_store;
 pub mod kiro_store;
 pub mod liveness;
+#[cfg(target_os = "macos")]
+pub mod macos_proc;
 pub mod opencode_store;
 pub mod transcript;
 pub mod turn_marks;

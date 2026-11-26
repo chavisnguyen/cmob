@@ -1,11 +1,14 @@
 use serde_json::Value;
+use std::path::PathBuf;
 use std::process::Stdio;
+use std::sync::Arc;
 use std::time::Duration;
 use tokio::process::Command;
 use tokio::time::timeout;
 
 use crate::cmux::agent_profile::{profile_for, split_legacy_submit};
 use crate::cmux::startup_dialog;
+use crate::cmux::uds_client::{CmuxUdsPool, UdsCallError};
 use crate::domain::dialog::{
     plan_approval_steps, plan_batch_question_steps_for_selector, plan_interrupt_keys,
     plan_question_answer_steps_checked, ApprovalPlanError, QuestionAnswerPlan,
@@ -33,12 +36,14 @@ pub enum CmuxBridgeError {
 }
 
 /// Dual-Transport Bridge for macOS cmux.
-/// Primary Transport: Blessed CLI subprocess (`cmux rpc`, `cmux send-key`, `cmux ping`).
-/// Solves SocketControlMode.cmuxOnly (ref/cmux/Packages/macOS/CmuxSettings/Sources/CmuxSettings/Values/SocketControlMode.swift:9-21)
+/// Fast Path: Persistent pooled Unix Domain Socket (`cmux.sock`, ~1ms per RPC).
+/// Fallback Transport: Blessed CLI subprocess (`cmux rpc`, `cmux send-key`, `cmux ping`) when
+/// socket is unavailable, mocked (`with_cli_path`), or restricted by `SocketControlMode.cmuxOnly`.
 #[derive(Debug, Clone)]
 pub struct DualTransportCmuxBridge {
     cli_path: String,
     timeout_duration: Duration,
+    uds_pool: Option<Arc<CmuxUdsPool>>,
 }
 
 impl Default for DualTransportCmuxBridge {
@@ -53,18 +58,50 @@ impl DualTransportCmuxBridge {
         Self {
             cli_path: cli,
             timeout_duration: Duration::from_secs(DEFAULT_RPC_TIMEOUT_SECS),
+            uds_pool: Some(Arc::new(CmuxUdsPool::new())),
         }
     }
 
+    /// Constructs a CLI-only bridge (used in deterministic mock CLI unit tests).
     pub fn with_cli_path(cli_path: impl Into<String>) -> Self {
         Self {
             cli_path: cli_path.into(),
             timeout_duration: Duration::from_secs(DEFAULT_RPC_TIMEOUT_SECS),
+            uds_pool: None,
         }
     }
 
-    /// Pings cmux to verify daemon health.
+    /// Constructs a bridge bound to an explicit Unix socket path with CLI fallback.
+    pub fn with_socket_and_cli(
+        socket_path: impl Into<PathBuf>,
+        cli_path: impl Into<String>,
+    ) -> Self {
+        Self {
+            cli_path: cli_path.into(),
+            timeout_duration: Duration::from_secs(DEFAULT_RPC_TIMEOUT_SECS),
+            uds_pool: Some(Arc::new(CmuxUdsPool::with_socket_path(socket_path))),
+        }
+    }
+
+    async fn try_uds(&self, method: &str, params: Value) -> Option<Result<Value, CmuxBridgeError>> {
+        let pool = self.uds_pool.as_ref()?;
+        match pool.call(method, params, self.timeout_duration).await {
+            Ok(val) => Some(Ok(val)),
+            Err(UdsCallError::Unavailable | UdsCallError::AccessDenied) => None,
+            Err(UdsCallError::Timeout) => Some(Err(CmuxBridgeError::Timeout(
+                self.timeout_duration.as_secs().max(1),
+            ))),
+            Err(UdsCallError::RpcError(msg)) => Some(Err(CmuxBridgeError::CmuxError(msg))),
+            Err(UdsCallError::ParseError(msg)) => Some(Err(CmuxBridgeError::JsonParseError(msg))),
+        }
+    }
+
+    /// Pings cmux to verify daemon health (UDS fast-path with CLI fallback).
     pub async fn ping(&self) -> bool {
+        if let Some(Ok(_)) = self.try_uds("system.ping", serde_json::json!({})).await {
+            return true;
+        }
+
         let mut cmd = Command::new(&self.cli_path);
         cmd.kill_on_drop(true);
         cmd.arg("ping").stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -73,6 +110,17 @@ impl DualTransportCmuxBridge {
             Ok(Ok(output)) => output.status.success(),
             _ => false,
         }
+    }
+
+    /// Fetches the full workspace/pane/surface JSON tree (`system.tree` over UDS, or `cmux tree --json --id-format both`).
+    pub async fn tree_json(&self) -> Result<String, CmuxBridgeError> {
+        if let Some(res) = self.try_uds("system.tree", serde_json::json!({})).await {
+            let val = res?;
+            return serde_json::to_string(&val)
+                .map_err(|e| CmuxBridgeError::JsonParseError(e.to_string()));
+        }
+        self.run_command("tree", &["--json", "--id-format", "both"])
+            .await
     }
 
     /// Runs an arbitrary cmux CLI subcommand with arguments, returning stdout.
@@ -110,6 +158,13 @@ impl DualTransportCmuxBridge {
 
     /// Dispatches a raw JSON-RPC call returning the raw string response.
     pub async fn rpc_call(&self, method: &str, params: Option<Value>) -> Result<String, CmuxBridgeError> {
+        let uds_params = params.clone().unwrap_or_else(|| serde_json::json!({}));
+        if let Some(res) = self.try_uds(method, uds_params).await {
+            let val = res?;
+            return serde_json::to_string(&val)
+                .map_err(|e| CmuxBridgeError::JsonParseError(e.to_string()));
+        }
+
         let mut cmd = Command::new(&self.cli_path);
         cmd.kill_on_drop(true);
         cmd.args(["rpc", method]);
@@ -136,8 +191,12 @@ impl DualTransportCmuxBridge {
         Ok(stdout)
     }
 
-    /// Dispatches a JSON-RPC method call through `cmux rpc <method> '<params_json>'`.
+    /// Dispatches a JSON-RPC method call over persistent UDS, falling back to `cmux rpc <method> '<params>'`.
     pub async fn rpc(&self, method: &str, params: Value) -> Result<Value, CmuxBridgeError> {
+        if let Some(res) = self.try_uds(method, params.clone()).await {
+            return res;
+        }
+
         let params_str = serde_json::to_string(&params)
             .map_err(|e| CmuxBridgeError::JsonParseError(e.to_string()))?;
 
@@ -229,13 +288,27 @@ impl DualTransportCmuxBridge {
         Ok(())
     }
 
-    /// Captures terminal screen buffer via `cmux capture-pane [--surface=<id>] [--scrollback] [--lines <n>]`.
+    /// Captures terminal screen buffer via UDS `surface.read_text`, falling back to `cmux capture-pane`.
     pub async fn capture_pane(
         &self,
         surface_id: Option<&str>,
         lines: usize,
         scrollback: bool,
     ) -> Result<String, CmuxBridgeError> {
+        let mut uds_params = serde_json::json!({
+            "lines": lines,
+            "scrollback": scrollback,
+        });
+        if let Some(surf) = surface_id {
+            uds_params["surface_id"] = serde_json::json!(surf);
+        }
+        if let Some(res) = self.try_uds("surface.read_text", uds_params).await {
+            let val = res?;
+            if let Some(text) = val.get("text").and_then(|v| v.as_str()) {
+                return Ok(text.to_string());
+            }
+        }
+
         let mut cmd = Command::new(&self.cli_path);
         cmd.kill_on_drop(true);
         cmd.arg("capture-pane");

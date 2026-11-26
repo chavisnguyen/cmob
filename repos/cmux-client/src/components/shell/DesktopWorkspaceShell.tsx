@@ -1,17 +1,22 @@
-import type { ReactNode } from "react";
+import { lazy, Suspense, type ReactNode } from "react";
 import { Plus, QrCode } from "lucide-react";
 import { surfaceIdentity, type MainTab } from "../../domain/workspaceTree";
 import type { SavedHost } from "../../hosts/hostStore";
 import type { SurfaceNode, UsageSnapshot, WorkspaceNode } from "../../protocol/rpc";
 import { wsClient, type ConnectionState } from "../../transport/wsClient";
-import { DeviceListView } from "../../views/DeviceListView";
 import { SurfaceDetailView } from "../../views/SurfaceDetailView";
 import { WorkspaceListView } from "../../views/WorkspaceListView";
 import { DesktopTabStrip } from "../desktop/DesktopTabStrip";
 import type { CreateSurfaceParams } from "../surface/NewSurfaceModal";
 import { DesktopUsageWidget } from "../usage/DesktopUsageWidget";
-import { UsageView } from "../usage/UsageView";
 import { PrimaryTabNav } from "./PrimaryTabNav";
+
+const LazyUsageView = lazy(() =>
+  import("../usage/UsageView").then((m) => ({ default: m.UsageView })),
+);
+const LazyDeviceListView = lazy(() =>
+  import("../../views/DeviceListView").then((m) => ({ default: m.DeviceListView })),
+);
 
 export interface DesktopWorkspaceShellProps {
   topHeader: ReactNode;
@@ -169,31 +174,35 @@ export function DesktopWorkspaceShell({
 
         <div className="flex-1 min-h-0 overflow-hidden">
           {mainTab === "usage" ? (
-            <UsageView
-              hostName={activeHost?.name ?? "No computer"}
-              connState={connState}
-              snapshot={usage.snapshot}
-              loading={usage.loading}
-              refreshing={usage.refreshing}
-              error={usage.error}
-              unsupported={usage.unsupported}
-              now={usage.now}
-              onRefresh={() => void usage.refresh()}
-            />
+            <Suspense fallback={<div className="h-full bg-bg" />}>
+              <LazyUsageView
+                hostName={activeHost?.name ?? "No computer"}
+                connState={connState}
+                snapshot={usage.snapshot}
+                loading={usage.loading}
+                refreshing={usage.refreshing}
+                error={usage.error}
+                unsupported={usage.unsupported}
+                now={usage.now}
+                onRefresh={() => void usage.refresh()}
+              />
+            </Suspense>
           ) : mainTab === "devices" ? (
-            <DeviceListView
-              hosts={hosts}
-              activeHostId={activeHostId}
-              connState={connState}
-              hideBack
-              onSelectHost={(h) => {
-                onSwitchHost(h);
-                onSelectMainTab("workspaces");
-              }}
-              onRemoveHost={onRemoveHost}
-              onRenameHost={onRenameHost}
-              onBack={() => onSelectMainTab("workspaces")}
-            />
+            <Suspense fallback={<div className="h-full bg-bg" />}>
+              <LazyDeviceListView
+                hosts={hosts}
+                activeHostId={activeHostId}
+                connState={connState}
+                hideBack
+                onSelectHost={(h) => {
+                  onSwitchHost(h);
+                  onSelectMainTab("workspaces");
+                }}
+                onRemoveHost={onRemoveHost}
+                onRenameHost={onRenameHost}
+                onBack={() => onSelectMainTab("workspaces")}
+              />
+            </Suspense>
           ) : hasNoHosts && !loading ? (
             <div className="h-full flex flex-col items-center justify-center px-6 py-16 text-center">
               <h2 className="text-[22px] font-bold text-white tracking-tight mb-2">

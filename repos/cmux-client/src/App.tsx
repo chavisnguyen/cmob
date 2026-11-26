@@ -21,6 +21,13 @@ export function App() {
   const isDesktop = useIsDesktop();
   useVisualViewportVars();
   useEffect(() => installGlobalButtonHaptics(), []);
+  // Warm the chat markdown chunk right after first paint so opening any agent tab is instant.
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      void import("./components/chat/OrcaChatView");
+    }, 120);
+    return () => clearTimeout(timer);
+  }, []);
 
   const [sidebarNewWs, setSidebarNewWs] = useState<WorkspaceNode | null>(null);
   const [sidebarCloseTarget, setSidebarCloseTarget] = useState<{
@@ -33,6 +40,26 @@ export function App() {
   );
 
   const nav = useNavigationShell({ isDesktop, initialWorkspaces });
+
+  // Register 1-RTT WebSocket auth bootstrap hint BEFORE `useHostSession` opens the socket.
+  const isDesktopBootRef = useRef(isDesktop);
+  const viewingBootRef = useRef(nav.viewingSurfaceId);
+  isDesktopBootRef.current = isDesktop;
+  viewingBootRef.current = nav.viewingSurfaceId;
+  wsClient.setBootstrapProvider(() => {
+    const urlSurface =
+      typeof window !== "undefined"
+        ? new URLSearchParams(window.location.search).get("surface")
+        : null;
+    const targetSurface = urlSurface || viewingBootRef.current || undefined;
+    return {
+      workspace_tree: true,
+      ...(targetSurface ? { surface_id: targetSurface } : {}),
+      is_desktop: isDesktopBootRef.current,
+      max_turns: 15,
+      delta: true,
+    };
+  });
 
   const dismissToastsForSurfaceRef = useRef<(surface: SurfaceNode | string) => void>(() => {});
   const clearAllToastsRef = useRef<() => void>(() => {});

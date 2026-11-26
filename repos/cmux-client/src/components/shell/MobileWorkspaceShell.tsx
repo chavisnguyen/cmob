@@ -1,14 +1,20 @@
+import { lazy, Suspense } from "react";
 import { surfaceIdentity, type AppView, type MainTab } from "../../domain/workspaceTree";
 import type { SavedHost } from "../../hosts/hostStore";
 import type { SurfaceNode, UsageSnapshot, WorkspaceNode } from "../../protocol/rpc";
 import type { ConnectionState } from "../../transport/wsClient";
-import { DeviceListView } from "../../views/DeviceListView";
 import { SurfaceDetailView } from "../../views/SurfaceDetailView";
 import { SurfaceListView } from "../../views/SurfaceListView";
 import { WorkspaceListView } from "../../views/WorkspaceListView";
 import type { CreateSurfaceParams } from "../surface/NewSurfaceModal";
-import { UsageView } from "../usage/UsageView";
 import { PrimaryTabNav } from "./PrimaryTabNav";
+
+const LazyUsageView = lazy(() =>
+  import("../usage/UsageView").then((m) => ({ default: m.UsageView })),
+);
+const LazyDeviceListView = lazy(() =>
+  import("../../views/DeviceListView").then((m) => ({ default: m.DeviceListView })),
+);
 
 export interface MobileWorkspaceShellProps {
   mainTab: MainTab;
@@ -123,33 +129,37 @@ export function MobileWorkspaceShell({
         )}
 
         {mainTab === "usage" && (
-          <UsageView
-            hostName={activeHost?.name ?? "No computer"}
-            connState={connState}
-            snapshot={usage.snapshot}
-            loading={usage.loading}
-            refreshing={usage.refreshing}
-            error={usage.error}
-            unsupported={usage.unsupported}
-            now={usage.now}
-            onRefresh={() => void usage.refresh()}
-          />
+          <Suspense fallback={<div className="h-full bg-bg" />}>
+            <LazyUsageView
+              hostName={activeHost?.name ?? "No computer"}
+              connState={connState}
+              snapshot={usage.snapshot}
+              loading={usage.loading}
+              refreshing={usage.refreshing}
+              error={usage.error}
+              unsupported={usage.unsupported}
+              now={usage.now}
+              onRefresh={() => void usage.refresh()}
+            />
+          </Suspense>
         )}
 
         {mainTab === "devices" && (
-          <DeviceListView
-            hosts={hosts}
-            activeHostId={activeHostId}
-            connState={connState}
-            hideBack
-            onSelectHost={(h) => {
-              onSwitchHost(h);
-              onSelectMainTab("workspaces");
-            }}
-            onRemoveHost={onRemoveHost}
-            onRenameHost={onRenameHost}
-            onBack={() => onSelectMainTab("workspaces")}
-          />
+          <Suspense fallback={<div className="h-full bg-bg" />}>
+            <LazyDeviceListView
+              hosts={hosts}
+              activeHostId={activeHostId}
+              connState={connState}
+              hideBack
+              onSelectHost={(h) => {
+                onSwitchHost(h);
+                onSelectMainTab("workspaces");
+              }}
+              onRemoveHost={onRemoveHost}
+              onRenameHost={onRenameHost}
+              onBack={() => onSelectMainTab("workspaces")}
+            />
+          </Suspense>
         )}
       </div>
 

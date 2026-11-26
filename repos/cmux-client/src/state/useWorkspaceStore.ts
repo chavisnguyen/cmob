@@ -6,7 +6,13 @@ import {
   mergeWorkspaces,
 } from "../domain/workspaceTree";
 import { peekCachedWorkspaces, writeCachedWorkspaces } from "../hosts/workspaceCache";
-import { RPC_METHODS, type SurfaceNode, type WorkspaceNode } from "../protocol/rpc";
+import {
+  RPC_EVENTS,
+  RPC_METHODS,
+  type SurfaceNode,
+  type WorkspaceBootstrapPayload,
+  type WorkspaceNode,
+} from "../protocol/rpc";
 import { wsClient, type ConnectionState } from "../transport/wsClient";
 
 export function stripResolvedQueryParams(paramNames: readonly string[]): void {
@@ -46,6 +52,7 @@ export function useWorkspaceStore({
   const [liveConfirmed, setLiveConfirmed] = useState(false);
 
   const workspacesRef = useRef(workspaces);
+  const liveConfirmedRef = useRef(false);
   const fetchSeqRef = useRef(0);
   const inFlightEndpointRef = useRef<string | null>(null);
   const pendingSurfaceJumpRef = useRef<string | null>(null);
@@ -56,6 +63,7 @@ export function useWorkspaceStore({
 
   useEffect(() => {
     if (connState !== "connected") {
+      liveConfirmedRef.current = false;
       setLiveConfirmed(false);
     }
   }, [connState]);
@@ -72,6 +80,22 @@ export function useWorkspaceStore({
       }
     }
   }, [onJumpToSurface]);
+
+  const applyWorkspaceSnapshot = useCallback(
+    (incoming: WorkspaceNode[], endpoint: string) => {
+      const merged = mergeWorkspaces(workspacesRef.current, incoming);
+      if (merged !== workspacesRef.current) {
+        workspacesRef.current = merged;
+        setWorkspaces(merged);
+      }
+      liveConfirmedRef.current = true;
+      setLiveConfirmed(true);
+      setLoading(false);
+      writeCachedWorkspaces(endpoint, merged);
+      onWorkspacesReconcile(merged, Boolean(pendingSurfaceJumpRef.current));
+    },
+    [onWorkspacesReconcile],
+  );
 
   const fetchWorkspaces = useCallback(
     async (showSpinner = false) => {
@@ -94,14 +118,7 @@ export function useWorkspaceStore({
           return;
         }
         if (resp?.workspaces) {
-          const merged = mergeWorkspaces(workspacesRef.current, resp.workspaces);
-          if (merged !== workspacesRef.current) {
-            workspacesRef.current = merged;
-            setWorkspaces(merged);
-          }
-          setLiveConfirmed(true);
-          writeCachedWorkspaces(reqEndpoint, merged);
-          onWorkspacesReconcile(merged, Boolean(pendingSurfaceJumpRef.current));
+          applyWorkspaceSnapshot(resp.workspaces, reqEndpoint);
         }
       } catch (err) {
         if (seq === fetchSeqRef.current) {
@@ -114,12 +131,13 @@ export function useWorkspaceStore({
         }
       }
     },
-    [onWorkspacesReconcile],
+    [applyWorkspaceSnapshot],
   );
 
   const resetWorkspacesForHost = useCallback((nextEndpoint?: string | null) => {
     fetchSeqRef.current += 1;
     inFlightEndpointRef.current = null;
+    liveConfirmedRef.current = false;
     setLoading(false);
     setLiveConfirmed(false);
     const seeded = nextEndpoint ? peekCachedWorkspaces(nextEndpoint) : [];
@@ -138,7 +156,35 @@ export function useWorkspaceStore({
 
   useEffect(() => {
     if (connState !== "connected") return;
-    void fetchWorkspaces(false);
+
+    let bootstrapFallbackTimer: ReturnType<typeof setTimeout> | null = null;
+    const buffered = wsClient.consumeBufferedBootstrapPayload();
+    if (buffered?.workspaces) {
+      applyWorkspaceSnapshot(buffered.workspaces, wsClient.getEndpoint());
+    } else if (wsClient.isAwaitingBootstrapTree()) {
+      if (workspacesRef.current.length === 0) setLoading(true);
+      bootstrapFallbackTimer = setTimeout(() => {
+        if (wsClient.isAwaitingBootstrapTree() || !liveConfirmedRef.current) {
+          void fetchWorkspaces(false);
+        }
+      }, 1500);
+    } else {
+      void fetchWorkspaces(false);
+    }
+
+    const offBootstrap = wsClient.onEvent((event, data) => {
+      if (event !== RPC_EVENTS.WORKSPACE_BOOTSTRAP || !data) return;
+      if (bootstrapFallbackTimer) {
+        clearTimeout(bootstrapFallbackTimer);
+        bootstrapFallbackTimer = null;
+      }
+      wsClient.consumeBufferedBootstrapPayload();
+      const payload = data as WorkspaceBootstrapPayload;
+      if (Array.isArray(payload.workspaces)) {
+        applyWorkspaceSnapshot(payload.workspaces, wsClient.getEndpoint());
+      }
+    });
+
     const interval = setInterval(() => {
       if (typeof document === "undefined" || document.visibilityState === "visible") {
         void fetchWorkspaces(false);
@@ -153,12 +199,14 @@ export function useWorkspaceStore({
       document.addEventListener("visibilitychange", onVisibility);
     }
     return () => {
+      if (bootstrapFallbackTimer) clearTimeout(bootstrapFallbackTimer);
+      offBootstrap();
       clearInterval(interval);
       if (typeof document !== "undefined") {
         document.removeEventListener("visibilitychange", onVisibility);
       }
     };
-  }, [connState, fetchWorkspaces]);
+  }, [connState, fetchWorkspaces, applyWorkspaceSnapshot]);
 
   // Resolve cold-start `?surface=<id>` once workspaces arrive and strip it from the address bar.
   useEffect(() => {

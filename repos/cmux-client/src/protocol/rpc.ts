@@ -60,7 +60,21 @@ export const RPC_EVENTS = {
   TERMINAL_UPDATE: "mobile.terminal.update",
   NOTIFICATION_ALERT: "mobile.notification.alert",
   NOTIFICATION_DISMISS: "mobile.notification.dismiss",
+  WORKSPACE_BOOTSTRAP: "mobile.workspace.bootstrap",
 } as const;
+
+export interface AuthBootstrapRequest {
+  workspace_tree: boolean;
+  surface_id?: string;
+  is_desktop?: boolean;
+  max_turns?: number;
+  delta?: boolean;
+}
+
+export interface WorkspaceBootstrapPayload {
+  workspaces: WorkspaceNode[];
+  subscribed_surface_id?: string | null;
+}
 
 export interface NotificationAlertPayload {
   notification_id: string;

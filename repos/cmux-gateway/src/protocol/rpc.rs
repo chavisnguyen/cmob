@@ -53,6 +53,7 @@ pub const METHOD_TERMINAL_SUBSCRIBE: &str = "mobile.terminal.subscribe";
 pub const METHOD_TERMINAL_UNSUBSCRIBE: &str = "mobile.terminal.unsubscribe";
 pub const METHOD_CLIENT_VIEWING: &str = "mobile.client.viewing";
 pub const METHOD_USAGE_GET: &str = "mobile.usage.get";
+pub const EVENT_WORKSPACE_BOOTSTRAP: &str = "mobile.workspace.bootstrap";
 
 /// Identifier for JSON-RPC requests and responses, accommodating both strings and numbers.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]

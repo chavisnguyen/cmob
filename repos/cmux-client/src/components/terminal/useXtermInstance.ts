@@ -1,7 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { Terminal as XtermTerminal } from "@xterm/xterm";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
-import { WebglAddon } from "@xterm/addon-webgl";
 import {
   accumulateWheelLines,
   applyStickyModifiersToText,
@@ -161,17 +160,24 @@ export function useXtermInstance({
     term.unicode.activeVersion = "11";
     term.open(host);
 
-    let webglAddon: WebglAddon | null = null;
-    try {
-      webglAddon = new WebglAddon();
-      webglAddon.onContextLoss(() => {
-        webglAddon?.dispose();
-        webglAddon = null;
-      });
-      term.loadAddon(webglAddon);
-    } catch {
-      webglAddon = null;
-    }
+    let disposed = false;
+    let webglAddon: { dispose: () => void } | null = null;
+    void import("@xterm/addon-webgl")
+      .then(({ WebglAddon }) => {
+        if (disposed) return;
+        try {
+          const addon = new WebglAddon();
+          addon.onContextLoss(() => {
+            addon.dispose();
+            if (webglAddon === addon) webglAddon = null;
+          });
+          term.loadAddon(addon);
+          webglAddon = addon;
+        } catch {
+          webglAddon = null;
+        }
+      })
+      .catch(() => {});
 
     const onPaste = (event: ClipboardEvent) => {
       const text = event.clipboardData?.getData("text/plain") ?? "";
@@ -219,6 +225,7 @@ export function useXtermInstance({
     requestAnimationFrame(() => recomputeDesktopTransform());
 
     return () => {
+      disposed = true;
       host.removeEventListener("paste", onPaste, { capture: true });
       dataDisposable.dispose();
       scrollDisposable.dispose();

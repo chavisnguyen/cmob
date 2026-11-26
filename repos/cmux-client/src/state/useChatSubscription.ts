@@ -153,27 +153,36 @@ export function useChatSubscription({
       applyFrame(snap);
     });
 
-    wsClient
-      .call<WireSessionFrame & { subscribed?: boolean }>(RPC_METHODS.CHAT_SUBSCRIBE, {
-        surface_id: surfaceKey,
-        session_id: agentSid,
-        agent_kind: agentKd,
-        max_turns: stateRef.current.turnLimit,
-        capabilities: { delta: true },
-      })
-      .then((res) => {
-        if (controller.signal.aborted) return;
-        setSubscribed(true);
-        if (res && (Array.isArray(res.turns) || res.startup_dialog !== undefined)) {
-          clearTimeout(initialGuardTimer);
-          applyFrame(res);
-        }
-      })
-      .catch((err) => {
-        console.warn("Chat subscribe failed, falling back to polling:", err);
+    const bootstrapped = wsClient.consumeBootstrappedChatSubscription(surface.id, surface.ref);
+    if (bootstrapped.subscribed) {
+      setSubscribed(true);
+      if (bootstrapped.initialFrame) {
         clearTimeout(initialGuardTimer);
-        startFallbackPolling();
-      });
+        applyFrame(bootstrapped.initialFrame as WireSessionFrame);
+      }
+    } else {
+      wsClient
+        .call<WireSessionFrame & { subscribed?: boolean }>(RPC_METHODS.CHAT_SUBSCRIBE, {
+          surface_id: surfaceKey,
+          session_id: agentSid,
+          agent_kind: agentKd,
+          max_turns: stateRef.current.turnLimit,
+          capabilities: { delta: true },
+        })
+        .then((res) => {
+          if (controller.signal.aborted) return;
+          setSubscribed(true);
+          if (res && (Array.isArray(res.turns) || res.startup_dialog !== undefined)) {
+            clearTimeout(initialGuardTimer);
+            applyFrame(res);
+          }
+        })
+        .catch((err) => {
+          console.warn("Chat subscribe failed, falling back to polling:", err);
+          clearTimeout(initialGuardTimer);
+          startFallbackPolling();
+        });
+    }
 
     const mountedEndpoint = wsClient.getEndpoint();
     return () => {

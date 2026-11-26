@@ -218,7 +218,7 @@ static LAST_TREE_SNAPSHOT: LazyLock<RwLock<Option<(Vec<WorkspaceNode>, std::time
 static UNREAD_SURFACES: LazyLock<RwLock<HashSet<String>>> =
     LazyLock::new(|| RwLock::new(HashSet::new()));
 const SURFACE_LOOKUP_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(4);
-const TREE_POLL_COALESCE_TTL: std::time::Duration = std::time::Duration::from_millis(750);
+const TREE_POLL_COALESCE_TTL: std::time::Duration = std::time::Duration::from_millis(150);
 
 /// Builder responsible for merging cmux CLI output with HookStoreIndex
 pub struct WorkspaceTreeBuilder;
@@ -286,9 +286,9 @@ impl WorkspaceTreeBuilder {
             return Ok(cached.clone());
         }
 
-        // Run `cmux tree`, `cmux rpc workspace.list`, `cmux rpc notification.list`, and `ps` + Kiro
-        // lease scan concurrently so cold-boot tree latency equals max(...) rather than sum(...).
-        let tree_fut = bridge.run_command("tree", &["--json", "--id-format", "both"]);
+        // Run `system.tree`, `workspace.list`, `notification.list` (over persistent UDS pool),
+        // and native kernel process + Kiro lease scan concurrently.
+        let tree_fut = bridge.tree_json();
         let ws_list_fut = bridge.rpc_call("workspace.list", None);
         let notif_list_fut = bridge.rpc_call("notification.list", None);
         let proc_kiro_fut = tokio::task::spawn_blocking(|| {
@@ -513,7 +513,7 @@ impl WorkspaceTreeBuilder {
         hook_index: &HookStoreIndex,
     ) -> Result<Vec<WorkspaceSummary>, CmuxBridgeError> {
         let (tree_res, ws_list_res, notif_res) = tokio::join!(
-            bridge.run_command("tree", &["--json", "--id-format", "both"]),
+            bridge.tree_json(),
             bridge.rpc_call("workspace.list", None),
             bridge.rpc_call("notification.list", None),
         );
@@ -738,9 +738,15 @@ impl WorkspaceTreeBuilder {
         Self::kind_from_bin(&argv0)
     }
 
-    /// Single `ps -axo pid=,tty=,command=` scan producing both `pid -> tty` (for Kiro leases) and
-    /// `tty -> agent kinds` (for surface liveness).
+    /// Single process snapshot producing both `pid -> tty` (for Kiro leases) and
+    /// `tty -> agent kinds` (for surface liveness). Uses native `<libproc.h>` + `KERN_PROCARGS2`
+    /// on macOS (< 1.5ms) with `ps` fallback on non-macOS or syscall failure.
     pub fn scan_processes_snapshot() -> (HashMap<u32, String>, Option<HashMap<String, HashSet<&'static str>>>) {
+        #[cfg(target_os = "macos")]
+        if let Some((pid_ttys, agents)) = crate::scanner::macos_proc::scan_processes_snapshot() {
+            return (pid_ttys, Some(agents));
+        }
+
         let Ok(out) = std::process::Command::new("ps")
             .args(["-axo", "pid=,tty=,command="])
             .output()
@@ -776,8 +782,13 @@ impl WorkspaceTreeBuilder {
         (pid_ttys, Some(Self::parse_agent_processes(&agent_ps_lines)))
     }
 
-    /// Group agent processes by controlling tty (`ttys005` etc.). `None` when `ps` fails.
+    /// Group agent processes by controlling tty (`ttys005` etc.). `None` when inspection fails.
     pub fn scan_agent_processes_by_tty() -> Option<HashMap<String, HashSet<&'static str>>> {
+        #[cfg(target_os = "macos")]
+        if let Some(agents) = crate::scanner::macos_proc::scan_agent_processes_by_tty() {
+            return Some(agents);
+        }
+
         let out = std::process::Command::new("ps").args(["-axo", "tty=,command="]).output().ok()?;
         if !out.status.success() {
             return None;
@@ -789,6 +800,11 @@ impl WorkspaceTreeBuilder {
     /// first prompt (Orca: "Only dialogs that precede a first prompt", startup-dialog-screen.ts:17-19), so
     /// only young processes are worth reading the screen of.
     pub fn scan_recent_agent_ttys(max_age_secs: u64) -> Vec<(String, &'static str)> {
+        #[cfg(target_os = "macos")]
+        if let Some(recent) = crate::scanner::macos_proc::scan_recent_agent_ttys(max_age_secs) {
+            return recent;
+        }
+
         let Ok(out) = std::process::Command::new("ps").args(["-axo", "tty=,etime=,command="]).output() else {
             return Vec::new();
         };

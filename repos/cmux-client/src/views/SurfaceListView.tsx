@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { lazy, Suspense, useState } from "react";
 import type { CreateSurfaceParams } from "../components/surface/NewSurfaceModal";
 import {
   ChevronLeft,
@@ -20,11 +20,14 @@ import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
 import { CloseSurfaceDialog } from "../components/surface/CloseSurfaceDialog";
 import { Pressable } from "../components/common/Pressable";
 import { UnreadCountBadge } from "../components/common/UnreadCountBadge";
-import { ChangesPanel } from "../components/git/ChangesPanel";
 import { AgentIcon } from "../components/common/AgentIcon";
 import { agentDisplayName } from "../components/common/agentBrand";
 import { displaySurfaceTitle } from "../components/surface/surfaceTitle";
 import { shortPath } from "../components/chat/textUtils";
+
+const LazyChangesPanel = lazy(() =>
+  import("../components/git/ChangesPanel").then((m) => ({ default: m.ChangesPanel })),
+);
 
 interface SurfaceListViewProps {
   workspace: WorkspaceNode;
@@ -291,11 +294,13 @@ export function SurfaceListView({
       )}
 
       {showChanges && (
-        <ChangesPanel
-          workspaceId={workspace.id}
-          workspaceTitle={workspace.title}
-          onClose={() => setShowChanges(false)}
-        />
+        <Suspense fallback={null}>
+          <LazyChangesPanel
+            workspaceId={workspace.id}
+            workspaceTitle={workspace.title}
+            onClose={() => setShowChanges(false)}
+          />
+        </Suspense>
       )}
 
       {surfaceToClose && (

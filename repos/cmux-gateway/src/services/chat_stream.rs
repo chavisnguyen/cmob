@@ -8,6 +8,7 @@ use tokio::task::JoinHandle;
 
 use crate::domain::canonical_turn::turn_digest;
 use crate::domain::dialog::extract_approval_screen_context;
+use crate::io::file_watch::TranscriptFileWatcher;
 use crate::protocol::event::{AgentEvent, AgentLifecycleState, AgentTurn, SubagentState};
 use crate::protocol::{JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_CHAT_UNSUBSCRIBE};
 use crate::scanner::kiro_store::KiroSessionIndex;
@@ -224,7 +225,8 @@ pub async fn chat_watcher_stream(
     const DIALOG_POLL: Duration = Duration::from_secs(2);
     const SUBAGENT_REFRESH: Duration = Duration::from_secs(2);
 
-    let mut interval = tokio::time::interval(TICK);
+    let mut file_watcher = TranscriptFileWatcher::new();
+    let mut watched_transcript_path: Option<std::path::PathBuf> = None;
     let mut last_fp: Option<String> = None;
     let mut cached_tree: Option<(ResolvedSession, Instant)> = None;
     let mut dialog: (serde_json::Value, Option<Instant>) = (serde_json::Value::Null, None);
@@ -236,8 +238,18 @@ pub async fn chat_watcher_stream(
     let mut last_subagent_poll = Instant::now();
 
     loop {
-        interval.tick().await;
         let first_tick = std::mem::replace(&mut is_first_tick, false);
+        if !first_tick {
+            let max_wait = match watched_transcript_path.as_deref() {
+                Some(p) if opencode_store::parse_pseudo_path(p).is_some() => {
+                    Duration::from_millis(250)
+                }
+                _ => TICK,
+            };
+            file_watcher
+                .wait_for_change(watched_transcript_path.as_deref(), max_wait)
+                .await;
+        }
 
         let resolved = match cached_tree.as_ref().filter(|(_, at)| at.elapsed() < TREE_REFRESH) {
             Some((r, _)) => {
@@ -271,7 +283,11 @@ pub async fn chat_watcher_stream(
             .as_ref()
             .map(|r| r.surface_id.clone())
             .unwrap_or_else(|| raw_surface_id.clone());
-        let has_transcript = resolved.as_ref().and_then(|r| r.transcript_path.as_ref()).is_some();
+        watched_transcript_path = resolved
+            .as_ref()
+            .and_then(|r| r.transcript_path.as_deref())
+            .map(std::path::PathBuf::from);
+        let has_transcript = watched_transcript_path.is_some();
         let known_dialog_waiting = crate::cmux::startup_dialog::registry::is_waiting(&target_surface_id);
         let defer_screen_probes = first_tick && has_transcript && !known_dialog_waiting;
 

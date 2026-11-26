@@ -24,6 +24,7 @@ pub const CAP_HOST_WAKE: &str = "mobile.host.wake_cmux.v1";
 pub const CAP_TERMINAL_VIEWPORT: &str = "terminal.viewport.v1";
 pub const CAP_AGENT_CHAT: &str = "agent.chat.v1";
 pub const CAP_PUSH_REGISTRATION: &str = "push.registration.v1";
+pub const CAP_BOOTSTRAP: &str = "bootstrap.v1";
 
 pub const ALL_CAPABILITIES: &[&str] = &[
     CAP_RENDER_GRID,
@@ -36,6 +37,7 @@ pub const ALL_CAPABILITIES: &[&str] = &[
     CAP_TERMINAL_VIEWPORT,
     CAP_AGENT_CHAT,
     CAP_PUSH_REGISTRATION,
+    CAP_BOOTSTRAP,
 ];
 
 fn default_auth_type() -> String {
@@ -58,6 +60,21 @@ pub fn default_capabilities() -> Vec<String> {
     ALL_CAPABILITIES.iter().map(|s| (*s).to_string()).collect()
 }
 
+/// Optional 1-RTT cold-start bootstrap hint attached to `AuthRequest`.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AuthBootstrapRequest {
+    #[serde(default)]
+    pub workspace_tree: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub surface_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub is_desktop: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_turns: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<bool>,
+}
+
 /// First frame sent by client to authenticate with the Gateway.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AuthRequest {
@@ -66,6 +83,8 @@ pub struct AuthRequest {
     pub token: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bootstrap: Option<AuthBootstrapRequest>,
     #[serde(flatten)]
     pub extra: Map<String, Value>,
 }
@@ -76,6 +95,7 @@ impl AuthRequest {
             r#type: default_auth_type(),
             token: token.into(),
             client_id: Some("cmux-client".to_string()),
+            bootstrap: None,
             extra: Map::new(),
         }
     }
@@ -85,6 +105,7 @@ impl AuthRequest {
             r#type: default_auth_type(),
             token: token.into(),
             client_id: Some(client_id.into()),
+            bootstrap: None,
             extra: Map::new(),
         }
     }

@@ -292,4 +292,70 @@ describe("GatewayWsClient resilience, #token= precedence & pairing history state
     expect(resolveSelectedModel(info, null, undefined)).toBe("sonnet");
     expect(resolveDisplayedEfforts(info, null)).toEqual([{ value: "high", label: "High" }]);
   });
+
+  it("negotiates 1-RTT auth bootstrap and buffers initial chat update for the subscribed surface", () => {
+    localStore.setItem("cmux_token", "tok_boot");
+    const client = new GatewayWsClient();
+    client.setBootstrapProvider(() => ({
+      workspace_tree: true,
+      is_desktop: true,
+      max_turns: 15,
+      delta: true,
+    }));
+
+    client.connect();
+    const sock = MockWebSocket.instances[0];
+    sock.readyState = MockWebSocket.OPEN;
+    sock.onopen?.();
+
+    expect(JSON.parse(sock.sent[0])).toEqual({
+      type: "auth",
+      token: "tok_boot",
+      bootstrap: {
+        workspace_tree: true,
+        is_desktop: true,
+        max_turns: 15,
+        delta: true,
+      },
+    });
+
+    sock.onmessage?.({
+      data: JSON.stringify({
+        type: "auth_ok",
+        session_id: "sess-1",
+        capabilities: ["agent.chat.v1", "bootstrap.v1"],
+      }),
+    });
+    expect(client.isAwaitingBootstrapTree()).toBe(true);
+
+    sock.onmessage?.({
+      data: JSON.stringify({
+        event: "mobile.workspace.bootstrap",
+        data: {
+          workspaces: [{ id: "ws-1", ref: "workspace:1", surfaces: [] }],
+          subscribed_surface_id: "surf-uuid-1",
+        },
+      }),
+    });
+    expect(client.isAwaitingBootstrapTree()).toBe(false);
+    expect(client.consumeBufferedBootstrapPayload()?.subscribed_surface_id).toBe("surf-uuid-1");
+
+    sock.onmessage?.({
+      data: JSON.stringify({
+        event: "mobile.chat.update",
+        data: { surface_id: "surf-uuid-1", turns: [{ id: "t-1" }] },
+      }),
+    });
+
+    const consumed = client.consumeBootstrappedChatSubscription("surf-uuid-1", "surface:1");
+    expect(consumed).toEqual({
+      subscribed: true,
+      initialFrame: { surface_id: "surf-uuid-1", turns: [{ id: "t-1" }] },
+    });
+    // Consuming a second time returns false so subsequent tab switches subscribe normally.
+    expect(client.consumeBootstrappedChatSubscription("surf-uuid-1", "surface:1").subscribed).toBe(
+      false,
+    );
+    client.disconnect();
+  });
 });

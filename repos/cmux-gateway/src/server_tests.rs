@@ -29,8 +29,11 @@ async fn next_event(rx: &mut mpsc::Receiver<String>) -> serde_json::Value {
     serde_json::from_str(&raw).expect("json frame")
 }
 
+static HOOK_ENV_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 #[tokio::test]
 async fn chat_watcher_pushes_on_transcript_change_and_in_place_mutations() {
+    let _env_guard = HOOK_ENV_TEST_LOCK.lock().await;
     let dir = std::env::temp_dir().join(format!("cmux-sub-{}", uuid::Uuid::new_v4()));
     std::fs::create_dir_all(&dir).unwrap();
     let transcript = dir.join("t.jsonl");
@@ -412,4 +415,161 @@ async fn ws_handshake_tolerates_leading_ping_and_pong_before_auth_frame() {
     assert!(auth_ok_body.contains("\"auth_ok\""), "expected auth_ok, got: {auth_ok_body}");
 
     srv.abort();
+}
+
+#[tokio::test]
+async fn ws_1rtt_auth_bootstrap_pushes_workspaces_and_initial_chat_update() {
+    use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
+    use tokio::net::UnixListener;
+
+    let _env_guard = HOOK_ENV_TEST_LOCK.lock().await;
+    let short_id = &uuid::Uuid::new_v4().simple().to_string()[..10];
+    let dir = std::path::PathBuf::from(format!("/tmp/cmob-boot-{short_id}"));
+    std::fs::create_dir_all(&dir).unwrap();
+    let sock_path = dir.join("cmux.sock");
+    let transcript = dir.join("boot.jsonl");
+    std::fs::write(
+        &transcript,
+        "{\"type\":\"user\",\"message\":{\"content\":\"boot prompt\"}}\n",
+    )
+    .unwrap();
+    let now_secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    let hook = serde_json::json!({
+        "sessions": { "s-boot": {
+            "sessionId": "s-boot",
+            "surfaceId": "surf-boot-1",
+            "workspaceId": "ws-boot-1",
+            "agentKind": "claude",
+            "agentLifecycle": "idle",
+            "transcriptPath": transcript.to_string_lossy(),
+            "updatedAt": now_secs
+        }},
+        "activeSessionsBySurface": {}
+    });
+    std::fs::write(dir.join("claude-hook-sessions.json"), hook.to_string()).unwrap();
+    unsafe { std::env::set_var("CMUX_HOOK_SESSIONS_DIR", &dir) };
+    crate::scanner::workspace_tree::WorkspaceTreeBuilder::invalidate_tree_cache();
+
+    let uds_listener = UnixListener::bind(&sock_path).unwrap();
+    let uds_srv = tokio::spawn(async move {
+        while let Ok((stream, _)) = uds_listener.accept().await {
+            tokio::spawn(async move {
+                let (r, mut w) = stream.into_split();
+                let mut reader = BufReader::new(r);
+                let mut line = String::new();
+                while reader.read_line(&mut line).await.unwrap_or(0) > 0 {
+                    let req: serde_json::Value = serde_json::from_str(&line).unwrap();
+                    let id = req["id"].clone();
+                    let method = req["method"].as_str().unwrap_or("");
+                    let result = match method {
+                        "system.tree" => serde_json::json!({
+                            "windows": [{
+                                "workspaces": [{
+                                    "id": "ws-boot-1",
+                                    "ref": "workspace:1",
+                                    "title": "Boot WS",
+                                    "selected": true,
+                                    "panes": [{
+                                        "surfaces": [{
+                                            "id": "surf-boot-1",
+                                            "ref": "surface:1",
+                                            "title": "Claude",
+                                            "type": "terminal",
+                                            "selected": true,
+                                            "focused": true
+                                        }]
+                                    }]
+                                }]
+                            }]
+                        }),
+                        "workspace.list" => serde_json::json!({
+                            "workspaces": [{ "id": "ws-boot-1", "current_directory": "/tmp" }]
+                        }),
+                        "notification.list" => serde_json::json!({ "notifications": [] }),
+                        _ => serde_json::json!({}),
+                    };
+                    let resp = serde_json::json!({ "id": id, "ok": true, "result": result });
+                    let _ = w.write_all(format!("{resp}\n").as_bytes()).await;
+                    line.clear();
+                }
+            });
+        }
+    });
+
+    let mut state = AppState::new("127.0.0.1".into(), 0, "boot-tok".into());
+    state.cmux_bridge =
+        DualTransportCmuxBridge::with_socket_and_cli(&sock_path, "nonexistent-cmux-cli");
+    let router = create_router(state);
+    let tcp_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = tcp_listener.local_addr().unwrap();
+    let ws_srv = tokio::spawn(async move {
+        let _ = axum::serve(tcp_listener, router).await;
+    });
+
+    let mut stream = tokio::net::TcpStream::connect(addr).await.unwrap();
+    let upgrade_req = format!(
+        "GET /ws HTTP/1.1\r\nHost: {addr}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nSec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    stream.write_all(upgrade_req.as_bytes()).await.unwrap();
+    let mut hdr = vec![0u8; 512];
+    let n = stream.read(&mut hdr).await.unwrap();
+    assert!(String::from_utf8_lossy(&hdr[..n]).starts_with("HTTP/1.1 101"));
+
+    // Send ONLY a single `auth` frame with `bootstrap` (1 RTT total!).
+    let auth_payload = br#"{"type":"auth","token":"boot-tok","bootstrap":{"workspace_tree":true,"is_desktop":true,"max_turns":10,"delta":true}}"#;
+    let mask = [0x21u8, 0x43, 0x65, 0x87];
+    let mut frame = vec![0x81u8];
+    if auth_payload.len() < 126 {
+        frame.push(0x80 | (auth_payload.len() as u8));
+    } else {
+        frame.push(0x80 | 126);
+        frame.extend_from_slice(&(auth_payload.len() as u16).to_be_bytes());
+    }
+    frame.extend_from_slice(&mask);
+    for (i, b) in auth_payload.iter().enumerate() {
+        frame.push(b ^ mask[i % 4]);
+    }
+    stream.write_all(&frame).await.unwrap();
+
+    let mut frames = Vec::new();
+    for _ in 0..3 {
+        let mut head = [0u8; 2];
+        stream.read_exact(&mut head).await.unwrap();
+        let len_code = (head[1] & 0x7f) as usize;
+        let actual_len = if len_code == 126 {
+            let mut ext = [0u8; 2];
+            stream.read_exact(&mut ext).await.unwrap();
+            u16::from_be_bytes(ext) as usize
+        } else if len_code == 127 {
+            let mut ext = [0u8; 8];
+            stream.read_exact(&mut ext).await.unwrap();
+            u64::from_be_bytes(ext) as usize
+        } else {
+            len_code
+        };
+        let mut body = vec![0u8; actual_len];
+        stream.read_exact(&mut body).await.unwrap();
+        frames.push(serde_json::from_slice::<serde_json::Value>(&body).unwrap());
+    }
+
+    assert_eq!(frames[0]["type"], "auth_ok");
+    assert!(
+        frames[0]["capabilities"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|c| c == "bootstrap.v1")
+    );
+    assert_eq!(frames[1]["event"], "mobile.workspace.bootstrap");
+    assert_eq!(frames[1]["data"]["subscribed_surface_id"], "surf-boot-1");
+    assert_eq!(frames[2]["event"], "mobile.chat.update");
+    assert_eq!(frames[2]["data"]["surface_id"], "surf-boot-1");
+    assert_eq!(frames[2]["data"]["turns"].as_array().unwrap().len(), 1);
+
+    ws_srv.abort();
+    uds_srv.abort();
+    let _ = std::fs::remove_dir_all(&dir);
 }

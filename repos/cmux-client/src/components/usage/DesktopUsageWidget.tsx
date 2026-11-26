@@ -1,13 +1,14 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { Gauge, RefreshCw, X } from "lucide-react";
 import type { UsageSnapshot } from "../../protocol/rpc";
 import type { ConnectionState } from "../../transport/wsClient";
-import { UsageBody } from "./UsageView";
 import {
   formatUpdatedAgo,
   tightestHeadlineAcrossProviders,
   type UsageTone,
 } from "./usageFormatting";
+
+const LazyUsageBody = lazy(() => import("./UsageView").then((m) => ({ default: m.UsageBody })));
 
 const DOT_CLASS: Record<UsageTone, string> = {
   emerald: "bg-emerald-400",
@@ -125,14 +126,16 @@ export function DesktopUsageWidget({
               </div>
             </div>
             <div className="overflow-y-auto p-3 scrollbar-sleek">
-              <UsageBody
-                connState={connState}
-                snapshot={snapshot}
-                loading={loading}
-                error={error}
-                unsupported={unsupported}
-                now={effectiveNow}
-              />
+              <Suspense fallback={<div className="h-24" />}>
+                <LazyUsageBody
+                  connState={connState}
+                  snapshot={snapshot}
+                  loading={loading}
+                  error={error}
+                  unsupported={unsupported}
+                  now={effectiveNow}
+                />
+              </Suspense>
             </div>
           </div>
         </>

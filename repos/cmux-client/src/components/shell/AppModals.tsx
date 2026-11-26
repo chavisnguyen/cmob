@@ -1,17 +1,23 @@
+import { lazy, Suspense } from "react";
 import type { MainTab } from "../../domain/workspaceTree";
 import { surfaceIdentity } from "../../domain/workspaceTree";
 import type { SavedHost } from "../../hosts/hostStore";
 import type { PairingOffer } from "../../protocol/pairing";
 import type { NotificationAlertPayload, SurfaceNode, WorkspaceNode } from "../../protocol/rpc";
 import type { ConnectionState } from "../../transport/wsClient";
-import { ChangesPanel } from "../git/ChangesPanel";
 import { HostSwitchSheet } from "../hosts/HostSwitchSheet";
-import { PairHostModal } from "../hosts/PairHostModal";
 import { PairingConfirmModal } from "../hosts/PairingConfirmModal";
 import { CloseSurfaceDialog } from "../surface/CloseSurfaceDialog";
 import { NewSurfaceModal, type CreateSurfaceParams } from "../surface/NewSurfaceModal";
 import { ToastOverlay } from "./ToastOverlay";
 import { TokenModal } from "./TokenModal";
+
+const LazyChangesPanel = lazy(() =>
+  import("../git/ChangesPanel").then((m) => ({ default: m.ChangesPanel })),
+);
+const LazyPairHostModal = lazy(() =>
+  import("../hosts/PairHostModal").then((m) => ({ default: m.PairHostModal })),
+);
 
 export interface AppModalsProps {
   hosts: SavedHost[];
@@ -98,7 +104,11 @@ export function AppModals({
         onDismissToast={onDismissToast}
       />
 
-      {showPairModal && <PairHostModal onClose={onClosePairModal} onPaired={onPaired} />}
+      {showPairModal && (
+        <Suspense fallback={null}>
+          <LazyPairHostModal onClose={onClosePairModal} onPaired={onPaired} />
+        </Suspense>
+      )}
 
       {pendingPairing && (
         <PairingConfirmModal
@@ -132,11 +142,13 @@ export function AppModals({
       )}
 
       {changesWs && (
-        <ChangesPanel
-          workspaceId={changesWs.id}
-          workspaceTitle={changesWs.title}
-          onClose={onCloseChanges}
-        />
+        <Suspense fallback={null}>
+          <LazyChangesPanel
+            workspaceId={changesWs.id}
+            workspaceTitle={changesWs.title}
+            onClose={onCloseChanges}
+          />
+        </Suspense>
       )}
 
       {showTokenModal && (

@@ -1,14 +1,19 @@
-import { useState } from "react";
-import { OrcaChatView } from "../components/chat/OrcaChatView";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { CloseSurfaceDialog } from "../components/surface/CloseSurfaceDialog";
 import { NewSurfaceModal, type CreateSurfaceParams } from "../components/surface/NewSurfaceModal";
 import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
 import { SurfaceDetailHeader } from "../components/surface/SurfaceDetailHeader";
 import { SurfaceSwitchSheet } from "../components/surface/SurfaceSwitchSheet";
-import { RawTerminalView } from "../components/terminal/RawTerminalView";
 import { surfaceIdentity } from "../domain/workspaceTree";
 import type { SurfaceNode, WorkspaceNode } from "../protocol/rpc";
 import { useChatSessionController } from "../state/useChatSessionController";
+
+const LazyOrcaChatView = lazy(() =>
+  import("../components/chat/OrcaChatView").then((m) => ({ default: m.OrcaChatView })),
+);
+const LazyRawTerminalView = lazy(() =>
+  import("../components/terminal/RawTerminalView").then((m) => ({ default: m.RawTerminalView })),
+);
 
 interface SurfaceDetailViewProps {
   surface: SurfaceNode;
@@ -41,6 +46,15 @@ export function SurfaceDetailView({
   const [showNewModal, setShowNewModal] = useState(false);
   const [surfaceToRename, setSurfaceToRename] = useState<SurfaceNode | null>(null);
   const [surfaceToClose, setSurfaceToClose] = useState<SurfaceNode | null>(null);
+
+  // Idle-prefetch the xterm chunk after initial chat render so switching to Terminal tab is instant.
+  useEffect(() => {
+    if (chat.activeMode !== "chat") return;
+    const timer = setTimeout(() => {
+      void import("../components/terminal/RawTerminalView");
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [chat.activeMode]);
 
   const handleConfirmRename = async (nextTitle: string) => {
     if (!surfaceToRename || !onRenameSurface) return;
@@ -110,36 +124,38 @@ export function SurfaceDetailView({
 
       <div className="flex-1 min-h-0 overflow-hidden min-w-0 max-w-full flex flex-col">
         {chat.activeMode === "chat" ? (
-          <OrcaChatView
-            key={chat.surfaceKey}
-            turns={chat.turns}
-            pendingSends={chat.pendingSends}
-            withinGrace={chat.withinGrace}
-            snapshotConfirmed={chat.snapshotConfirmed}
-            isSyncing={isSyncing}
-            connState={chat.connState}
-            isLoading={chat.initialLoading}
-            agentKind={surface.agent?.agent_kind || "agent"}
-            startupDialog={chat.startupDialog}
-            onAnswerDialog={chat.handleAnswerDialog}
-            onAnswerQuestion={chat.handleAnswerQuestion}
-            onOpenTerminal={() => chat.setViewMode("terminal")}
-            hasMoreHistory={chat.hasMoreHistory}
-            isLoadingOlder={chat.loadingOlder}
-            onLoadOlder={chat.handleLoadOlder}
-            isWorking={chat.isWorking}
-            lifecycleState={chat.lifecycleState}
-            activityText={chat.activityText}
-            awaitingPrompt={chat.awaitingPrompt}
-            isApproving={chat.isApproving}
-            onFollowingChange={chat.setFollowing}
-            onSend={chat.handleSendPrompt}
-            onUploadImage={chat.handleUploadImage}
-            surfaceId={chat.surfaceKey}
-            onApprove={chat.handleApprove}
-            onInterrupt={chat.handleInterrupt}
-            isDesktop={desktopLayout}
-          />
+          <Suspense fallback={<div className="flex-1 bg-bg" />}>
+            <LazyOrcaChatView
+              key={chat.surfaceKey}
+              turns={chat.turns}
+              pendingSends={chat.pendingSends}
+              withinGrace={chat.withinGrace}
+              snapshotConfirmed={chat.snapshotConfirmed}
+              isSyncing={isSyncing}
+              connState={chat.connState}
+              isLoading={chat.initialLoading}
+              agentKind={surface.agent?.agent_kind || "agent"}
+              startupDialog={chat.startupDialog}
+              onAnswerDialog={chat.handleAnswerDialog}
+              onAnswerQuestion={chat.handleAnswerQuestion}
+              onOpenTerminal={() => chat.setViewMode("terminal")}
+              hasMoreHistory={chat.hasMoreHistory}
+              isLoadingOlder={chat.loadingOlder}
+              onLoadOlder={chat.handleLoadOlder}
+              isWorking={chat.isWorking}
+              lifecycleState={chat.lifecycleState}
+              activityText={chat.activityText}
+              awaitingPrompt={chat.awaitingPrompt}
+              isApproving={chat.isApproving}
+              onFollowingChange={chat.setFollowing}
+              onSend={chat.handleSendPrompt}
+              onUploadImage={chat.handleUploadImage}
+              surfaceId={chat.surfaceKey}
+              onApprove={chat.handleApprove}
+              onInterrupt={chat.handleInterrupt}
+              isDesktop={desktopLayout}
+            />
+          </Suspense>
         ) : surface.surface_type && surface.surface_type !== "terminal" ? (
           <div className="h-full flex flex-col items-center justify-center gap-1 px-8 text-center">
             <p className="text-[14px] font-medium text-fg-soft">
@@ -150,12 +166,14 @@ export function SurfaceDetailView({
             </p>
           </div>
         ) : (
-          <RawTerminalView
-            surfaceId={chat.surfaceKey}
-            surfaceTitle={surface.title}
-            tty={surface.tty}
-            isDesktop={desktopLayout}
-          />
+          <Suspense fallback={<div className="flex-1 bg-bg" />}>
+            <LazyRawTerminalView
+              surfaceId={chat.surfaceKey}
+              surfaceTitle={surface.title}
+              tty={surface.tty}
+              isDesktop={desktopLayout}
+            />
+          </Suspense>
         )}
       </div>
 

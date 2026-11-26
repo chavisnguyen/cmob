@@ -1,5 +1,5 @@
 import { NotificationPrefs } from "../components/hosts/NotificationPrefs";
-import { useCallback, useEffect, useState, type ReactElement } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactElement } from "react";
 import {
   Laptop,
   ChevronLeft,
@@ -16,9 +16,12 @@ import { classifyHostType, type HostMachineType, type SavedHost } from "../hosts
 import { RPC_METHODS } from "../protocol/rpc";
 import { wsClient, type ConnectionState } from "../transport/wsClient";
 import { relativeTime } from "../components/hosts/deviceUtils";
-import { PairHostModal } from "../components/hosts/PairHostModal";
 import { RenameHostModal } from "../components/hosts/RenameHostModal";
 import { haptic } from "../native/haptics";
+
+const LazyPairHostModal = lazy(() =>
+  import("../components/hosts/PairHostModal").then((m) => ({ default: m.PairHostModal })),
+);
 
 const GLYPHS: Record<HostMachineType, LucideIcon> = {
   laptop: Laptop,
@@ -381,10 +384,12 @@ export function DeviceListView({
 
       {/* Modals */}
       {showPairModal && (
-        <PairHostModal
-          onClose={() => setShowPairModal(false)}
-          onPaired={() => void refreshAuthorizedDevices()}
-        />
+        <Suspense fallback={null}>
+          <LazyPairHostModal
+            onClose={() => setShowPairModal(false)}
+            onPaired={() => void refreshAuthorizedDevices()}
+          />
+        </Suspense>
       )}
 
       {editingHost && (

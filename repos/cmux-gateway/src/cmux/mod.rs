@@ -3,5 +3,6 @@ pub mod agent_options;
 pub mod agents;
 pub mod bridge;
 pub mod startup_dialog;
+pub mod uds_client;
 
 pub use bridge::*;

@@ -18,15 +18,17 @@ use tokio::time::timeout;
 use tracing::{error, info, warn};
 
 use crate::protocol::{
-    AuthError, AuthOk, AuthRequest, JsonRpcError, JsonRpcRequest, JsonRpcResponse,
-    METHOD_CHAT_SUBSCRIBE, METHOD_CHAT_UNSUBSCRIBE, METHOD_CLIENT_VIEWING, METHOD_PUSH_PREFERENCES,
-    METHOD_PUSH_REGISTER, METHOD_TERMINAL_INPUT, METHOD_TERMINAL_PASTE, METHOD_TERMINAL_SCROLL,
-    METHOD_TERMINAL_SEND, METHOD_TERMINAL_SUBSCRIBE, METHOD_TERMINAL_UNSUBSCRIBE,
-    METHOD_TERMINAL_VIEWPORT, WS_CLOSE_AUTH_FAILED,
+    AuthBootstrapRequest, AuthError, AuthOk, AuthRequest, JsonRpcError, JsonRpcRequest,
+    JsonRpcResponse, EVENT_WORKSPACE_BOOTSTRAP, METHOD_CHAT_SUBSCRIBE, METHOD_CHAT_UNSUBSCRIBE,
+    METHOD_CLIENT_VIEWING, METHOD_PUSH_PREFERENCES, METHOD_PUSH_REGISTER, METHOD_TERMINAL_INPUT,
+    METHOD_TERMINAL_PASTE, METHOD_TERMINAL_SCROLL, METHOD_TERMINAL_SEND, METHOD_TERMINAL_SUBSCRIBE,
+    METHOD_TERMINAL_UNSUBSCRIBE, METHOD_TERMINAL_VIEWPORT, WS_CLOSE_AUTH_FAILED,
 };
+use crate::scanner::hook_store::HookStoreIndex;
 use crate::scanner::liveness;
+use crate::scanner::workspace_tree::{SurfaceNode, WorkspaceNode, WorkspaceTreeBuilder};
 use crate::server::AppState;
-use crate::services::chat_stream::handle_subscription;
+use crate::services::chat_stream::{chat_watcher_stream, handle_subscription, MAX_SUBSCRIPTIONS};
 use crate::services::notification_dispatcher::NotificationBroadcast;
 use crate::services::session_state::SessionStateService;
 use crate::services::terminal_stream::{
@@ -118,14 +120,14 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
         }
     };
 
-    let session_token = match serde_json::from_str::<AuthRequest>(&auth_text) {
+    let (session_token, bootstrap_req) = match serde_json::from_str::<AuthRequest>(&auth_text) {
         Ok(req) if req.r#type == "auth" && state.token_valid(&req.token) => {
             let ok_json = serde_json::to_string(&AuthOk::new(&session_id)).unwrap();
             if socket.send(Message::Text(ok_json.into())).await.is_err() {
                 return;
             }
             info!("Session {} authenticated successfully", session_id);
-            req.token
+            (req.token, req.bootstrap)
         }
         Ok(_) => {
             warn!("Session {} rejected: invalid token", session_id);
@@ -165,6 +167,15 @@ async fn handle_socket(mut socket: WebSocket, state: AppState, user_agent: Strin
     let mut subs: HashMap<String, JoinHandle<()>> = HashMap::new();
     let mut term_subs: HashMap<String, TerminalSubscriptionHandle> = HashMap::new();
     let mut token_recheck = tokio::time::interval(Duration::from_secs(15));
+
+    if let Some(boot) = bootstrap_req.filter(|b| b.workspace_tree)
+        && !push_auth_bootstrap(&mut socket, &state, &out_tx, &mut subs, &boot).await
+    {
+        for (_, handle) in subs.drain() {
+            handle.abort();
+        }
+        return;
+    }
 
     loop {
         tokio::select! {
@@ -410,4 +421,92 @@ fn spawn_rpc_task(
             let _ = out_tx_cl.send(json).await;
         }
     });
+}
+
+fn pick_bootstrap_surface<'a>(
+    workspaces: &'a [WorkspaceNode],
+    boot: &AuthBootstrapRequest,
+) -> Option<&'a SurfaceNode> {
+    if let Some(target) = boot.surface_id.as_deref().filter(|s| !s.is_empty()) {
+        for ws in workspaces {
+            if let Some(surf) = ws
+                .surfaces
+                .iter()
+                .find(|s| s.id == target || s.r#ref == target)
+            {
+                return Some(surf);
+            }
+        }
+    }
+    if boot.is_desktop == Some(true) {
+        let ws = workspaces
+            .iter()
+            .find(|w| w.selected)
+            .or_else(|| workspaces.first())?;
+        return ws
+            .surfaces
+            .iter()
+            .find(|s| s.selected)
+            .or_else(|| ws.surfaces.first());
+    }
+    None
+}
+
+async fn push_auth_bootstrap(
+    socket: &mut WebSocket,
+    state: &AppState,
+    out_tx: &mpsc::Sender<String>,
+    subs: &mut HashMap<String, JoinHandle<()>>,
+    boot: &AuthBootstrapRequest,
+) -> bool {
+    let built = timeout(Duration::from_millis(1500), async {
+        let hook_index =
+            HookStoreIndex::scan_dir_async(HookStoreIndex::default_cmuxterm_dir()).await;
+        WorkspaceTreeBuilder::build_tree(&state.cmux_bridge, &hook_index).await
+    })
+    .await;
+
+    let Ok(Ok(workspaces)) = built else {
+        // Non-fatal: client falls back to `mobile.workspace.tree` if bootstrap timed out/errored.
+        return true;
+    };
+
+    let mut subscribed_surface_id: Option<String> = None;
+    if subs.len() < MAX_SUBSCRIPTIONS
+        && let Some(surf) = pick_bootstrap_surface(&workspaces, boot)
+        && let Some(agent) = surf.agent.as_ref()
+    {
+        let canonical_key = if !surf.id.is_empty() {
+            surf.id.clone()
+        } else {
+            surf.r#ref.clone()
+        };
+        if !canonical_key.is_empty() {
+            let max_turns = boot.max_turns.unwrap_or(15).clamp(1, 500);
+            let delta_mode = boot.delta.unwrap_or(true);
+            let handle = tokio::spawn(chat_watcher_stream(
+                state.clone(),
+                out_tx.clone(),
+                canonical_key.clone(),
+                agent.session_id.clone(),
+                agent.agent_kind.clone(),
+                max_turns,
+                delta_mode,
+            ));
+            subs.insert(canonical_key.clone(), handle);
+            subscribed_surface_id = Some(canonical_key);
+        }
+    }
+
+    let frame = JsonRpcResponse::event_value(
+        EVENT_WORKSPACE_BOOTSTRAP,
+        serde_json::json!({
+            "workspaces": workspaces,
+            "subscribed_surface_id": subscribed_surface_id,
+        }),
+    );
+    if let Ok(text) = serde_json::to_string(&frame) {
+        return socket.send(Message::Text(text.into())).await.is_ok();
+    }
+    true
 }
