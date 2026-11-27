@@ -82,7 +82,7 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
           {renderCategoryIcon(primaryCategory, !allSuccess)}
           <span className="truncate font-sans">{summary}</span>
           {live && (
-            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-fg/70 animate-pulse shrink-0" />
+            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-status-run animate-pulse shrink-0" />
           )}
         </div>
         {!live && !allSuccess && (
@@ -169,8 +169,21 @@ export const MobileNativeChatToolRun = memo(function MobileNativeChatToolRun({
   );
 });
 
+const CATEGORY_TONE: Record<ToolCategory, string> = {
+  read: "text-[#82a8c9]",
+  search: "text-[#82a8c9]",
+  listFiles: "text-[#82a8c9]",
+  fileChange: "text-status-wait",
+  command: "text-status-ok",
+  webSearch: "text-[#78b7b2]",
+  mcp: "text-[#b49ae2]",
+  subagent: "text-accent-soft",
+  todoList: "text-accent",
+  other: "text-muted",
+};
+
 function renderCategoryIcon(cat: ToolCategory, failed = false) {
-  const cls = `w-3 h-3 shrink-0 ${failed ? "text-status-err" : "text-dim"}`;
+  const cls = `w-3 h-3 shrink-0 ${failed ? "text-status-err" : CATEGORY_TONE[cat]}`;
   switch (cat) {
     case "read":
       return <Eye className={cls} />;

@@ -192,7 +192,7 @@ export const ChatComposer = memo(
           />
         )}
 
-        <div className="flex items-end gap-1.5 bg-surface border border-line focus-within:border-line-strong rounded-xl pl-3 pr-1.5 py-1.5 transition-colors">
+        <div className="flex items-end gap-1.5 bg-surface border border-line focus-within:border-accent/65 rounded-xl pl-3 pr-1.5 py-1.5 transition-colors">
           <textarea
             ref={composerRef}
             rows={1}
@@ -269,7 +269,7 @@ export const ChatComposer = memo(
               type="button"
               onClick={() => void handleSendPrompt()}
               disabled={(!inputText.trim() && images.length === 0) || isSubmitting || uploading > 0}
-              className="w-7 h-7 bg-fg hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-bg rounded-[7px] transition-colors shrink-0 flex items-center justify-center"
+              className="w-7 h-7 bg-accent hover:bg-accent-strong disabled:bg-raised disabled:text-dim text-bg rounded-[7px] transition-colors shrink-0 flex items-center justify-center"
               title="Send prompt"
               aria-label="Send"
             >

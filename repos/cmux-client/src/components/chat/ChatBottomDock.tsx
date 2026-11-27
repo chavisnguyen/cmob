@@ -154,7 +154,7 @@ export function ChatBottomDock({
         )}
 
         {dock.kind === "permission" && (
-          <div className="rounded-lg bg-surface border border-line-strong px-3 py-2 space-y-2">
+          <div className="rounded-lg bg-surface border border-status-wait/35 px-3 py-2 space-y-2">
             <div className="flex items-start gap-2 min-w-0">
               <span className="w-1.5 h-1.5 rounded-full bg-status-wait shrink-0 mt-1.5" />
               <div className="min-w-0 flex-1 max-h-32 overflow-y-auto whitespace-pre-wrap break-words text-[12.5px] leading-snug text-fg-soft font-mono">
@@ -176,7 +176,7 @@ export function ChatBottomDock({
                 type="button"
                 disabled={busyApproving || isStopping}
                 onClick={() => void handleApproveClick()}
-                className="h-7 px-3 bg-fg hover:bg-accent-strong disabled:opacity-60 text-bg font-medium text-[12px] rounded-md transition-colors flex items-center gap-1"
+                className="h-7 px-3 bg-status-ok hover:opacity-90 disabled:opacity-60 text-bg font-medium text-[12px] rounded-md transition-opacity flex items-center gap-1"
               >
                 {busyApproving ? (
                   <Loader2 className="w-3 h-3 animate-spin" />

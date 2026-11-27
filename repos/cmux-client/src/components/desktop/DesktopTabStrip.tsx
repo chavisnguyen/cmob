@@ -87,7 +87,7 @@ export function DesktopTabStrip({
                   key={key}
                   className={`relative group flex items-center gap-1.5 h-full pl-3 pr-1.5 border-r border-line text-[12.5px] shrink-0 min-w-[132px] max-w-[230px] transition-colors ${
                     isActive
-                      ? "bg-bg text-fg font-medium before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-[2px] before:bg-fg/85"
+                      ? "bg-bg text-fg font-medium before:content-[''] before:absolute before:inset-x-0 before:top-0 before:h-[2px] before:bg-accent"
                       : "bg-[#161615] border-b border-b-line text-fg-soft/75 hover:bg-[#1d1d1b] hover:text-fg"
                   }`}
                 >
@@ -98,25 +98,25 @@ export function DesktopTabStrip({
                   >
                     <span
                       className={`shrink-0 flex items-center ${
-                        isActive ? "opacity-100" : "opacity-75 group-hover:opacity-95"
+                        isActive ? "opacity-100" : "opacity-80 group-hover:opacity-100"
                       }`}
                     >
                       {surf.surface_type === "markdown" ? (
-                        <FileText className="w-3.5 h-3.5 text-muted" />
+                        <FileText className="w-3.5 h-3.5 text-status-wait/85" />
                       ) : surf.surface_type === "browser" ? (
-                        <Globe className="w-3.5 h-3.5 text-muted" />
+                        <Globe className="w-3.5 h-3.5 text-accent/85" />
                       ) : surf.agent ? (
-                        <AgentIcon kind={surf.agent.agent_kind} size={13} monochrome={!isActive} />
+                        <AgentIcon kind={surf.agent.agent_kind} size={13} />
                       ) : (
                         <Terminal
-                          className={`w-3.5 h-3.5 ${isActive ? "text-fg-soft" : "text-muted"}`}
+                          className={`w-3.5 h-3.5 ${isActive ? "text-status-ok/90" : "text-muted"}`}
                         />
                       )}
                     </span>
                     <UnreadCountBadge count={surf.unread_count} size="sm" />
                     <span className="truncate">{displaySurfaceTitle(surf.title)}</span>
                     {status === "running" && (
-                      <span className="w-1.5 h-1.5 rounded-full bg-fg/85 shrink-0" />
+                      <span className="w-1.5 h-1.5 rounded-full bg-status-run animate-pulse shrink-0" />
                     )}
                     {status === "waiting" && (
                       <span className="w-1.5 h-1.5 rounded-full bg-status-wait shrink-0" />
@@ -173,7 +173,7 @@ export function DesktopTabStrip({
               className="h-[26px] px-2 rounded-[6px] hover:bg-raised text-muted hover:text-fg text-[11.5px] font-medium inline-flex items-center gap-1.5 transition-colors"
               title="Git working tree changes"
             >
-              <GitBranch className="w-3.5 h-3.5 text-dim" />
+              <GitBranch className="w-3.5 h-3.5 text-status-ok/85" />
               <span>Changes</span>
             </button>
 

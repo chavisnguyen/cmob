@@ -206,13 +206,13 @@ export function MobileNativeChatPromptCard({
               onClick={() => handleOptionPress(idx)}
               className={`w-full flex items-start gap-2.5 px-2.5 py-2 rounded-md border text-left transition-colors disabled:opacity-60 ${
                 selected
-                  ? "bg-raised border-line-strong text-fg"
+                  ? "bg-accent/10 border-accent/55 text-fg"
                   : "bg-sidebar/70 hover:bg-raised/60 border-line text-fg-soft"
               }`}
             >
               <span
                 className={`mt-0.5 text-[11px] font-mono tabular-nums shrink-0 w-4 text-right ${
-                  selected ? "text-fg font-semibold" : "text-dim"
+                  selected ? "text-accent-soft font-semibold" : "text-dim"
                 }`}
               >
                 {idx + 1}.
@@ -223,7 +223,7 @@ export function MobileNativeChatPromptCard({
               {isMulti ? (
                 <span
                   className={`mt-0.5 w-4 h-4 rounded-[4px] flex items-center justify-center border shrink-0 ${
-                    selected ? "bg-fg border-fg text-bg" : "border-line-strong"
+                    selected ? "bg-accent border-accent text-bg" : "border-line-strong"
                   }`}
                 >
                   {selected && <Check className="w-3 h-3 stroke-[3]" />}
@@ -289,14 +289,14 @@ export function MobileNativeChatPromptCard({
               placeholder="Type your custom answer…"
               rows={2}
               autoFocus
-              className="flex-1 bg-bg border border-line-strong rounded-md px-2.5 py-1.5 text-[12.5px] text-fg placeholder-dim focus:outline-none focus:border-fg/50 resize-none font-sans"
+              className="flex-1 bg-bg border border-line-strong rounded-md px-2.5 py-1.5 text-[12.5px] text-fg placeholder-dim focus:outline-none focus:border-accent/65 resize-none font-sans"
             />
             {!isMulti && (
               <button
                 type="button"
                 disabled={submitting || !otherText.trim()}
                 onClick={() => void commitStepOrSubmit([], otherText)}
-                className="h-8 px-3 rounded-md bg-fg hover:bg-accent-strong text-bg font-medium text-[12px] flex items-center gap-1.5 shrink-0 disabled:opacity-40 transition-colors"
+                className="h-8 px-3 rounded-md bg-accent hover:bg-accent-strong text-bg font-medium text-[12px] flex items-center gap-1.5 shrink-0 disabled:opacity-40 transition-colors"
               >
                 {submitting ? (
                   <Loader2 className="w-3 h-3 animate-spin" />
@@ -318,7 +318,7 @@ export function MobileNativeChatPromptCard({
             onClick={() =>
               void commitStepOrSubmit(selectedIndices, isOtherOpen ? otherText : undefined)
             }
-            className="h-7 px-3 rounded-md bg-fg hover:bg-accent-strong text-bg font-medium text-[12px] flex items-center gap-1.5 disabled:opacity-40 transition-colors"
+            className="h-7 px-3 rounded-md bg-accent hover:bg-accent-strong text-bg font-medium text-[12px] flex items-center gap-1.5 disabled:opacity-40 transition-colors"
           >
             {submitting ? (
               <Loader2 className="w-3 h-3 animate-spin" />

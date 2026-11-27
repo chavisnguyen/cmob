@@ -47,11 +47,11 @@ function sampleWorkspaces(): WorkspaceNode[] {
 }
 
 describe("unread notification badges and cached syncing UI", () => {
-  it("renders high-contrast monochrome unread count pill and hides when count <= 0", () => {
+  it("renders high-contrast accent unread count pill and hides when count <= 0", () => {
     expect(renderToStaticMarkup(<UnreadCountBadge count={0} />)).toBe("");
     const badgeHtml = renderToStaticMarkup(<UnreadCountBadge count={1} />);
     expect(badgeHtml).toContain('data-testid="unread-count-badge"');
-    expect(badgeHtml).toContain("bg-fg");
+    expect(badgeHtml).toContain("bg-accent");
     expect(badgeHtml).toContain(">1<");
 
     const cappedHtml = renderToStaticMarkup(<UnreadCountBadge count={128} />);

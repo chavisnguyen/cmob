@@ -11,7 +11,7 @@ import {
 const LazyUsageBody = lazy(() => import("./UsageView").then((m) => ({ default: m.UsageBody })));
 
 const DOT_CLASS: Record<UsageTone, string> = {
-  emerald: "bg-dim",
+  emerald: "bg-status-ok",
   amber: "bg-status-wait",
   rose: "bg-status-err",
 };

@@ -61,13 +61,13 @@ export const MobileNativeChatReasoningRow = memo(function MobileNativeChatReason
             <span className="text-[11.5px] text-dim truncate font-sans">· {preview}</span>
           )}
           {live && (
-            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-fg/70 animate-pulse shrink-0" />
+            <span className="inline-flex rounded-full h-1.5 w-1.5 bg-accent animate-pulse shrink-0" />
           )}
         </div>
       </button>
 
       {isExpanded && (
-        <div className="ml-2.5 pl-3 my-1 border-l border-line text-[12px] font-sans text-muted whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto scrollbar-thin">
+        <div className="ml-2.5 pl-3 my-1 border-l border-accent/35 text-[12px] font-sans text-muted whitespace-pre-wrap leading-relaxed max-h-60 overflow-y-auto scrollbar-thin">
           {text.trim()}
         </div>
       )}

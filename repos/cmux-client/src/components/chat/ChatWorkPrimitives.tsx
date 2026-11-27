@@ -48,22 +48,22 @@ export const LiveElapsedText = memo(function LiveElapsedText({
 
 export function BackgroundKindIcon({
   kind,
-  className = "w-3.5 h-3.5 text-dim",
+  className = "w-3.5 h-3.5",
 }: {
   kind: BackgroundTaskKind;
   className?: string;
 }) {
   switch (kind) {
     case "agent":
-      return <Cpu className={`${className} shrink-0`} />;
+      return <Cpu className={`${className} text-accent-soft shrink-0`} />;
     case "command":
-      return <SquareTerminal className={`${className} shrink-0`} />;
+      return <SquareTerminal className={`${className} text-status-ok shrink-0`} />;
     case "workflow":
-      return <Workflow className={`${className} shrink-0`} />;
+      return <Workflow className={`${className} text-[#82a8c9] shrink-0`} />;
     case "monitor":
-      return <Activity className={`${className} shrink-0`} />;
+      return <Activity className={`${className} text-status-wait shrink-0`} />;
     case "unknown":
-      return <CircleHelp className={`${className} shrink-0`} />;
+      return <CircleHelp className={`${className} text-dim shrink-0`} />;
   }
 }
 
@@ -73,7 +73,7 @@ function renderTaskStatusIcon(status: ChatTaskStatus, isSessionWorking: boolean)
       return <CheckCircle2 className="w-3.5 h-3.5 text-status-ok" />;
     case "in_progress":
       return (
-        <Clock className={`w-3.5 h-3.5 text-fg-soft ${isSessionWorking ? "animate-spin" : ""}`} />
+        <Clock className={`w-3.5 h-3.5 text-accent ${isSessionWorking ? "animate-spin" : ""}`} />
       );
     case "failed":
       return <XCircle className="w-3.5 h-3.5 text-status-err" />;

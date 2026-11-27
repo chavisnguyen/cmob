@@ -217,7 +217,7 @@ export function NewSurfaceModal({
                   </div>
                   <div
                     className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center shrink-0 ${
-                      isSelected ? "border-fg bg-fg" : "border-line-strong"
+                      isSelected ? "border-accent bg-accent" : "border-line-strong"
                     }`}
                   >
                     {isSelected && <div className="w-1.5 h-1.5 rounded-full bg-bg" />}
@@ -283,7 +283,7 @@ export function NewSurfaceModal({
                 <span className="text-[13px] font-medium">Custom Command</span>
                 <div
                   className={`w-3.5 h-3.5 rounded-full border flex items-center justify-center ${
-                    selectedPreset === "custom" ? "border-fg bg-fg" : "border-line-strong"
+                    selectedPreset === "custom" ? "border-accent bg-accent" : "border-line-strong"
                   }`}
                 >
                   {selectedPreset === "custom" && (
@@ -298,7 +298,7 @@ export function NewSurfaceModal({
                   onChange={(event) => setCustomCommand(event.target.value)}
                   placeholder="e.g. htop, python3 main.py"
                   autoFocus
-                  className="w-full mt-2 bg-bg border border-line-strong focus:border-fg/60 rounded-md px-2.5 py-1.5 text-[12px] font-mono text-fg placeholder-dim outline-none"
+                  className="w-full mt-2 bg-bg border border-line-strong focus:border-accent/60 rounded-md px-2.5 py-1.5 text-[12px] font-mono text-fg placeholder-dim outline-none"
                 />
               )}
             </Pressable>
@@ -316,7 +316,7 @@ export function NewSurfaceModal({
             <button
               type="submit"
               disabled={loading}
-              className="flex-1 h-9 rounded-lg bg-fg hover:bg-accent-strong disabled:opacity-50 text-[13px] font-medium text-bg flex items-center justify-center gap-1.5 transition-colors"
+              className="flex-1 h-9 rounded-lg bg-accent hover:bg-accent-strong disabled:opacity-50 text-[13px] font-medium text-bg flex items-center justify-center gap-1.5 transition-colors"
             >
               {loading ? (
                 <>

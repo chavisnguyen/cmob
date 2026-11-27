@@ -72,7 +72,7 @@ function renderAssistantBlock(block: AssistantBlockItem, surfaceKey?: string) {
     case "status":
       return (
         <div key={block.key} className="flex items-center gap-1.5 text-[12px] text-dim py-0.5">
-          <Clock className="w-3 h-3 text-dim" />
+          <Clock className="w-3 h-3 text-accent/70" />
           <span>{block.text}</span>
         </div>
       );
@@ -113,7 +113,7 @@ export const ChatTimelineItemView = memo(function ChatTimelineItemView({
   if (item.kind === "user") {
     return (
       <div className="flex flex-col items-end w-full min-w-0 max-w-full py-1.5">
-        <div className="max-w-[90%] sm:max-w-[78%] bg-surface border border-line text-fg rounded-lg px-3.5 py-2 text-[13.5px] leading-[1.55] min-w-0 break-words [overflow-wrap:anywhere] space-y-2">
+        <div className="max-w-[90%] sm:max-w-[78%] bg-[#24211f] border border-accent/25 text-fg rounded-lg px-3.5 py-2 text-[13.5px] leading-[1.55] min-w-0 break-words [overflow-wrap:anywhere] space-y-2">
           {item.imagePreviews.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {item.imagePreviews.map((src, idx) => (

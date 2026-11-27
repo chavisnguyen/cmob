@@ -143,7 +143,7 @@ export function AgentOptionsSheet({
                 type="button"
                 disabled={actionsDisabled}
                 onClick={() => void apply("model")}
-                className="w-full h-9 rounded-lg bg-fg hover:bg-accent-strong disabled:opacity-50 text-[13px] font-medium text-bg transition-colors"
+                className="w-full h-9 rounded-lg bg-accent hover:bg-accent-strong disabled:opacity-50 text-[13px] font-medium text-bg transition-colors"
               >
                 {busy ? "Opening…" : "Open Model Picker"}
               </button>
@@ -164,7 +164,7 @@ export function AgentOptionsSheet({
                     onClick={() => void apply("model", m.id)}
                     className={`w-full text-left rounded-lg border px-3 py-2 disabled:opacity-50 transition-colors ${
                       selectedModel === m.id
-                        ? "border-line-strong bg-raised text-fg"
+                        ? "border-accent/55 bg-accent/10 text-fg"
                         : "border-line bg-sidebar hover:bg-surface text-fg-soft"
                     }`}
                   >
@@ -190,7 +190,7 @@ export function AgentOptionsSheet({
                         onClick={() => void apply("effort", e.value)}
                         className={`h-8 px-3 rounded-md text-[12px] font-medium disabled:opacity-50 transition-colors ${
                           activeEffort === e.value
-                            ? "bg-fg text-bg"
+                            ? "bg-accent text-bg"
                             : "bg-sidebar border border-line text-fg-soft hover:bg-raised"
                         }`}
                       >

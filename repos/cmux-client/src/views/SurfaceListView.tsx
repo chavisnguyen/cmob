@@ -109,13 +109,13 @@ export function SurfaceListView({
             title="Git changes"
             aria-label="Git changes"
           >
-            <GitBranch className="w-3.5 h-3.5" />
+            <GitBranch className="w-3.5 h-3.5 text-status-ok/85" />
           </button>
           {onCreateSurface && (
             <button
               type="button"
               onClick={() => setShowNewModal(true)}
-              className="h-8 px-2.5 rounded-lg bg-fg hover:bg-accent-strong active:opacity-80 text-bg text-[12.5px] font-medium inline-flex items-center gap-1 transition-colors"
+              className="h-8 px-2.5 rounded-lg bg-accent hover:bg-accent-strong active:opacity-80 text-bg text-[12.5px] font-medium inline-flex items-center gap-1 transition-colors"
               title="New Tab"
             >
               <Plus className="w-3.5 h-3.5" />
@@ -133,7 +133,7 @@ export function SurfaceListView({
               <button
                 type="button"
                 onClick={() => setShowNewModal(true)}
-                className="h-9 px-3.5 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[13px] font-medium inline-flex items-center gap-1.5 transition-colors"
+                className="h-9 px-3.5 rounded-lg bg-accent hover:bg-accent-strong text-bg text-[13px] font-medium inline-flex items-center gap-1.5 transition-colors"
               >
                 <Plus className="w-3.5 h-3.5" />
                 <span>Open First Tab</span>
@@ -154,13 +154,13 @@ export function SurfaceListView({
                 <div className="flex items-center gap-2.5 min-w-0 flex-1 pr-2">
                   <div className="w-5 h-5 flex items-center justify-center text-muted shrink-0">
                     {surf.surface_type === "markdown" ? (
-                      <FileText className="w-4 h-4 text-muted" />
+                      <FileText className="w-4 h-4 text-status-wait/85" />
                     ) : surf.surface_type === "browser" ? (
-                      <Globe className="w-4 h-4 text-muted" />
+                      <Globe className="w-4 h-4 text-accent/85" />
                     ) : hasAgent ? (
                       <AgentIcon kind={surf.agent?.agent_kind} size={16} />
                     ) : (
-                      <Terminal className="w-4 h-4 text-dim" />
+                      <Terminal className="w-4 h-4 text-status-ok/80" />
                     )}
                   </div>
 
@@ -171,7 +171,7 @@ export function SurfaceListView({
                       </h2>
                       <UnreadCountBadge count={surf.unread_count} size="sm" />
                       {surf.selected && (
-                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-raised text-muted shrink-0">
+                        <span className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-accent/15 text-accent-soft border border-accent/25 shrink-0">
                           current
                         </span>
                       )}
@@ -186,7 +186,7 @@ export function SurfaceListView({
                               : agentStatus === "error"
                                 ? "text-status-err font-medium"
                                 : agentStatus === "running"
-                                  ? "text-fg-soft font-medium"
+                                  ? "text-accent-soft font-medium"
                                   : "text-muted"
                           }`}
                         >

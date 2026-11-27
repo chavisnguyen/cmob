@@ -23,7 +23,7 @@ export function UnreadCountBadge({
     <span
       data-testid="unread-count-badge"
       aria-label={`${count} unread ${count === 1 ? "notification" : "notifications"}`}
-      className={`inline-flex items-center justify-center rounded-full bg-fg text-bg font-semibold leading-none tabular-nums shrink-0 ${dims} ${className}`.trim()}
+      className={`inline-flex items-center justify-center rounded-full bg-accent text-bg font-semibold leading-none tabular-nums shrink-0 ${dims} ${className}`.trim()}
     >
       {label}
     </span>

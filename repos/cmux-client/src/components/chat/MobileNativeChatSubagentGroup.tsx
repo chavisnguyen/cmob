@@ -70,10 +70,10 @@ export const MobileNativeChatSubagentGroup = memo(function MobileNativeChatSubag
         className="w-full flex items-center justify-between px-2.5 py-1.5 hover:bg-surface text-fg-soft transition-colors"
       >
         <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-          <Cpu className="w-3.5 h-3.5 text-dim shrink-0" />
+          <Cpu className="w-3.5 h-3.5 text-accent-soft shrink-0" />
           <span className="font-medium text-fg-soft truncate">{headline}</span>
           {isWorking && (
-            <span className="w-1.5 h-1.5 rounded-full bg-fg/80 animate-pulse shrink-0" />
+            <span className="w-1.5 h-1.5 rounded-full bg-status-run animate-pulse shrink-0" />
           )}
         </div>
         <div className="flex items-center gap-2 shrink-0 text-[11px] font-mono text-dim">
@@ -149,7 +149,7 @@ function stateDotClass(state: SubagentState): string {
     case "failed":
       return "bg-status-err";
     case "working":
-      return "bg-fg animate-pulse";
+      return "bg-status-run animate-pulse";
     default:
       return "bg-dim";
   }
@@ -160,7 +160,9 @@ function stateTextClass(state: SubagentState): string {
     case "failed":
       return "text-status-err";
     case "working":
-      return "text-fg-soft";
+      return "text-accent-soft";
+    case "completed":
+      return "text-status-ok/90";
     default:
       return "text-muted";
   }

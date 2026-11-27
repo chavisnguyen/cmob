@@ -68,7 +68,9 @@ function ModeSegmentedToggle({
         ? "h-[22px] px-2 rounded-[4px] text-[11px]"
         : "h-[26px] px-2.5 rounded-[5px] text-[12px]"
     } font-medium transition-colors ${
-      selected ? "bg-raised text-fg" : "text-muted hover:text-fg-soft"
+      selected
+        ? "bg-accent/18 text-accent-soft border border-accent/30"
+        : "text-muted hover:text-fg-soft border border-transparent"
     }`;
 
   return (

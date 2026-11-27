@@ -112,7 +112,7 @@ code {
   background: rgba(237, 237, 235, 0.24);
 }
 
-/* Warm Dark Graphite — macOS Native (cmux / Raycast) palette */
+/* Warm Dark Graphite — Claude Dark / Anthropic palette */
 @theme {
   --color-bg: #141413;
   --color-sidebar: #181817;
@@ -124,12 +124,13 @@ code {
   --color-fg-soft: #c9c8c3;
   --color-muted: #8c8b85;
   --color-dim: #62615c;
-  --color-accent: #e6e5e0;
-  --color-accent-strong: #ffffff;
-  --color-accent-soft: #d4d3ce;
-  --color-status-wait: #d99b43;
-  --color-status-err: #d96060;
-  --color-status-ok: #68ad80;
+  --color-accent: #d97757;
+  --color-accent-strong: #e4896b;
+  --color-accent-soft: #eaa48c;
+  --color-status-run: #d97757;
+  --color-status-wait: #e0a458;
+  --color-status-err: #e06b65;
+  --color-status-ok: #68b07d;
 }
 
 ::selection {

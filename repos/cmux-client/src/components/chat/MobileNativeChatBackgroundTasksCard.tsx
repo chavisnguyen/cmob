@@ -65,10 +65,10 @@ export const MobileNativeChatBackgroundTasksCard = memo(
           className="w-full flex items-center justify-between px-2.5 py-1.5 hover:bg-surface text-fg-soft transition-colors"
         >
           <div className="flex items-center gap-2 min-w-0 flex-1 mr-2">
-            <BackgroundKindIcon kind={first.kind} className="w-3.5 h-3.5 text-dim" />
+            <BackgroundKindIcon kind={first.kind} className="w-3.5 h-3.5" />
             <span className="font-medium text-fg-soft truncate font-sans">{headline}</span>
             {isWorking && (
-              <span className="w-1.5 h-1.5 rounded-full bg-fg/80 animate-pulse shrink-0" />
+              <span className="w-1.5 h-1.5 rounded-full bg-status-run animate-pulse shrink-0" />
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0 text-[11px] font-mono text-dim">
@@ -82,8 +82,10 @@ export const MobileNativeChatBackgroundTasksCard = memo(
                 badgeText === "failed"
                   ? "text-status-err"
                   : badgeText === "running"
-                    ? "text-fg-soft"
-                    : "text-muted"
+                    ? "text-accent-soft"
+                    : badgeText === "done"
+                      ? "text-status-ok/90"
+                      : "text-muted"
               }
             >
               {badgeText}

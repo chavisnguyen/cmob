@@ -219,6 +219,47 @@ mod tests {
     }
 
     #[test]
+    fn antigravity_send_message_resumes_subagent_and_schedule_classifies_as_monitor() {
+        let child_uuid = "cc7f9ac4-7f59-416d-8867-e491d1b9b009";
+        let p = write_jsonl(
+            "agy-resume-cron",
+            &[
+                r#"{"type":"REQUEST","source":"USER_EXPLICIT","created_at":"2026-11-26T13:14:00Z","content":"<USER_REQUEST>run team"}"#,
+                r#"{"type":"PLANNER_RESPONSE","created_at":"2026-11-26T13:14:37Z","tool_calls":[{"name":"invoke_subagent","args":{"TypeName":"\"teamwork\"","Role":"\"Team Coord\""}},{"name":"schedule","args":{"CronExpression":"\"*/8 * * * *\"","Prompt":"\"Monitor\""}}]}"#,
+                &format!(r#"{{"type":"GENERIC","created_at":"2026-11-26T13:15:09Z","content":"Created the following subagent: {{\"conversationId\": \"{child_uuid}\"}}"}}"#),
+                r#"{"type":"GENERIC","status":"RUNNING","created_at":"2026-11-26T13:15:10Z","content":"Tool is running as a background task with task id: conv/task-cron\nTask Description: Cron"}"#,
+                &format!(r#"{{"type":"SYSTEM_MESSAGE","created_at":"2026-11-26T13:16:22Z","content":"[Message] sender={child_uuid} content=Started"}}"#),
+                &format!(r#"{{"type":"PLANNER_RESPONSE","created_at":"2026-11-26T17:52:15Z","tool_calls":[{{"name":"send_message","args":{{"Recipient":"\"{child_uuid}\"","Message":"\"Resume\""}}}}]}}"#),
+                r#"{"type":"GENERIC","created_at":"2026-11-26T17:52:20Z","content":"Message sent"}"#,
+            ],
+        );
+        let turns = TranscriptReader::read_recent_turns(&p, "surf-agy-res", 10).unwrap();
+        let ast = &turns[1];
+        let sub = ast
+            .events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::Subagents { agents, .. } => Some(agents[0].clone()),
+                _ => None,
+            })
+            .expect("subagent present");
+        assert_eq!(sub.state, SubagentState::Working);
+        assert_eq!(sub.settled_at, None);
+
+        let cron = ast
+            .events
+            .iter()
+            .find_map(|e| match e {
+                AgentEvent::BackgroundTasks { tasks } => Some(tasks[0].clone()),
+                _ => None,
+            })
+            .expect("cron task present");
+        assert_eq!(cron.kind, crate::protocol::event::BackgroundTaskKind::Monitor);
+
+        let _ = std::fs::remove_file(p);
+    }
+
+    #[test]
     fn codex_paginated_keeps_apply_patch_and_reasoning_and_exit_status() {
         let p = write_jsonl(
             "codex-pg-tools",

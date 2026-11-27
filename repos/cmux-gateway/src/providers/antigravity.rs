@@ -65,18 +65,19 @@ fn push_agy_bg_command(
         .filter(|s| !s.is_empty())
         .map(str::to_string);
     let parsed_tool = tool_detail.and_then(|raw| serde_json::from_str::<serde_json::Value>(raw).ok());
-    let is_daemon = parsed_tool
-        .as_ref()
-        .and_then(|v| v.get("IsDaemon"))
-        .is_some_and(|d| {
+    let is_daemon = parsed_tool.as_ref().is_some_and(|v| {
+        v.get("IsDaemon").is_some_and(|d| {
             d.as_bool() == Some(true)
                 || d.as_str()
                     .map(clean_agy_arg_str)
                     .is_some_and(|s| s.eq_ignore_ascii_case("true"))
-        });
+        }) || v.get("CronExpression").is_some()
+            || v.get("DurationSeconds").is_some()
+    });
     let desc_from_tool = parsed_tool.and_then(|v| {
         v.get("toolSummary")
             .or_else(|| v.get("CommandLine"))
+            .or_else(|| v.get("CronExpression"))
             .and_then(|s| s.as_str())
             .map(clean_agy_arg_str)
     });
@@ -294,6 +295,31 @@ pub fn parse_line(
                         // Suppress duplicate `ToolStart` on `manage_task`, while preserving FIFO alignment!
                         state.pending_calls.push_back(AgyPendingCall::HiddenControl);
                     } else {
+                        if name == "send_message"
+                            && let Some(recipient) = cleaned_args
+                                .as_ref()
+                                .and_then(|a| a.get("Recipient"))
+                                .and_then(|s| s.as_str())
+                                .map(clean_agy_arg_str)
+                                .filter(|s| s.len() == 36)
+                        {
+                            // Sending a message to a previously reported subagent wakes/resumes it.
+                            let mut cur = Some(turn);
+                            mutate_subagent_by_ids(turns, &mut cur, &[recipient.as_str()], |a| {
+                                if matches!(
+                                    a.state,
+                                    SubagentState::Completed
+                                        | SubagentState::Idle
+                                        | SubagentState::Stopped
+                                        | SubagentState::Unverifiable
+                                ) {
+                                    a.state = SubagentState::Working;
+                                    a.settled_at = None;
+                                    a.started_at = a.started_at.or(ts_ms);
+                                }
+                            });
+                            turn = cur.unwrap();
+                        }
                         let tool_id = format!("{}-call-{}-{}", name, turn.events.len(), tc_idx);
                         turn.events.push(AgentEvent::ToolStart {
                             tool_id: tool_id.clone(),

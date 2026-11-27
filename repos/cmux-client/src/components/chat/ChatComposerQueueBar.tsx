@@ -65,7 +65,7 @@ export function ChatComposerAttachmentsAndMenus({
                 <button
                   type="button"
                   onClick={onResumeQueue}
-                  className="shrink-0 px-2 h-5 rounded bg-fg text-bg text-[11px] font-medium"
+                  className="shrink-0 px-2 h-5 rounded bg-accent hover:bg-accent-strong text-bg text-[11px] font-medium transition-colors"
                 >
                   Resume
                 </button>

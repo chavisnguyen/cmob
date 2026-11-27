@@ -163,7 +163,7 @@ export function DeviceListView({
             haptic("light");
             setShowPairModal(true);
           }}
-          className="h-8 px-3 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[12.5px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
+          className="h-8 px-3 rounded-lg bg-accent hover:bg-accent-strong text-bg text-[12.5px] font-medium flex items-center gap-1.5 whitespace-nowrap shrink-0 transition-colors cursor-pointer"
         >
           <Plus className="w-3.5 h-3.5" />
           <span>Pair</span>

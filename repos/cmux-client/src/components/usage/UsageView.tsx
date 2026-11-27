@@ -12,13 +12,13 @@ import {
 } from "./usageFormatting";
 
 const BAR_CLASS: Record<UsageTone, string> = {
-  emerald: "bg-fg/80",
+  emerald: "bg-status-ok",
   amber: "bg-status-wait",
   rose: "bg-status-err",
 };
 
 const TEXT_CLASS: Record<UsageTone, string> = {
-  emerald: "text-fg-soft",
+  emerald: "text-status-ok",
   amber: "text-status-wait",
   rose: "text-status-err",
 };

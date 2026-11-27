@@ -16,7 +16,9 @@ export { BackgroundKindIcon, LiveElapsedText, TaskChecklistRows } from "./ChatWo
 function renderWorkStateDot(state: SubagentState) {
   switch (state) {
     case "working":
-      return <span className="inline-flex rounded-full h-1.5 w-1.5 bg-fg animate-pulse shrink-0" />;
+      return (
+        <span className="inline-flex rounded-full h-1.5 w-1.5 bg-status-run animate-pulse shrink-0" />
+      );
     case "completed":
       return <span className="inline-flex rounded-full h-1.5 w-1.5 bg-status-ok shrink-0" />;
     case "failed":
@@ -53,7 +55,7 @@ const DockedTaskListStrip = memo(function DockedTaskListStrip({
         onClick={toggleOpen}
         className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface transition-colors min-w-0"
       >
-        <ListChecks className="w-3.5 h-3.5 shrink-0 text-dim" />
+        <ListChecks className="w-3.5 h-3.5 shrink-0 text-accent/85" />
         <span className="flex-1 min-w-0 truncate text-[12px] font-medium text-fg-soft">{lead}</span>
         <span className="text-[11px] font-mono tabular-nums shrink-0 text-muted">
           {completed}/{total}
@@ -98,13 +100,13 @@ const BackgroundWorkStrip = memo(function BackgroundWorkStrip({
         className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-surface transition-colors min-w-0"
       >
         {work.hasLiveWork && (
-          <span className="inline-flex rounded-full h-1.5 w-1.5 bg-fg animate-pulse shrink-0" />
+          <span className="inline-flex rounded-full h-1.5 w-1.5 bg-status-run animate-pulse shrink-0" />
         )}
         <div className="flex items-center gap-1.5 flex-1 min-w-0 overflow-hidden text-[12px]">
           {work.segments.map((seg, idx) => (
             <Fragment key={`${seg.kind ?? "total"}-${idx}`}>
               {idx > 0 && <span className="text-dim shrink-0">·</span>}
-              {seg.kind && <BackgroundKindIcon kind={seg.kind} className="w-3.5 h-3.5 text-dim" />}
+              {seg.kind && <BackgroundKindIcon kind={seg.kind} className="w-3.5 h-3.5" />}
               <span className="font-medium text-fg-soft truncate">{seg.text}</span>
             </Fragment>
           ))}
@@ -146,7 +148,7 @@ const BackgroundWorkStrip = memo(function BackgroundWorkStrip({
                     className="flex items-center justify-between gap-2 py-1 px-2 rounded-[5px] bg-bg/70 border border-line/60 text-[11.5px] min-w-0"
                   >
                     <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <BackgroundKindIcon kind={item.kind} className="w-3 h-3 text-dim" />
+                      <BackgroundKindIcon kind={item.kind} className="w-3 h-3" />
                       {renderWorkStateDot(item.state)}
                       <span
                         className={`truncate ${isRunning ? "text-fg font-medium" : "text-fg-soft"}`}

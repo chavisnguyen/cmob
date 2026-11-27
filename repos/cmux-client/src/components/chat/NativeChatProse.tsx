@@ -59,7 +59,7 @@ function CodeBlock({ code, lang }: { code: string; lang?: string }) {
   return (
     <div className="my-2 rounded-lg overflow-hidden border border-line bg-[#10100f] text-[12px] font-mono min-w-0 max-w-full">
       <div className="flex items-center justify-between px-3 py-1 bg-sidebar border-b border-line text-dim">
-        <span className="text-[11px] lowercase">{lang || "text"}</span>
+        <span className="text-[11px] lowercase text-accent-soft/80">{lang || "text"}</span>
         <button
           type="button"
           onClick={handleCopy}
@@ -106,7 +106,7 @@ const COMPONENTS: Components = {
   code({ children, className }) {
     return (
       <code
-        className={`px-[5px] py-[1px] rounded-[4px] bg-surface border border-line text-fg font-mono text-[0.875em] break-all [overflow-wrap:anywhere] ${className ?? ""}`}
+        className={`px-[5px] py-[1px] rounded-[4px] bg-surface border border-line text-[#e5c488] font-mono text-[0.875em] break-all [overflow-wrap:anywhere] ${className ?? ""}`}
       >
         {children}
       </code>
@@ -121,13 +121,17 @@ const COMPONENTS: Components = {
   h4: heading(5, "text-[13.5px] mt-2"),
   h5: heading(6, "text-[13.5px] mt-2"),
   h6: heading(6, "text-[13.5px] mt-2"),
-  ul: ({ children }) => <ul className="list-disc pl-5 space-y-1 marker:text-dim">{children}</ul>,
+  ul: ({ children }) => (
+    <ul className="list-disc pl-5 space-y-1 marker:text-accent/70">{children}</ul>
+  ),
   ol: ({ children }) => (
-    <ol className="list-decimal pl-6 space-y-1 marker:text-dim marker:tabular-nums">{children}</ol>
+    <ol className="list-decimal pl-6 space-y-1 marker:text-accent/70 marker:tabular-nums">
+      {children}
+    </ol>
   ),
   li: ({ children }) => <li className="pl-0.5 [&>ul]:mt-1 [&>ol]:mt-1">{children}</li>,
   blockquote: ({ children }) => (
-    <blockquote className="border-l-2 border-line-strong pl-3 text-muted">{children}</blockquote>
+    <blockquote className="border-l-2 border-accent/55 pl-3 text-fg-soft/85">{children}</blockquote>
   ),
   hr: () => <hr className="border-line my-2.5" />,
   a: ({ href, children }) => {
@@ -136,9 +140,9 @@ const COMPONENTS: Components = {
       return (
         <span
           title={cleanPath}
-          className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded-[4px] bg-surface border border-line text-fg font-mono text-[0.86em] align-baseline break-all"
+          className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded-[4px] bg-surface border border-line-strong/80 text-accent-soft font-mono text-[0.86em] align-baseline break-all"
         >
-          <FileCode2 className="w-3 h-3 shrink-0 inline text-muted" />
+          <FileCode2 className="w-3 h-3 shrink-0 inline text-accent" />
           <span>{children}</span>
         </span>
       );
@@ -148,7 +152,7 @@ const COMPONENTS: Components = {
         href={href}
         target="_blank"
         rel="noopener noreferrer"
-        className="text-fg underline underline-offset-3 decoration-line-strong hover:decoration-fg break-all transition-colors"
+        className="text-accent-soft underline underline-offset-3 decoration-accent/40 hover:decoration-accent-soft break-all transition-colors"
       >
         {children}
       </a>

@@ -172,7 +172,7 @@ export function WorkspaceListView({
               <button
                 type="button"
                 onClick={onPairHost}
-                className="inline-flex items-center gap-2 px-4 min-h-[38px] rounded-lg bg-fg hover:bg-accent-strong text-bg text-[13px] font-medium transition-colors cursor-pointer"
+                className="inline-flex items-center gap-2 px-4 min-h-[38px] rounded-lg bg-accent hover:bg-accent-strong text-bg text-[13px] font-medium transition-colors cursor-pointer"
               >
                 <QrCode className="w-3.5 h-3.5" />
                 <span>Connect Your Computer</span>
@@ -256,7 +256,7 @@ export function WorkspaceListView({
                           />
                         ) : isRunning ? (
                           <span
-                            className="w-1.5 h-1.5 rounded-full bg-fg/85 animate-pulse shrink-0"
+                            className="w-1.5 h-1.5 rounded-full bg-status-run animate-pulse shrink-0"
                             title="Running"
                           />
                         ) : null}
@@ -330,8 +330,8 @@ export function WorkspaceListView({
                         </span>
                       )}
                       {isRunning && !isWaiting && (
-                        <span className="inline-flex items-center gap-1 font-medium text-fg-soft shrink-0">
-                          <span className="w-1.5 h-1.5 rounded-full bg-fg/85 animate-pulse" />
+                        <span className="inline-flex items-center gap-1 font-medium text-accent-soft shrink-0">
+                          <span className="w-1.5 h-1.5 rounded-full bg-status-run animate-pulse" />
                           <span>Active</span>
                         </span>
                       )}

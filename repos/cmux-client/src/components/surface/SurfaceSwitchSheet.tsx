@@ -71,13 +71,13 @@ export function SurfaceSwitchSheet({
               >
                 <div className="w-5 h-5 flex items-center justify-center shrink-0">
                   {surf.surface_type === "markdown" ? (
-                    <FileText className="w-4 h-4 text-muted" />
+                    <FileText className="w-4 h-4 text-status-wait/85" />
                   ) : surf.surface_type === "browser" ? (
-                    <Globe className="w-4 h-4 text-muted" />
+                    <Globe className="w-4 h-4 text-accent/85" />
                   ) : surf.agent ? (
                     <AgentIcon kind={surf.agent.agent_kind} size={16} />
                   ) : (
-                    <Terminal className="w-4 h-4 text-dim" />
+                    <Terminal className="w-4 h-4 text-status-ok/80" />
                   )}
                 </div>
                 <div className="min-w-0 flex-1">
@@ -94,13 +94,13 @@ export function SurfaceSwitchSheet({
                   </div>
                 </div>
                 {status === "running" && (
-                  <span className="w-1.5 h-1.5 rounded-full bg-fg shrink-0" />
+                  <span className="w-1.5 h-1.5 rounded-full bg-status-run animate-pulse shrink-0" />
                 )}
                 {status === "waiting" && (
                   <span className="w-1.5 h-1.5 rounded-full bg-status-wait shrink-0" />
                 )}
                 {active && (
-                  <span className="text-[11px] font-mono text-muted shrink-0">current</span>
+                  <span className="text-[11px] font-mono text-accent-soft shrink-0">current</span>
                 )}
               </Pressable>
             );
@@ -113,7 +113,7 @@ export function SurfaceSwitchSheet({
               onNew();
               onClose();
             }}
-            className="w-full h-9 rounded-lg bg-fg hover:bg-accent-strong text-bg text-[13px] font-medium flex items-center justify-center gap-1.5 transition-colors"
+            className="w-full h-9 rounded-lg bg-accent hover:bg-accent-strong text-bg text-[13px] font-medium flex items-center justify-center gap-1.5 transition-colors"
           >
             <Plus className="w-3.5 h-3.5" />
             <span>New Tab</span>
