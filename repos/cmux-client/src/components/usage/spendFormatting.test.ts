@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { SpendDay } from "../../protocol/rpc";
-import { barPercent, dailyForPeriod, formatCost, formatTokens, localDateKey } from "./spendFormatting";
+import {
+  barPercent,
+  dailyForPeriod,
+  formatCost,
+  formatTokens,
+  localDateKey,
+} from "./spendFormatting";
 
 const day = (date: string): SpendDay => ({
   date,

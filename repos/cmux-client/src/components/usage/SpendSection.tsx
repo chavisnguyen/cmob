@@ -15,7 +15,9 @@ function Stat({ label, value, sub }: { label: string; value: string; sub?: strin
   return (
     <div className="rounded-lg bg-surface border border-line px-3 py-2 min-w-0">
       <div className="text-[10.5px] uppercase tracking-wider text-dim">{label}</div>
-      <div className="text-[15px] font-semibold font-mono tabular-nums text-fg truncate">{value}</div>
+      <div className="text-[15px] font-semibold font-mono tabular-nums text-fg truncate">
+        {value}
+      </div>
       {sub && <div className="text-[11px] text-dim font-mono truncate">{sub}</div>}
     </div>
   );
@@ -48,15 +50,7 @@ function RankList({
   );
 }
 
-function DailyBars({
-  data,
-  period,
-  asOf,
-}: {
-  data: SpendData;
-  period: SpendPeriod;
-  asOf: number;
-}) {
+function DailyBars({ data, period, asOf }: { data: SpendData; period: SpendPeriod; asOf: number }) {
   const days = useMemo(
     () => dailyForPeriod(data.daily, period, new Date(asOf)),
     [data.daily, period, asOf],
@@ -85,15 +79,7 @@ function DailyBars({
   );
 }
 
-function SpendBody({
-  data,
-  period,
-  asOf,
-}: {
-  data: SpendData;
-  period: SpendPeriod;
-  asOf: number;
-}) {
+function SpendBody({ data, period, asOf }: { data: SpendData; period: SpendPeriod; asOf: number }) {
   const sym = data.currency.symbol;
   const maxModel = Math.max(0, ...data.models.map((m) => m.cost));
   const maxProvider = Math.max(0, ...data.providers.map((p) => p.cost));
@@ -101,8 +87,16 @@ function SpendBody({
   return (
     <div className="space-y-4">
       <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
-        <Stat label={data.label || "Spend"} value={formatCost(sym, data.cost)} sub={`${data.calls.toLocaleString("en-US")} calls`} />
-        <Stat label="Today" value={formatCost(sym, data.today.cost)} sub={`${data.today.calls.toLocaleString("en-US")} calls`} />
+        <Stat
+          label={data.label || "Spend"}
+          value={formatCost(sym, data.cost)}
+          sub={`${data.calls.toLocaleString("en-US")} calls`}
+        />
+        <Stat
+          label="Today"
+          value={formatCost(sym, data.today.cost)}
+          sub={`${data.today.calls.toLocaleString("en-US")} calls`}
+        />
         <Stat
           label="Tokens in / out"
           value={`${formatTokens(data.input_tokens)} / ${formatTokens(data.output_tokens)}`}
@@ -177,7 +171,10 @@ export function SpendSection({
           Spend
         </div>
         <div className="flex items-center gap-1">
-          <div className="inline-flex rounded-md bg-sidebar border border-line p-0.5" role="tablist">
+          <div
+            className="inline-flex rounded-md bg-sidebar border border-line p-0.5"
+            role="tablist"
+          >
             {SPEND_PERIODS.map((p) => (
               <button
                 key={p.id}
@@ -222,7 +219,9 @@ export function SpendSection({
           <span className="text-[12.5px]">Reading spend…</span>
         </div>
       )}
-      {snap?.status === "ok" && snap.data && <SpendBody data={snap.data} period={period} asOf={snap.updated_at} />}
+      {snap?.status === "ok" && snap.data && (
+        <SpendBody data={snap.data} period={period} asOf={snap.updated_at} />
+      )}
     </section>
   );
 }

@@ -32,7 +32,11 @@ export function localDateKey(now: Date): string {
 }
 
 /** Days shown in the bar chart for a period (daily history is independent of the period). */
-export function dailyForPeriod(daily: readonly SpendDay[], period: SpendPeriod, now: Date): SpendDay[] {
+export function dailyForPeriod(
+  daily: readonly SpendDay[],
+  period: SpendPeriod,
+  now: Date,
+): SpendDay[] {
   switch (period) {
     case "today":
     case "week":
