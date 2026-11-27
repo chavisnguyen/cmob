@@ -52,6 +52,8 @@ export const RPC_METHODS = {
   CLIENT_VIEWING: "mobile.client.viewing",
   USAGE_GET: "mobile.usage.get",
   USAGE_SPEND: "mobile.usage.spend",
+  FILE_READ: "mobile.file.read",
+  CHAT_READ_IMAGE: "mobile.chat.readImage",
 } as const;
 
 /** Server-push event names (frames carry `event` + `data`, no `id`). */
@@ -128,6 +130,26 @@ export interface ProviderUsage {
 export interface UsageSnapshot {
   providers: ProviderUsage[];
   updated_at: number;
+}
+
+/** `mobile.chat.readImage` result: one image from a user prompt in the session transcript. */
+export interface ChatImageResult {
+  media_type: string;
+  /** Base64 without a `data:` prefix. */
+  data: string;
+}
+
+/** `mobile.file.read` result: a markdown/text file inside the workspace (read-only). */
+export interface FileReadResult {
+  /** Path relative to the workspace directory. */
+  path: string;
+  name: string;
+  size: number;
+  mtime_ms: number;
+  /** True when `since_mtime_ms` matched; `content` is then empty. */
+  unchanged: boolean;
+  truncated: boolean;
+  content: string;
 }
 
 /** Periods accepted by `mobile.usage.spend` (gateway whitelist). */

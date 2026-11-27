@@ -59,6 +59,8 @@ export interface AwaitingInput {
 
 export type AgentEvent =
   | { kind: "user"; text: string }
+  /** Image attached to the preceding user prompt; bytes are fetched with `mobile.chat.readImage`. */
+  | { kind: "user-image"; image_id: string; media_type: string }
   | { kind: "thinking"; text: string; duration_secs?: number }
   | { kind: "tool-start"; tool_id: string; name: string; detail?: string }
   | {

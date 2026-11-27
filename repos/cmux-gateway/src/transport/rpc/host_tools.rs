@@ -2,7 +2,7 @@
 
 use crate::protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_GIT_DIFF, METHOD_GIT_STATUS,
-    METHOD_HOST_STATUS, METHOD_UPLOAD_IMAGE, METHOD_USAGE_GET, METHOD_USAGE_SPEND,
+    METHOD_FILE_READ, METHOD_HOST_STATUS, METHOD_UPLOAD_IMAGE, METHOD_USAGE_GET, METHOD_USAGE_SPEND,
 };
 use crate::server::AppState;
 use crate::transport::rpc::workspace::workspace_dir;
@@ -30,6 +30,42 @@ pub async fn try_dispatch(req: &JsonRpcRequest, state: &AppState) -> Option<Json
                 .unwrap_or(false);
             let snap = state.usage_service.get_snapshot(refresh).await;
             JsonRpcResponse::result_value(req.id.clone(), serde_json::to_value(snap).unwrap())
+        }
+        METHOD_FILE_READ => {
+            let Some(path) = req
+                .params
+                .get("path")
+                .and_then(|v| v.as_str())
+                .filter(|p| !p.is_empty())
+            else {
+                return Some(JsonRpcResponse::error(
+                    Some(req.id.clone()),
+                    JsonRpcError::invalid_params("Missing path parameter"),
+                ));
+            };
+            let since = req.params.get("since_mtime_ms").and_then(|v| v.as_u64());
+            let dir = match workspace_dir(state, &req.params).await {
+                Ok(d) => d,
+                Err(e) => return Some(JsonRpcResponse::error(Some(req.id.clone()), e)),
+            };
+            let path = path.to_string();
+            let read = tokio::task::spawn_blocking(move || {
+                crate::services::file_read::read_workspace_file(&dir, &path, since)
+            })
+            .await;
+            match read {
+                Ok(Ok(file)) => {
+                    JsonRpcResponse::result_value(req.id.clone(), serde_json::to_value(file).unwrap())
+                }
+                Ok(Err(e)) => JsonRpcResponse::error(
+                    Some(req.id.clone()),
+                    JsonRpcError::invalid_params(e.message()),
+                ),
+                Err(e) => JsonRpcResponse::error(
+                    Some(req.id.clone()),
+                    JsonRpcError::internal_error(e.to_string()),
+                ),
+            }
         }
         METHOD_USAGE_SPEND => {
             let period = req.params.get("period").and_then(|v| v.as_str()).unwrap_or("month");

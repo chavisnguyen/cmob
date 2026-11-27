@@ -122,6 +122,13 @@ pub enum AgentEvent {
     User {
         text: String,
     },
+    /// One image attached to the user prompt that precedes it in the same turn. `image_id` is an
+    /// opaque handle for `mobile.chat.readImage` (`<transcript line uuid>#<index>`); the bytes stay
+    /// in the transcript instead of riding along on every chat read.
+    UserImage {
+        image_id: String,
+        media_type: String,
+    },
     Thinking {
         text: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]

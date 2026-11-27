@@ -4,7 +4,7 @@ use crate::domain::dialog::extract_approval_screen_context;
 use crate::protocol::event::AgentLifecycleState;
 use crate::protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_CHAT_APPROVE, METHOD_CHAT_INTERRUPT,
-    METHOD_CHAT_READ_SESSION, METHOD_CHAT_SEND, METHOD_CHAT_SESSIONS,
+    METHOD_CHAT_READ_IMAGE, METHOD_CHAT_READ_SESSION, METHOD_CHAT_SEND, METHOD_CHAT_SESSIONS,
 };
 use crate::server::AppState;
 use crate::services::agent_control::interrupt_surface;
@@ -18,6 +18,7 @@ pub async fn try_dispatch(req: &JsonRpcRequest, state: &AppState) -> Option<Json
         METHOD_CHAT_INTERRUPT => handle_interrupt(req, state).await,
         METHOD_CHAT_SESSIONS => handle_sessions(req).await,
         METHOD_CHAT_READ_SESSION => handle_read_session(req, state).await,
+        METHOD_CHAT_READ_IMAGE => handle_read_image(req, state).await,
         _ => return None,
     };
     Some(resp)
@@ -90,6 +91,42 @@ async fn handle_interrupt(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResp
 async fn handle_sessions(req: &JsonRpcRequest) -> JsonRpcResponse {
     let sessions = WorkspaceService::list_hook_sessions().await;
     JsonRpcResponse::result(req.id.clone(), serde_json::json!({ "sessions": sessions })).unwrap()
+}
+
+async fn handle_read_image(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse {
+    let surface_id = req.params.get("surface_id").and_then(|v| v.as_str()).unwrap_or("");
+    let session_id = req.params.get("session_id").and_then(|v| v.as_str()).unwrap_or("");
+    let Some(image_id) = req.params.get("image_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty())
+    else {
+        return JsonRpcResponse::error(
+            Some(req.id.clone()),
+            JsonRpcError::invalid_params("Missing image_id parameter"),
+        );
+    };
+    // The transcript path comes from the gateway's own session resolution, never from the client.
+    let Some(path) = SessionStateService::resolve_session_raw(state, surface_id, session_id)
+        .await
+        .and_then(|r| r.transcript_path)
+    else {
+        return JsonRpcResponse::error(
+            Some(req.id.clone()),
+            JsonRpcError::invalid_params("No transcript for this session"),
+        );
+    };
+    let image_id = image_id.to_string();
+    let read = tokio::task::spawn_blocking(move || {
+        crate::services::transcript_image::read_claude_image(std::path::Path::new(&path), &image_id)
+    })
+    .await;
+    match read {
+        Ok(Ok(img)) => JsonRpcResponse::result_value(req.id.clone(), serde_json::to_value(img).unwrap()),
+        Ok(Err(e)) => {
+            JsonRpcResponse::error(Some(req.id.clone()), JsonRpcError::invalid_params(e.message()))
+        }
+        Err(e) => {
+            JsonRpcResponse::error(Some(req.id.clone()), JsonRpcError::internal_error(e.to_string()))
+        }
+    }
 }
 
 async fn handle_read_session(req: &JsonRpcRequest, state: &AppState) -> JsonRpcResponse {

@@ -50,10 +50,16 @@ export function buildTimelineItemForTurn(params: {
   }
 
   if (turn.role === "user") {
+    const images: { id: string; mediaType: string }[] = [];
+    for (const ev of turn.events) {
+      if (ev.kind === "user-image") images.push({ id: ev.image_id, mediaType: ev.media_type });
+    }
     const texts: string[] = [];
     for (const ev of turn.events) {
       if (ev.kind === "user") {
-        const cleaned = cleanUserPrompt(ev.text);
+        let cleaned = cleanUserPrompt(ev.text);
+        // Real thumbnails replace the "🖼 Image N" placeholder badges.
+        if (images.length > 0) cleaned = cleaned.replace(/🖼\s*Image(?:\s+\d+)?/g, "").trim();
         if (cleaned) texts.push(cleaned);
       }
     }
@@ -62,6 +68,7 @@ export function buildTimelineItemForTurn(params: {
       id: turn.id,
       turn,
       texts,
+      images,
       imagePreviews: pendingMeta?.imagePreviews ?? [],
       pending: Boolean(pendingMeta),
     };

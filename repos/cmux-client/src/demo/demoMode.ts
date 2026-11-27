@@ -237,6 +237,20 @@ export async function handleDemoRpc<T = unknown>(
       } as T;
     }
 
+    case RPC_METHODS.FILE_READ: {
+      const raw = params?.path;
+      const name = typeof raw === "string" ? raw : "PLAN.md";
+      return {
+        path: name,
+        name: name.split("/").pop() ?? name,
+        size: 120,
+        mtime_ms: 1,
+        unchanged: false,
+        truncated: false,
+        content: `# ${name}\n\nDemo document.\n\n- [x] Parse paths in chat\n- [ ] Open viewer\n\nSee [other.md](other.md).`,
+      } as T;
+    }
+
     case RPC_METHODS.USAGE_SPEND: {
       const now = Date.now();
       const zero = {

@@ -10,7 +10,9 @@ import {
 import ReactMarkdown, { type Components } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { Check, Copy, FileCode2 } from "lucide-react";
+import { useOpenChatFile } from "./ChatFileLinkContext";
 import { chatUrlTransform, normalizeChatMarkdownMath } from "./chatMarkdownMath";
+import { parseMarkdownPath } from "./mdPath";
 
 interface NativeChatProseProps {
   content: string;
@@ -94,6 +96,60 @@ const heading = (level: 2 | 3 | 4 | 5 | 6, cls: string) =>
     );
   };
 
+const INLINE_CODE_CLASS =
+  "px-[5px] py-[1px] rounded-[4px] bg-surface border border-line text-[#e5c488] font-mono text-[0.875em] break-all [overflow-wrap:anywhere]";
+
+const FILE_CHIP_CLASS =
+  "inline-flex items-center gap-1 px-1.5 py-[1px] rounded-[4px] bg-surface border border-line-strong/80 text-accent-soft font-mono text-[0.86em] align-baseline break-all";
+
+/** Tappable chip for a markdown path mentioned in chat; opens the read-only viewer. */
+function FileChip({ path, children }: { path: string; children: ReactNode }) {
+  const open = useOpenChatFile();
+  return (
+    <button
+      type="button"
+      title={path}
+      onClick={() => open?.(path)}
+      className={`${FILE_CHIP_CLASS} cursor-pointer hover:border-accent/60 hover:text-fg active:opacity-80 text-left`}
+    >
+      <FileCode2 className="w-3 h-3 shrink-0 inline text-accent" />
+      <span>{children}</span>
+    </button>
+  );
+}
+
+function InlineCode({ children, className }: { children?: ReactNode; className?: string }) {
+  const open = useOpenChatFile();
+  const mdPath = open && !className ? parseMarkdownPath(textOf(children)) : null;
+  if (mdPath) return <FileChip path={mdPath}>{children}</FileChip>;
+  return <code className={`${INLINE_CODE_CLASS} ${className ?? ""}`}>{children}</code>;
+}
+
+function ChatLink({ href, children }: { href?: string; children?: ReactNode }) {
+  const open = useOpenChatFile();
+  const mdPath = open && href ? parseMarkdownPath(href) : null;
+  if (mdPath) return <FileChip path={mdPath}>{children}</FileChip>;
+  if (href && href.startsWith("file://")) {
+    const cleanPath = decodeURIComponent(href.replace(/^file:\/\//, ""));
+    return (
+      <span title={cleanPath} className={FILE_CHIP_CLASS}>
+        <FileCode2 className="w-3 h-3 shrink-0 inline text-accent" />
+        <span>{children}</span>
+      </span>
+    );
+  }
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="text-accent-soft underline underline-offset-3 decoration-accent/40 hover:decoration-accent-soft break-all transition-colors"
+    >
+      {children}
+    </a>
+  );
+}
+
 const COMPONENTS: Components = {
   pre({ children }) {
     const child = Children.toArray(children)[0];
@@ -103,15 +159,7 @@ const COMPONENTS: Components = {
     const lang = /language-([\w-]+)/.exec(props.className ?? "")?.[1];
     return <CodeBlock code={textOf(props.children).replace(/\n$/, "")} lang={lang} />;
   },
-  code({ children, className }) {
-    return (
-      <code
-        className={`px-[5px] py-[1px] rounded-[4px] bg-surface border border-line text-[#e5c488] font-mono text-[0.875em] break-all [overflow-wrap:anywhere] ${className ?? ""}`}
-      >
-        {children}
-      </code>
-    );
-  },
+  code: InlineCode,
   p: ({ children }) => <p className="break-words [overflow-wrap:anywhere]">{children}</p>,
   strong: ({ children }) => <strong className="font-semibold text-fg">{children}</strong>,
   del: ({ children }) => <del className="text-muted">{children}</del>,
@@ -134,30 +182,7 @@ const COMPONENTS: Components = {
     <blockquote className="border-l-2 border-accent/55 pl-3 text-fg-soft/85">{children}</blockquote>
   ),
   hr: () => <hr className="border-line my-2.5" />,
-  a: ({ href, children }) => {
-    if (href && href.startsWith("file://")) {
-      const cleanPath = decodeURIComponent(href.replace(/^file:\/\//, ""));
-      return (
-        <span
-          title={cleanPath}
-          className="inline-flex items-center gap-1 px-1.5 py-[1px] rounded-[4px] bg-surface border border-line-strong/80 text-accent-soft font-mono text-[0.86em] align-baseline break-all"
-        >
-          <FileCode2 className="w-3 h-3 shrink-0 inline text-accent" />
-          <span>{children}</span>
-        </span>
-      );
-    }
-    return (
-      <a
-        href={href}
-        target="_blank"
-        rel="noopener noreferrer"
-        className="text-accent-soft underline underline-offset-3 decoration-accent/40 hover:decoration-accent-soft break-all transition-colors"
-      >
-        {children}
-      </a>
-    );
-  },
+  a: ChatLink,
   table: ({ children }) => (
     <div className="my-2 overflow-x-auto rounded-lg border border-line max-w-full">
       <table className="w-full text-left text-[12.5px] border-collapse">{children}</table>

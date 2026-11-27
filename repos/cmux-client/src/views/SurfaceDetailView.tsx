@@ -1,4 +1,6 @@
-import { lazy, Suspense, useEffect, useState, type ReactNode } from "react";
+import { lazy, Suspense, useCallback, useEffect, useState, type ReactNode } from "react";
+import { ChatFileLinkContext } from "../components/chat/ChatFileLinkContext";
+import { ChatImageContext } from "../components/chat/ChatImageContext";
 import { CloseSurfaceDialog } from "../components/surface/CloseSurfaceDialog";
 import { NewSurfaceModal, type CreateSurfaceParams } from "../components/surface/NewSurfaceModal";
 import { RenameSurfaceModal } from "../components/surface/RenameSurfaceModal";
@@ -8,11 +10,20 @@ import {
 } from "../components/surface/SurfaceDetailHeader";
 import { SurfaceSwitchSheet } from "../components/surface/SurfaceSwitchSheet";
 import { surfaceIdentity } from "../domain/workspaceTree";
-import type { SurfaceNode, WorkspaceNode } from "../protocol/rpc";
+import {
+  RPC_METHODS,
+  type ChatImageResult,
+  type SurfaceNode,
+  type WorkspaceNode,
+} from "../protocol/rpc";
+import { wsClient } from "../transport/wsClient";
 import { useChatSessionController } from "../state/useChatSessionController";
 
 const LazyOrcaChatView = lazy(() =>
   import("../components/chat/OrcaChatView").then((m) => ({ default: m.OrcaChatView })),
+);
+const LazyMarkdownFileViewer = lazy(() =>
+  import("../components/files/MarkdownFileViewer").then((m) => ({ default: m.MarkdownFileViewer })),
 );
 const LazyRawTerminalView = lazy(() =>
   import("../components/terminal/RawTerminalView").then((m) => ({ default: m.RawTerminalView })),
@@ -55,6 +66,20 @@ export function SurfaceDetailView({
   const [showNewModal, setShowNewModal] = useState(false);
   const [surfaceToRename, setSurfaceToRename] = useState<SurfaceNode | null>(null);
   const [surfaceToClose, setSurfaceToClose] = useState<SurfaceNode | null>(null);
+  const [openFilePath, setOpenFilePath] = useState<string | null>(null);
+  const agentSessionId = surface.agent?.session_id;
+  const surfaceKeyForImages = chat.surfaceKey;
+  const fetchChatImage = useCallback(
+    async (imageId: string) => {
+      const img = await wsClient.call<ChatImageResult>(RPC_METHODS.CHAT_READ_IMAGE, {
+        surface_id: surfaceKeyForImages,
+        session_id: agentSessionId,
+        image_id: imageId,
+      });
+      return `data:${img.media_type};base64,${img.data}`;
+    },
+    [surfaceKeyForImages, agentSessionId],
+  );
 
   useEffect(() => {
     if (chat.activeMode !== "chat") return;
@@ -136,38 +161,42 @@ export function SurfaceDetailView({
       <div className="flex-1 min-h-0 overflow-hidden min-w-0 max-w-full flex flex-col">
         {chat.activeMode === "chat" ? (
           <Suspense fallback={<div className="flex-1 bg-bg" />}>
-            <LazyOrcaChatView
-              key={chat.surfaceKey}
-              turns={chat.turns}
-              pendingSends={chat.pendingSends}
-              withinGrace={chat.withinGrace}
-              snapshotConfirmed={chat.snapshotConfirmed}
-              isSyncing={isSyncing}
-              connState={chat.connState}
-              isLoading={chat.initialLoading}
-              agentKind={surface.agent?.agent_kind || "agent"}
-              startupDialog={chat.startupDialog}
-              onAnswerDialog={chat.handleAnswerDialog}
-              onAnswerQuestion={chat.handleAnswerQuestion}
-              onOpenTerminal={() => chat.setViewMode("terminal")}
-              hasMoreHistory={chat.hasMoreHistory}
-              isLoadingOlder={chat.loadingOlder}
-              onLoadOlder={chat.handleLoadOlder}
-              isWorking={chat.isWorking}
-              lifecycleState={chat.lifecycleState}
-              activityText={chat.activityText}
-              awaitingPrompt={chat.awaitingPrompt}
-              activeSubagents={chat.activeSubagents}
-              activeBackgroundTasks={chat.activeBackgroundTasks}
-              isApproving={chat.isApproving}
-              onFollowingChange={chat.setFollowing}
-              onSend={chat.handleSendPrompt}
-              onUploadImage={chat.handleUploadImage}
-              surfaceId={chat.surfaceKey}
-              onApprove={chat.handleApprove}
-              onInterrupt={chat.handleInterrupt}
-              isDesktop={desktopLayout}
-            />
+            <ChatFileLinkContext.Provider value={setOpenFilePath}>
+              <ChatImageContext.Provider value={fetchChatImage}>
+                <LazyOrcaChatView
+                  key={chat.surfaceKey}
+                  turns={chat.turns}
+                  pendingSends={chat.pendingSends}
+                  withinGrace={chat.withinGrace}
+                  snapshotConfirmed={chat.snapshotConfirmed}
+                  isSyncing={isSyncing}
+                  connState={chat.connState}
+                  isLoading={chat.initialLoading}
+                  agentKind={surface.agent?.agent_kind || "agent"}
+                  startupDialog={chat.startupDialog}
+                  onAnswerDialog={chat.handleAnswerDialog}
+                  onAnswerQuestion={chat.handleAnswerQuestion}
+                  onOpenTerminal={() => chat.setViewMode("terminal")}
+                  hasMoreHistory={chat.hasMoreHistory}
+                  isLoadingOlder={chat.loadingOlder}
+                  onLoadOlder={chat.handleLoadOlder}
+                  isWorking={chat.isWorking}
+                  lifecycleState={chat.lifecycleState}
+                  activityText={chat.activityText}
+                  awaitingPrompt={chat.awaitingPrompt}
+                  activeSubagents={chat.activeSubagents}
+                  activeBackgroundTasks={chat.activeBackgroundTasks}
+                  isApproving={chat.isApproving}
+                  onFollowingChange={chat.setFollowing}
+                  onSend={chat.handleSendPrompt}
+                  onUploadImage={chat.handleUploadImage}
+                  surfaceId={chat.surfaceKey}
+                  onApprove={chat.handleApprove}
+                  onInterrupt={chat.handleInterrupt}
+                  isDesktop={desktopLayout}
+                />
+              </ChatImageContext.Provider>
+            </ChatFileLinkContext.Provider>
           </Suspense>
         ) : surface.surface_type && surface.surface_type !== "terminal" ? (
           <div className="h-full flex flex-col items-center justify-center gap-1 px-8 text-center">
@@ -189,6 +218,16 @@ export function SurfaceDetailView({
           </Suspense>
         )}
       </div>
+
+      {openFilePath && (
+        <Suspense fallback={null}>
+          <LazyMarkdownFileViewer
+            workspaceId={workspace.id}
+            initialPath={openFilePath}
+            onClose={() => setOpenFilePath(null)}
+          />
+        </Suspense>
+      )}
 
       {onCreateSurface && (
         <NewSurfaceModal

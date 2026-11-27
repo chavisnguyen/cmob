@@ -9,6 +9,7 @@ import { MobileNativeChatBackgroundTasksCard } from "./MobileNativeChatBackgroun
 import { MobileNativeChatReasoningRow } from "./MobileNativeChatReasoningRow";
 import { MobileNativeChatSubagentGroup } from "./MobileNativeChatSubagentGroup";
 import { MobileNativeChatToolRun } from "./MobileNativeChatToolRun";
+import { ChatImageThumb } from "./ChatImages";
 import { NativeChatProse } from "./NativeChatProse";
 
 function renderAssistantBlock(block: AssistantBlockItem, surfaceKey?: string) {
@@ -114,15 +115,13 @@ export const ChatTimelineItemView = memo(function ChatTimelineItemView({
     return (
       <div className="flex flex-col items-end w-full min-w-0 max-w-full py-1.5">
         <div className="max-w-[90%] sm:max-w-[78%] bg-[#24211f] border border-accent/25 text-fg rounded-lg px-3.5 py-2 text-[13.5px] leading-[1.55] min-w-0 break-words [overflow-wrap:anywhere] space-y-2">
-          {item.imagePreviews.length > 0 && (
+          {item.imagePreviews.length + item.images.length > 0 && (
             <div className="flex flex-wrap gap-1.5">
               {item.imagePreviews.map((src, idx) => (
-                <img
-                  key={`${item.id}-img-${idx}`}
-                  src={src}
-                  alt="Attached"
-                  className="w-14 h-14 rounded-md object-cover border border-line-strong"
-                />
+                <ChatImageThumb key={`${item.id}-img-${idx}`} src={src} />
+              ))}
+              {item.images.map((img) => (
+                <ChatImageThumb key={img.id} imageId={img.id} />
               ))}
             </div>
           )}

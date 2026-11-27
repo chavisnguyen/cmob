@@ -123,6 +123,11 @@ pub fn turn_digest(turn: &AgentTurn) -> u64 {
                 h.write_u8(1);
                 h.write_str(text);
             }
+            AgentEvent::UserImage { image_id, media_type } => {
+                h.write_u8(60);
+                h.write_str(image_id);
+                h.write_str(media_type);
+            }
             AgentEvent::Thinking { text, duration_secs } => {
                 h.write_u8(2);
                 h.write_str(text);

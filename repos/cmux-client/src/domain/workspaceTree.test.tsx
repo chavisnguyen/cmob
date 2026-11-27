@@ -92,6 +92,7 @@ describe("unread notification badges and cached syncing UI", () => {
             },
             texts: ["cached prompt"],
             imagePreviews: [],
+            images: [],
             pending: false,
           },
         ]}

@@ -1,5 +1,6 @@
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
+import { ChatFileLinkContext } from "./ChatFileLinkContext";
 import { normalizeChatMarkdownMath } from "./chatMarkdownMath";
 import { NativeChatProse } from "./NativeChatProse";
 
@@ -57,5 +58,32 @@ describe("NativeChatProse", () => {
     expect(out).toContain("$\\rightarrow$");
     expect(out).toContain('title="/Users/chavis/Documents/personal/md2pdf/md2pdf.sh#L1-L34"');
     expect(out).toContain("md2pdf/md2pdf.sh");
+  });
+
+  describe("markdown file chips", () => {
+    const withViewer = (md: string) =>
+      renderToStaticMarkup(
+        <ChatFileLinkContext.Provider value={() => {}}>
+          <NativeChatProse content={md} />
+        </ChatFileLinkContext.Provider>,
+      );
+
+    it("makes inline-code and linked markdown paths tappable when a viewer is available", () => {
+      const out = withViewer(
+        "Xem `docs/plan.md`, [spec](specs/a.md) và [abs](file:///w/AGENTS.md#L3). Còn `main.rs` và [web](https://e.com/x.md).",
+      );
+      expect((out.match(/<button/g) ?? []).length).toBe(3);
+      expect(out).toContain('title="docs/plan.md"');
+      expect(out).toContain('title="specs/a.md"');
+      expect(out).toContain('title="/w/AGENTS.md"');
+      expect(out).toMatch(/<code[^>]*>main\.rs<\/code>/);
+      expect(out).toContain('href="https://e.com/x.md"');
+    });
+
+    it("leaves markdown paths as plain code when there is no viewer", () => {
+      const out = html("Xem `docs/plan.md`.");
+      expect(out).not.toContain("<button");
+      expect(out).toMatch(/<code[^>]*>docs\/plan\.md<\/code>/);
+    });
   });
 });

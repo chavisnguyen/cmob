@@ -15,6 +15,7 @@ pub const CODE_BACKEND_UNAVAILABLE: i32 = -32000;
 /// Standard RPC Method Names
 pub const METHOD_CHAT_SESSIONS: &str = "mobile.chat.sessions";
 pub const METHOD_CHAT_READ_SESSION: &str = "mobile.chat.readSession";
+pub const METHOD_CHAT_READ_IMAGE: &str = "mobile.chat.readImage";
 pub const METHOD_CHAT_ANSWER_DIALOG: &str = "mobile.chat.answerDialog";
 pub const METHOD_CHAT_ANSWER_QUESTION: &str = "mobile.chat.answerQuestion";
 pub const METHOD_CHAT_SUBSCRIBE: &str = "mobile.chat.subscribe";
@@ -54,6 +55,7 @@ pub const METHOD_TERMINAL_UNSUBSCRIBE: &str = "mobile.terminal.unsubscribe";
 pub const METHOD_CLIENT_VIEWING: &str = "mobile.client.viewing";
 pub const METHOD_USAGE_GET: &str = "mobile.usage.get";
 pub const METHOD_USAGE_SPEND: &str = "mobile.usage.spend";
+pub const METHOD_FILE_READ: &str = "mobile.file.read";
 pub const EVENT_WORKSPACE_BOOTSTRAP: &str = "mobile.workspace.bootstrap";
 
 /// Identifier for JSON-RPC requests and responses, accommodating both strings and numbers.

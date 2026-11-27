@@ -151,7 +151,10 @@ export type ChatTimelineItem =
       id: string;
       turn: AgentTurn;
       texts: string[];
+      /** Optimistic local previews of images just sent from this device. */
       imagePreviews: string[];
+      /** Images stored in the transcript for this prompt (fetched on demand). */
+      images: { id: string; mediaType: string }[];
       pending: boolean;
     }
   | {

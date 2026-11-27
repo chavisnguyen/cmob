@@ -74,7 +74,7 @@ export function estimateTimelineItemHeight(item: ChatTimelineItem, surfaceKey?: 
     }
     const rawHeight = Math.max(1, totalLines) * 20;
     const textHeight = expandedAny ? rawHeight : Math.min(USER_COLLAPSED_CAP_PX, rawHeight);
-    const imgHeight = item.imagePreviews.length > 0 ? 68 : 0;
+    const imgHeight = item.imagePreviews.length + item.images.length > 0 ? 76 : 0;
     return Math.max(MIN_TURN_HEIGHT_PX, textHeight + imgHeight + 24);
   }
 

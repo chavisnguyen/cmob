@@ -437,6 +437,8 @@ pub fn parse_line(
             // empty, so `cleaned_parts` stays empty and NEVER closes `current_turn` or emits a User bubble!
             let mut cleaned_parts: Vec<String> = Vec::new();
             let mut image_count = 0usize;
+            let mut image_refs: Vec<(String, String)> = Vec::new();
+            let line_uuid = val.get("uuid").and_then(|u| u.as_str()).filter(|u| !u.is_empty());
             if let Some(m) = msg {
                 match m.get("content") {
                     Some(serde_json::Value::String(s)) => {
@@ -455,6 +457,17 @@ pub fn parse_line(
                                     }
                                 }
                                 Some("image") => {
+                                    if let Some(uuid) = line_uuid
+                                        && let Some(media_type) = item
+                                            .pointer("/source/media_type")
+                                            .and_then(|m| m.as_str())
+                                            .filter(|m| m.starts_with("image/"))
+                                    {
+                                        image_refs.push((
+                                            format!("{uuid}#{image_count}"),
+                                            media_type.to_string(),
+                                        ));
+                                    }
                                     image_count += 1;
                                 }
                                 _ => {}
@@ -498,6 +511,9 @@ pub fn parse_line(
             );
             turn.timestamp = ts_ms;
             turn.events.push(AgentEvent::User { text });
+            for (image_id, media_type) in image_refs {
+                turn.events.push(AgentEvent::UserImage { image_id, media_type });
+            }
             turns.push(turn);
         }
         "system" => {
@@ -851,5 +867,56 @@ pub fn parse_line(
             }
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod image_tests {
+    use super::*;
+
+    fn parse(lines: &[&str]) -> Vec<AgentTurn> {
+        let mut current = None;
+        let mut turns = Vec::new();
+        for l in lines {
+            parse_line(serde_json::from_str(l).unwrap(), "surf", &mut current, &mut turns);
+        }
+        if let Some(t) = current.take() {
+            turns.push(t);
+        }
+        turns
+    }
+
+    #[test]
+    fn user_images_become_refs_without_bytes() {
+        let turns = parse(&[
+            r#"{"type":"user","uuid":"u-1","message":{"role":"user","content":[{"type":"text","text":"look at this"},{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}},{"type":"image","source":{"type":"base64","media_type":"image/webp","data":"REVG"}}]}}"#,
+        ]);
+        assert_eq!(turns.len(), 1);
+        assert_eq!(
+            turns[0].events,
+            vec![
+                AgentEvent::User { text: "look at this".into() },
+                AgentEvent::UserImage { image_id: "u-1#0".into(), media_type: "image/png".into() },
+                AgentEvent::UserImage { image_id: "u-1#1".into(), media_type: "image/webp".into() },
+            ]
+        );
+        let json = serde_json::to_string(&turns[0].events).unwrap();
+        assert!(!json.contains("QUJD"), "image bytes must not ride along in chat payloads");
+    }
+
+    #[test]
+    fn image_only_prompt_keeps_placeholder_and_ref_and_skips_when_no_uuid() {
+        let with = parse(&[
+            r#"{"type":"user","uuid":"u-2","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/jpeg","data":"QUJD"}}]}}"#,
+        ]);
+        assert_eq!(with[0].events[0], AgentEvent::User { text: "[Image #1]".into() });
+        assert_eq!(
+            with[0].events[1],
+            AgentEvent::UserImage { image_id: "u-2#0".into(), media_type: "image/jpeg".into() }
+        );
+        let without = parse(&[
+            r#"{"type":"user","message":{"role":"user","content":[{"type":"image","source":{"type":"base64","media_type":"image/png","data":"QUJD"}}]}}"#,
+        ]);
+        assert_eq!(without[0].events, vec![AgentEvent::User { text: "[Image #1]".into() }]);
     }
 }

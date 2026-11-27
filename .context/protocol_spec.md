@@ -295,3 +295,10 @@ Client: composer is a `<textarea>` (Enter = newline, only the arrow sends); sent
 ## `mobile.usage.spend` (added 2026-11-27)
 Params `{period: "today"|"week"|"30days"|"month", refresh?: bool}` → `{status, error?, data?, updated_at}`.
 Source: `repos/cmux-gateway/src/services/spend.rs`, `repos/cmux-gateway/src/transport/rpc/host_tools.rs`. Details in `.context/codeburn_integration.md`.
+
+## `mobile.file.read` (added 2026-11-27)
+Params `{workspace_id, path, since_mtime_ms?}`; `path` relative to the workspace dir, absolute, or `file://`. Result `{path, name, size, mtime_ms, unchanged, truncated, content}`; errors are `invalid_params` ("File not found in this workspace.", "File is outside this workspace.", "Only markdown and text files can be opened.", ...).
+Source: `repos/cmux-gateway/src/services/file_read.rs`, `repos/cmux-gateway/src/transport/rpc/host_tools.rs`. Design in `.context/cmux_markdown_surface.md`.
+
+## `mobile.chat.readImage` + event `user-image` (added 2026-11-27)
+Event `{kind:"user-image", image_id, media_type}` follows the `user` event of a user turn. `mobile.chat.readImage {surface_id, session_id, image_id}` → `{media_type, data(base64)}`. See `.context/image_view.md`.

@@ -29,6 +29,9 @@ export function computeTurnDigest(turn: AgentTurn): string {
       case "status":
         h = hashStringFnv1a(h, `${ev.text.length}:${ev.text}`);
         break;
+      case "user-image":
+        h = hashStringFnv1a(h, `${ev.image_id}:${ev.media_type}`);
+        break;
       case "thinking":
         h = hashStringFnv1a(h, `${ev.duration_secs ?? -1}:${ev.text.length}:${ev.text}`);
         break;
@@ -89,6 +92,10 @@ function eventsEqual(a: AgentEvent, b: AgentEvent): boolean {
     case "delta":
     case "status":
       return a.text === (b as typeof a).text;
+    case "user-image": {
+      const bi = b as typeof a;
+      return a.image_id === bi.image_id && a.media_type === bi.media_type;
+    }
     case "thinking": {
       const bt = b as typeof a;
       return a.duration_secs === bt.duration_secs && a.text === bt.text;

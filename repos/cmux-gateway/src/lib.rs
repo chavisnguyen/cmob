@@ -10,5 +10,5 @@ pub mod transport;
 
 // Clean crate-root aliases for external binaries and integration tests.
 pub use io::{git_view, uploads};
-pub use services::{notifications, pairing_store, push, spend, usage};
+pub use services::{file_read, notifications, pairing_store, push, spend, transcript_image, usage};
 pub use transport::loopback;
