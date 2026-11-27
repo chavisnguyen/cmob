@@ -51,6 +51,7 @@ export const RPC_METHODS = {
   TERMINAL_UNSUBSCRIBE: "mobile.terminal.unsubscribe",
   CLIENT_VIEWING: "mobile.client.viewing",
   USAGE_GET: "mobile.usage.get",
+  USAGE_SPEND: "mobile.usage.spend",
 } as const;
 
 /** Server-push event names (frames carry `event` + `data`, no `id`). */
@@ -126,6 +127,67 @@ export interface ProviderUsage {
 
 export interface UsageSnapshot {
   providers: ProviderUsage[];
+  updated_at: number;
+}
+
+/** Periods accepted by `mobile.usage.spend` (gateway whitelist). */
+export type SpendPeriod = "today" | "week" | "30days" | "month";
+
+export interface SpendTokens {
+  cost: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+  cache_read_tokens: number;
+  cache_write_tokens: number;
+}
+
+export interface SpendDay extends SpendTokens {
+  date: string;
+}
+
+export interface SpendModel {
+  name: string;
+  cost: number;
+  calls: number;
+  input_tokens: number;
+  output_tokens: number;
+}
+
+export interface SpendProvider {
+  id: string;
+  label: string;
+  cost: number;
+  calls: number;
+  sessions: number;
+}
+
+export interface SpendProject {
+  name: string;
+  cost: number;
+  sessions: number;
+}
+
+export interface SpendData extends SpendTokens {
+  period: SpendPeriod;
+  label: string;
+  currency: { code: string; symbol: string; rate: number };
+  sessions: number;
+  cache_hit_percent: number;
+  today: SpendTokens;
+  week: SpendTokens;
+  month: SpendTokens;
+  daily: SpendDay[];
+  models: SpendModel[];
+  providers: SpendProvider[];
+  projects: SpendProject[];
+}
+
+/** `mobile.usage.spend` result: token cost per day/month sourced from the host's `codeburn` CLI. */
+export interface SpendSnapshot {
+  status: "ok" | "unavailable" | "error";
+  error?: string;
+  data?: SpendData;
   updated_at: number;
 }
 

@@ -2,6 +2,7 @@ import { Gauge, Loader2, RefreshCw } from "lucide-react";
 import type { ProviderUsage, UsageSnapshot } from "../../protocol/rpc";
 import type { ConnectionState } from "../../transport/wsClient";
 import { AgentIcon } from "../common/AgentIcon";
+import { SpendSection } from "./SpendSection";
 import {
   clampUsedPercent,
   formatResetCountdown,
@@ -292,6 +293,7 @@ export function UsageView({
           unsupported={unsupported}
           now={now}
         />
+        <SpendSection connState={connState} hostKey={hostName} />
       </div>
     </div>
   );

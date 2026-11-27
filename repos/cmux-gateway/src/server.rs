@@ -6,6 +6,7 @@ use crate::cmux::DualTransportCmuxBridge;
 use crate::protocol::PairingOffer;
 use crate::services::pairing_store::{ct_eq, DeviceRegistry};
 use crate::services::push::PushService;
+use crate::services::spend::SpendService;
 use crate::services::usage::UsageService;
 use crate::services::WorkspaceRuntimeStore;
 use crate::transport::ws_session::MAX_WS_CONNECTIONS;
@@ -33,6 +34,7 @@ pub struct AppState {
     pub clients: ClientRegistry,
     pub notif_tx: tokio::sync::broadcast::Sender<NotificationBroadcast>,
     pub usage_service: UsageService,
+    pub spend_service: SpendService,
     pub runtime: WorkspaceRuntimeStore,
 }
 
@@ -51,6 +53,7 @@ impl AppState {
             clients: ClientRegistry::default(),
             notif_tx: tokio::sync::broadcast::channel(128).0,
             usage_service: UsageService::new(),
+            spend_service: SpendService::new(),
             runtime: WorkspaceRuntimeStore::new(),
         }
     }

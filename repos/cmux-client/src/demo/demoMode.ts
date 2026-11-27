@@ -237,6 +237,57 @@ export async function handleDemoRpc<T = unknown>(
       } as T;
     }
 
+    case RPC_METHODS.USAGE_SPEND: {
+      const now = Date.now();
+      const zero = { cost: 0, calls: 0, input_tokens: 0, output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
+      const daily = Array.from({ length: 31 }, (_, i) => {
+        const d = new Date(now - (30 - i) * 86400_000);
+        const cost = 20 + ((i * 37) % 90);
+        return {
+          date: `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`,
+          ...zero,
+          cost,
+          calls: cost * 12,
+          input_tokens: cost * 90_000,
+          output_tokens: cost * 8_000,
+        };
+      });
+      return {
+        status: "ok",
+        updated_at: now,
+        data: {
+          period: "month",
+          label: "This month",
+          currency: { code: "USD", symbol: "$", rate: 1 },
+          sessions: 64,
+          cache_hit_percent: 93.5,
+          cost: 1480.5,
+          calls: 18_200,
+          input_tokens: 220_000_000,
+          output_tokens: 18_000_000,
+          cache_read_tokens: 3_100_000_000,
+          cache_write_tokens: 12_000_000,
+          today: { ...zero, cost: 62.4, calls: 910 },
+          week: { ...zero, cost: 388.2, calls: 5400 },
+          month: { ...zero, cost: 1480.5, calls: 18_200 },
+          daily,
+          models: [
+            { name: "Sonnet 5.5", cost: 720.1, calls: 9000, input_tokens: 110_000_000, output_tokens: 9_000_000 },
+            { name: "Gemini 3.8 Flash", cost: 540.3, calls: 7000, input_tokens: 90_000_000, output_tokens: 7_000_000 },
+            { name: "Opus 5.5", cost: 220.1, calls: 2200, input_tokens: 20_000_000, output_tokens: 2_000_000 },
+          ],
+          providers: [
+            { id: "claude", label: "Claude", cost: 940.2, calls: 11_000, sessions: 40 },
+            { id: "antigravity", label: "Antigravity", cost: 540.3, calls: 7200, sessions: 24 },
+          ],
+          projects: [
+            { name: "cmux-mobile", cost: 910.4, sessions: 38 },
+            { name: "demo-app", cost: 570.1, sessions: 26 },
+          ],
+        },
+      } as T;
+    }
+
     case RPC_METHODS.USAGE_GET: {
       const now = Date.now();
       return {

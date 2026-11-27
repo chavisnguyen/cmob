@@ -291,3 +291,7 @@ Client: composer is a `<textarea>` (Enter = newline, only the arrow sends); sent
 - **Wire Handshake (`repos/cmux-gateway/src/protocol/auth.rs:27-90`, `repos/cmux-gateway/src/transport/ws_session.rs:123-180,425-495`, `repos/cmux-client/src/transport/wsClient.ts:145-182,369-445`):**
   - Client attaches optional `bootstrap: { workspace_tree: true, surface_id?: string, is_desktop?: boolean, max_turns?: number, delta?: boolean }` directly inside the first WebSocket `auth` frame (`App.tsx:37-55`).
   - Gateway advertises `"bootstrap.v1"` in `auth_ok.capabilities`, immediately builds the workspace tree (`WorkspaceTreeBuilder::build_tree`), emits server-push event `mobile.workspace.bootstrap` (`{ workspaces, subscribed_surface_id }`), and spawns `chat_watcher_stream` for the target/default agent surface so `auth_ok` + `mobile.workspace.bootstrap` + initial `mobile.chat.update` arrive together in **1 single TCP/TLS round-trip** (collapsing the former 3-RTT `auth -> mobile.workspace.tree -> mobile.chat.subscribe` waterfall while staying 100% backwards-compatible with gateways or clients without `bootstrap.v1`).
+
+## `mobile.usage.spend` (added 2026-11-27)
+Params `{period: "today"|"week"|"30days"|"month", refresh?: bool}` → `{status, error?, data?, updated_at}`.
+Source: `repos/cmux-gateway/src/services/spend.rs`, `repos/cmux-gateway/src/transport/rpc/host_tools.rs`. Details in `.context/codeburn_integration.md`.

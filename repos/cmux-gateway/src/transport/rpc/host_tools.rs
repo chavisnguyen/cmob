@@ -2,7 +2,7 @@
 
 use crate::protocol::{
     JsonRpcError, JsonRpcRequest, JsonRpcResponse, METHOD_GIT_DIFF, METHOD_GIT_STATUS,
-    METHOD_HOST_STATUS, METHOD_UPLOAD_IMAGE, METHOD_USAGE_GET,
+    METHOD_HOST_STATUS, METHOD_UPLOAD_IMAGE, METHOD_USAGE_GET, METHOD_USAGE_SPEND,
 };
 use crate::server::AppState;
 use crate::transport::rpc::workspace::workspace_dir;
@@ -29,6 +29,17 @@ pub async fn try_dispatch(req: &JsonRpcRequest, state: &AppState) -> Option<Json
                 .and_then(|v| v.as_bool())
                 .unwrap_or(false);
             let snap = state.usage_service.get_snapshot(refresh).await;
+            JsonRpcResponse::result_value(req.id.clone(), serde_json::to_value(snap).unwrap())
+        }
+        METHOD_USAGE_SPEND => {
+            let period = req.params.get("period").and_then(|v| v.as_str()).unwrap_or("month");
+            let refresh = req.params.get("refresh").and_then(|v| v.as_bool()).unwrap_or(false);
+            let Some(snap) = state.spend_service.get_spend(period, refresh).await else {
+                return Some(JsonRpcResponse::error(
+                    Some(req.id.clone()),
+                    JsonRpcError::invalid_params("period must be one of: today, week, 30days, month"),
+                ));
+            };
             JsonRpcResponse::result_value(req.id.clone(), serde_json::to_value(snap).unwrap())
         }
         METHOD_UPLOAD_IMAGE => {
