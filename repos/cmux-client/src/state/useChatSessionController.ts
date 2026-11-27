@@ -142,6 +142,8 @@ export function useChatSessionController({
     lifecycleState: state.lifecycleState,
     activityText: state.activityText,
     awaitingPrompt: state.awaitingPrompt,
+    activeSubagents: state.activeSubagents,
+    activeBackgroundTasks: state.activeBackgroundTasks,
     isApproving,
     forkStatus,
     setFollowing,

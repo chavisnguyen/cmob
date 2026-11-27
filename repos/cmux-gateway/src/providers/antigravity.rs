@@ -305,7 +305,7 @@ pub fn parse_line(
                         {
                             // Sending a message to a previously reported subagent wakes/resumes it.
                             let mut cur = Some(turn);
-                            mutate_subagent_by_ids(turns, &mut cur, &[recipient.as_str()], |a| {
+                            let found = mutate_subagent_by_ids(turns, &mut cur, &[recipient.as_str()], |a| {
                                 if matches!(
                                     a.state,
                                     SubagentState::Completed
@@ -318,7 +318,26 @@ pub fn parse_line(
                                     a.started_at = a.started_at.or(ts_ms);
                                 }
                             });
-                            turn = cur.unwrap();
+                            let mut t_cur = cur.unwrap();
+                            if !found {
+                                // Tail window (>128 KiB) may start after the initial `invoke_subagent`;
+                                // attach the target subagent UUID here so child reconciliation still
+                                // tracks its active subtree without scanning from byte 0.
+                                let group_id = format!("agy-subagents-{}", t_cur.id);
+                                push_subagent_to_turn(
+                                    &mut t_cur,
+                                    &group_id,
+                                    SubagentEntry {
+                                        id: recipient,
+                                        label: "Subagent".to_string(),
+                                        state: SubagentState::Working,
+                                        tokens: None,
+                                        started_at: ts_ms,
+                                        settled_at: None,
+                                    },
+                                );
+                            }
+                            turn = t_cur;
                         }
                         let tool_id = format!("{}-call-{}-{}", name, turn.events.len(), tc_idx);
                         turn.events.push(AgentEvent::ToolStart {

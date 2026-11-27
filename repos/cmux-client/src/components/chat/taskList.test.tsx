@@ -292,6 +292,27 @@ describe("multi-agent taskList & background work normalization", () => {
     const afterIdle = deriveConversationTasks(allFinishedTurn, false);
     expect(afterIdle.dockedTaskList).toBeNull();
     expect(afterIdle.backgroundWork).toBeNull();
+
+    // Subagents spawned in earlier turns (> max_turns cutoff) arrive via `activeSubagents` and still populate ComposerTray
+    const outOfWindowActive = deriveConversationTasks(
+      allFinishedTurn,
+      false,
+      [
+        {
+          id: "cc7f9ac4-7f59-416d-8867-e491d1b9b009",
+          label: "Teamwork Coordinator",
+          state: "working",
+        },
+        {
+          id: "19f46a64-a3e1-464f-beb3-80776b07bcda",
+          label: "↳ Worker 2C",
+          state: "working",
+        },
+      ],
+      [],
+    );
+    expect(outOfWindowActive.backgroundWork?.hasLiveWork).toBe(true);
+    expect(outOfWindowActive.backgroundWork?.workingCount).toBe(2);
   });
 
   it("renders unverifiable tasks honestly as ended without inventing 32h elapsed time or spinning idle checklists", () => {

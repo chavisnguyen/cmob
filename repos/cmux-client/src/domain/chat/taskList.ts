@@ -429,10 +429,46 @@ function isWorkingState(state: SubagentState): boolean {
   return state === "working";
 }
 
-function buildActiveBackgroundWork(turns: readonly AgentTurn[]): ActiveBackgroundWork | null {
-  if (turns.length === 0) return null;
+function buildActiveBackgroundWork(
+  turns: readonly AgentTurn[],
+  activeSubagents: readonly SubagentEntry[] = [],
+  activeBackgroundTasks: readonly BackgroundTaskEntry[] = [],
+): ActiveBackgroundWork | null {
+  if (turns.length === 0 && activeSubagents.length === 0 && activeBackgroundTasks.length === 0) {
+    return null;
+  }
 
   const byKey = new Map<string, { item: UnifiedWorkItem; turnIdx: number }>();
+
+  for (const a of activeSubagents) {
+    byKey.set(`agent:${a.id}`, {
+      turnIdx: -1,
+      item: {
+        id: a.id,
+        kind: "agent",
+        label: a.label || a.id,
+        state: a.state,
+        tokens: a.tokens,
+        startedAt: a.started_at,
+        settledAt: a.settled_at,
+      },
+    });
+  }
+  for (const task of activeBackgroundTasks) {
+    byKey.set(`bg:${task.id}`, {
+      turnIdx: -1,
+      item: {
+        id: task.id,
+        kind: task.kind,
+        label: task.label || task.id,
+        state: task.state,
+        summary: task.summary,
+        tokens: task.tokens,
+        startedAt: task.started_at,
+        settledAt: task.settled_at,
+      },
+    });
+  }
 
   for (let tIdx = 0; tIdx < turns.length; tIdx++) {
     const turn = turns[tIdx];
@@ -558,6 +594,8 @@ function buildActiveBackgroundWork(turns: readonly AgentTurn[]): ActiveBackgroun
 export function deriveConversationTasks(
   turns: readonly AgentTurn[],
   _isSessionWorking = false,
+  activeSubagents: readonly SubagentEntry[] = [],
+  activeBackgroundTasks: readonly BackgroundTaskEntry[] = [],
 ): ConversationTasksSnapshot {
   const inlineSummaries = new Map<string, InlineTaskSummary>();
   let latestSnapshot: ChatTaskList | null = null;
@@ -624,7 +662,7 @@ export function deriveConversationTasks(
     completedTaskCount(latestSnapshot) >= latestSnapshot.tasks.length;
   const dockedTaskList =
     latestSnapshot && latestSnapshot.tasks.length > 0 && !allCompleted ? latestSnapshot : null;
-  const backgroundWork = buildActiveBackgroundWork(turns);
+  const backgroundWork = buildActiveBackgroundWork(turns, activeSubagents, activeBackgroundTasks);
 
   return {
     dockedTaskList,

@@ -1,7 +1,13 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { buildChatViewModel } from "../../domain/chat/chatViewModel";
 import type { PendingSendItem } from "../../domain/chat/types";
-import type { AgentLifecycleState, AgentTurn, StartupDialogInfo } from "../../protocol/event";
+import type {
+  AgentLifecycleState,
+  AgentTurn,
+  BackgroundTaskEntry,
+  StartupDialogInfo,
+  SubagentEntry,
+} from "../../protocol/event";
 import type { ConnectionState } from "../../transport/wsClient";
 import { ChatBottomDock } from "./ChatBottomDock";
 import type { ChatComposerHandle } from "./ChatComposer";
@@ -28,6 +34,8 @@ interface OrcaChatViewProps {
   lifecycleState?: AgentLifecycleState;
   activityText?: string | null;
   awaitingPrompt?: string | null;
+  activeSubagents?: readonly SubagentEntry[];
+  activeBackgroundTasks?: readonly BackgroundTaskEntry[];
   isApproving?: boolean;
   onFollowingChange?: (following: boolean) => void;
   onSend: (text: string, imagePaths?: string[], imagePreviews?: string[]) => Promise<void>;
@@ -58,6 +66,8 @@ export function OrcaChatView({
   lifecycleState = "idle",
   activityText = null,
   awaitingPrompt = null,
+  activeSubagents = [],
+  activeBackgroundTasks = [],
   isApproving = false,
   onFollowingChange,
   onSend,
@@ -112,6 +122,8 @@ export function OrcaChatView({
         snapshotConfirmed,
         isSubmitting,
         isStopping,
+        activeSubagents,
+        activeBackgroundTasks,
       }),
     [
       turns,
@@ -126,12 +138,20 @@ export function OrcaChatView({
       snapshotConfirmed,
       isSubmitting,
       isStopping,
+      activeSubagents,
+      activeBackgroundTasks,
     ],
   );
 
   const conversationTasks = useMemo(
-    () => deriveConversationTasks(turns, viewModel.effectivelyWorking),
-    [turns, viewModel.effectivelyWorking],
+    () =>
+      deriveConversationTasks(
+        turns,
+        viewModel.effectivelyWorking,
+        activeSubagents,
+        activeBackgroundTasks,
+      ),
+    [turns, viewModel.effectivelyWorking, activeSubagents, activeBackgroundTasks],
   );
   const usage = useMemo(() => latestUsage(turns), [turns]);
   const hasEarlier = Boolean(hasMoreHistory && onLoadOlder);

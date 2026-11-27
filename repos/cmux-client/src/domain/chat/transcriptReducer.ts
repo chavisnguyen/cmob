@@ -1,4 +1,10 @@
-import type { AgentLifecycleState, AgentTurn, StartupDialogInfo } from "../../protocol/event";
+import type {
+  AgentLifecycleState,
+  AgentTurn,
+  BackgroundTaskEntry,
+  StartupDialogInfo,
+  SubagentEntry,
+} from "../../protocol/event";
 import {
   countMatchingUserTurns,
   extractNormalizedUserTurnKeys,
@@ -137,6 +143,8 @@ export interface ChatSessionState {
   lifecycleState: AgentLifecycleState;
   activityText: string | null;
   awaitingPrompt: string | null;
+  activeSubagents: SubagentEntry[];
+  activeBackgroundTasks: BackgroundTaskEntry[];
   now: number;
 }
 
@@ -214,6 +222,8 @@ export function createInitialChatSessionState(
     lifecycleState: cached?.lifecycleState ?? "idle",
     activityText: cached?.activityText ?? null,
     awaitingPrompt: null,
+    activeSubagents: [],
+    activeBackgroundTasks: [],
     now,
   };
 }
@@ -259,6 +269,8 @@ export function reduceChatSession(
         lifecycleState: action.cached?.lifecycleState ?? "idle",
         activityText: action.cached?.activityText ?? null,
         awaitingPrompt: null,
+        activeSubagents: [],
+        activeBackgroundTasks: [],
         now: action.now,
       };
     }
@@ -317,6 +329,13 @@ export function reduceChatSession(
         nextActivityText = frame.is_working ? (cleanActivity(frame.activity) ?? "Thinking…") : null;
       }
 
+      const nextActiveSubagents = Array.isArray(frame.active_subagents)
+        ? frame.active_subagents
+        : state.activeSubagents;
+      const nextActiveBackgroundTasks = Array.isArray(frame.active_background_tasks)
+        ? frame.active_background_tasks
+        : state.activeBackgroundTasks;
+
       const hasTurnPayload = Array.isArray(frame.turns) || Array.isArray(frame.tail_turns);
       return {
         ...state,
@@ -331,6 +350,8 @@ export function reduceChatSession(
         lifecycleState: nextLifecycle,
         isWorking: nextIsWorking,
         activityText: nextActivityText,
+        activeSubagents: nextActiveSubagents,
+        activeBackgroundTasks: nextActiveBackgroundTasks,
         pendingSends: reconcilePendingSends(state.pendingSends, nextTurns, now),
         now,
       };

@@ -278,6 +278,7 @@ pub fn read_turns_page(
     if !is_session_id(session_id) || max_turns == 0 {
         return Ok(TranscriptPage {
             turns: Vec::new(),
+            earlier_child_turns: Vec::new(),
             has_more: false,
             before_offset: None,
             total_turns: 0,
@@ -322,6 +323,7 @@ pub fn read_turns_page(
 
     Ok(TranscriptPage {
         turns,
+        earlier_child_turns: Vec::new(),
         has_more,
         before_offset: has_more.then_some(first_seq),
         total_turns,

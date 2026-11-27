@@ -157,6 +157,8 @@ export function SurfaceDetailView({
               lifecycleState={chat.lifecycleState}
               activityText={chat.activityText}
               awaitingPrompt={chat.awaitingPrompt}
+              activeSubagents={chat.activeSubagents}
+              activeBackgroundTasks={chat.activeBackgroundTasks}
               isApproving={chat.isApproving}
               onFollowingChange={chat.setFollowing}
               onSend={chat.handleSendPrompt}

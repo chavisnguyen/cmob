@@ -6,7 +6,7 @@ use std::path::Path;
 use crate::domain::child_work_fsm::SurfaceRunEpoch;
 use crate::domain::lifecycle::derive_awaiting_prompt_from_parts;
 use crate::protocol::event::{AgentLifecycleState, AgentTurn};
-use crate::scanner::child_reconciler::reconcile_session_child_work;
+use crate::scanner::child_reconciler::{extract_active_child_work, reconcile_session_child_work};
 use crate::scanner::hook_store::{HookSessionRecord, HookStoreIndex};
 use crate::scanner::kiro_store::KiroSessionIndex;
 use crate::scanner::opencode_store;
@@ -290,6 +290,7 @@ impl SessionStateService {
             }
             None => TranscriptPage {
                 turns: Vec::new(),
+                earlier_child_turns: Vec::new(),
                 has_more: false,
                 before_offset: None,
                 total_turns: 0,
@@ -297,13 +298,33 @@ impl SessionStateService {
         };
         let session_working =
             matches!(res.lifecycle, AgentLifecycleState::Working | AgentLifecycleState::Waiting);
-        reconcile_session_child_work(
-            res.transcript_path.as_deref().map(Path::new),
-            &mut page.turns,
-            res.epoch,
-            session_working,
-            before_offset.is_some(),
-        );
+        if before_offset.is_none() && !page.earlier_child_turns.is_empty() {
+            let earlier_len = page.earlier_child_turns.len();
+            let mut combined = std::mem::take(&mut page.earlier_child_turns);
+            combined.append(&mut page.turns);
+            reconcile_session_child_work(
+                res.transcript_path.as_deref().map(Path::new),
+                &mut combined,
+                res.epoch,
+                session_working,
+                false,
+            );
+            page.turns = combined.split_off(earlier_len);
+            page.earlier_child_turns = combined;
+        } else {
+            reconcile_session_child_work(
+                res.transcript_path.as_deref().map(Path::new),
+                &mut page.turns,
+                res.epoch,
+                session_working,
+                before_offset.is_some(),
+            );
+        }
+        let (active_subagents, active_background_tasks) = if before_offset.is_none() {
+            extract_active_child_work(&page.earlier_child_turns, &page.turns)
+        } else {
+            (Vec::new(), Vec::new())
+        };
         let activity = (res.lifecycle == AgentLifecycleState::Working)
             .then(|| res.live_activity.clone())
             .flatten();
@@ -312,7 +333,7 @@ impl SessionStateService {
         } else {
             None
         };
-        let val = serde_json::json!({
+        let mut val = serde_json::json!({
             "update_kind": "snapshot",
             "activity": activity,
             "session_id": res.session_id,
@@ -328,6 +349,18 @@ impl SessionStateService {
             "total_turns": page.total_turns,
             "turns": page.turns
         });
+        if before_offset.is_none()
+            && let Some(obj) = val.as_object_mut()
+        {
+            obj.insert(
+                "active_subagents".into(),
+                serde_json::to_value(&active_subagents).unwrap_or_default(),
+            );
+            obj.insert(
+                "active_background_tasks".into(),
+                serde_json::to_value(&active_background_tasks).unwrap_or_default(),
+            );
+        }
         Ok((val, page))
     }
 

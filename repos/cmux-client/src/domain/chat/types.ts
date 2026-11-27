@@ -57,6 +57,8 @@ export interface WireSessionFrame {
   has_more?: boolean;
   before_offset?: number | null;
   total_turns?: number;
+  active_subagents?: SubagentEntry[];
+  active_background_tasks?: BackgroundTaskEntry[];
 }
 
 export interface ThoughtStepItem {

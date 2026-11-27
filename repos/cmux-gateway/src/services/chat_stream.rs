@@ -92,12 +92,13 @@ pub fn handle_subscription(
 }
 
 fn collect_working_children(
+    earlier_child_turns: &[AgentTurn],
     turns: &[AgentTurn],
 ) -> (bool, Vec<(String, String)>, Vec<String>) {
     let mut any_working = false;
     let mut subagent_ids = Vec::new();
     let mut bg_task_ids = Vec::new();
-    for turn in turns {
+    for turn in earlier_child_turns.iter().chain(turns.iter()) {
         for ev in &turn.events {
             match ev {
                 AgentEvent::Subagents { group_id, agents } => {
@@ -244,6 +245,7 @@ pub async fn chat_watcher_stream(
     let mut approval_screen: (Option<String>, Option<Instant>) = (None, None);
     let mut is_first_tick = true;
     let mut prev_digests: Vec<(String, u64)> = Vec::new();
+    let mut prev_earlier_digests: Vec<(String, u64)> = Vec::new();
     let mut working_subagents: Vec<(String, String)> = Vec::new();
     let mut working_bg_tasks: Vec<String> = Vec::new();
     let mut has_working_subagents = false;
@@ -355,18 +357,28 @@ pub async fn chat_watcher_stream(
                 })
                 .await;
                 let Ok(Ok((mut snap_val, page))) = built else { continue };
-                let (any_working, sub_ids, bg_ids) = collect_working_children(&page.turns);
+                let (any_working, sub_ids, bg_ids) =
+                    collect_working_children(&page.earlier_child_turns, &page.turns);
                 has_working_subagents = any_working;
                 working_subagents = sub_ids;
                 working_bg_tasks = bg_ids;
 
                 let next_digests: Vec<(String, u64)> =
                     page.turns.iter().map(|t| (t.id.clone(), turn_digest(t))).collect();
-                if last_fp.as_deref() == Some(fp.as_str()) && next_digests == prev_digests {
+                let next_earlier_digests: Vec<(String, u64)> = page
+                    .earlier_child_turns
+                    .iter()
+                    .map(|t| (t.id.clone(), turn_digest(t)))
+                    .collect();
+                if last_fp.as_deref() == Some(fp.as_str())
+                    && next_digests == prev_digests
+                    && next_earlier_digests == prev_earlier_digests
+                {
                     continue;
                 }
                 apply_delta_or_snapshot(&mut snap_val, &page.turns, &prev_digests, &next_digests, delta_mode);
                 prev_digests = next_digests;
+                prev_earlier_digests = next_earlier_digests;
                 snap_val
             }
             None => {
@@ -374,6 +386,7 @@ pub async fn chat_watcher_stream(
                 working_subagents.clear();
                 working_bg_tasks.clear();
                 prev_digests.clear();
+                prev_earlier_digests.clear();
                 SessionStateService::empty_session_json(&target_surface_id, &fallback_agent)
             }
         };

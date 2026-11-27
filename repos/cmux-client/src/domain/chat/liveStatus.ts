@@ -1,8 +1,24 @@
-import type { AgentTurn, AwaitingInput, StartupDialogInfo } from "../../protocol/event";
+import type {
+  AgentTurn,
+  AwaitingInput,
+  BackgroundTaskEntry,
+  StartupDialogInfo,
+  SubagentEntry,
+} from "../../protocol/event";
 import type { ChatTimelineItem, LiveActivityLineState } from "./types";
 
-function hasWorkingChildWork(turns: readonly AgentTurn[]): boolean {
+function hasWorkingChildWork(
+  turns: readonly AgentTurn[],
+  activeSubagents: readonly SubagentEntry[] = [],
+  activeBackgroundTasks: readonly BackgroundTaskEntry[] = [],
+): boolean {
   const stateByKey = new Map<string, string>();
+  for (const a of activeSubagents) {
+    stateByKey.set(`agent:${a.id}`, a.state);
+  }
+  for (const t of activeBackgroundTasks) {
+    stateByKey.set(`bg:${t.id}`, t.state);
+  }
   for (const turn of turns) {
     for (const ev of turn.events) {
       if (ev.kind === "subagents") {
@@ -49,6 +65,8 @@ export function computeEffectivelyWorking(params: {
   startupDialog?: StartupDialogInfo | null;
   effectiveAwaiting?: AwaitingInput | null;
   turns: readonly AgentTurn[];
+  activeSubagents?: readonly SubagentEntry[];
+  activeBackgroundTasks?: readonly BackgroundTaskEntry[];
 }): boolean {
   const {
     isWorking,
@@ -57,12 +75,16 @@ export function computeEffectivelyWorking(params: {
     startupDialog = null,
     effectiveAwaiting = null,
     turns,
+    activeSubagents = [],
+    activeBackgroundTasks = [],
   } = params;
 
   if (startupDialog || effectiveAwaiting) return false;
   if (withinGrace) return true;
-  if (!snapshotConfirmed || !isWorking) return false;
-  if (lastTurnEndedWithDone(turns) && !hasWorkingChildWork(turns)) {
+  if (!snapshotConfirmed) return false;
+  if (hasWorkingChildWork(turns, activeSubagents, activeBackgroundTasks)) return true;
+  if (!isWorking) return false;
+  if (lastTurnEndedWithDone(turns)) {
     return false;
   }
   return true;

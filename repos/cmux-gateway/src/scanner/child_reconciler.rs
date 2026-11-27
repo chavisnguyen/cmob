@@ -694,6 +694,56 @@ pub fn reconcile_session_child_work(
     );
 }
 
+/// Extracts currently-active subagent groups (preserving sibling entries within any turn whose
+/// group contains at least one `Working` subagent) and active `Working` background tasks across
+/// reconciled turns so live UI trays reflect long-running child work even when its spawning turn
+/// predates the `max_turns` tail page.
+pub fn extract_active_child_work(
+    earlier_child_turns: &[AgentTurn],
+    tail_turns: &[AgentTurn],
+) -> (Vec<SubagentEntry>, Vec<BackgroundTaskEntry>) {
+    let mut active_subagent_map: HashMap<String, usize> = HashMap::new();
+    let mut active_subagents: Vec<SubagentEntry> = Vec::new();
+    let mut active_bg_map: HashMap<String, usize> = HashMap::new();
+    let mut active_bg_tasks: Vec<BackgroundTaskEntry> = Vec::new();
+
+    for turn in earlier_child_turns.iter().chain(tail_turns.iter()) {
+        for ev in &turn.events {
+            match ev {
+                AgentEvent::Subagents { agents, .. } => {
+                    if !agents.iter().any(|a| a.state == SubagentState::Working) {
+                        continue;
+                    }
+                    for a in agents {
+                        if let Some(&idx) = active_subagent_map.get(&a.id) {
+                            active_subagents[idx] = a.clone();
+                        } else {
+                            active_subagent_map.insert(a.id.clone(), active_subagents.len());
+                            active_subagents.push(a.clone());
+                        }
+                    }
+                }
+                AgentEvent::BackgroundTasks { tasks } => {
+                    for t in tasks {
+                        if t.state != SubagentState::Working {
+                            continue;
+                        }
+                        if let Some(&idx) = active_bg_map.get(&t.id) {
+                            active_bg_tasks[idx] = t.clone();
+                        } else {
+                            active_bg_map.insert(t.id.clone(), active_bg_tasks.len());
+                            active_bg_tasks.push(t.clone());
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    (active_subagents, active_bg_tasks)
+}
+
 /// Computes a compact fingerprint over `epoch` and any currently-working child artifacts so
 /// `chat_watcher_stream` detects child completion or process exit even when the parent transcript
 /// file has not been written.

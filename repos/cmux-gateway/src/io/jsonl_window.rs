@@ -15,7 +15,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, LazyLock, Mutex};
 use std::time::UNIX_EPOCH;
 
-use crate::protocol::event::{AgentRole, AgentTurn};
+use crate::protocol::event::{AgentEvent, AgentRole, AgentTurn};
 use crate::providers::{parse_transcript_line, refresh_working_codex_subagents, ProviderParseState};
 
 /// Reverse tail-chunk size (matches Orca `TAIL_CHUNK_BYTES = 64 * 1024` in `transcript-tail-boundary.ts:4`).
@@ -32,6 +32,10 @@ const BOUNDARY_SAMPLE_BYTES: u64 = 64;
 #[derive(Debug, Clone)]
 pub struct TranscriptPage {
     pub turns: Vec<AgentTurn>,
+    /// Earlier in-window turns (before `max_turns` cutoff) that contain `Subagents` or
+    /// `BackgroundTasks` events so live child reconciliation can report long-running workers
+    /// without breaking `before_offset` pagination.
+    pub earlier_child_turns: Vec<AgentTurn>,
     pub has_more: bool,
     pub before_offset: Option<u64>,
     pub total_turns: usize,
@@ -538,6 +542,7 @@ pub fn read_jsonl_turns_page(
     if !transcript_path.exists() {
         return Ok(TranscriptPage {
             turns: Vec::new(),
+            earlier_child_turns: Vec::new(),
             has_more: false,
             before_offset: None,
             total_turns: 0,
@@ -551,6 +556,7 @@ pub fn read_jsonl_turns_page(
         if capped_end == 0 || max_turns == 0 {
             return Ok(TranscriptPage {
                 turns: Vec::new(),
+                earlier_child_turns: Vec::new(),
                 has_more: false,
                 before_offset: None,
                 total_turns: 0,
@@ -572,6 +578,7 @@ pub fn read_jsonl_turns_page(
         return Ok(TranscriptPage {
             total_turns: slice.len() + usize::from(has_more),
             turns: slice,
+            earlier_child_turns: Vec::new(),
             has_more,
             before_offset: has_more.then_some(first_offset),
         });
@@ -659,7 +666,7 @@ pub fn read_jsonl_turns_page(
         }
     }
 
-    let (mut slice, has_more, first_offset, total_turns) = {
+    let (mut slice, mut earlier_child_turns, has_more, first_offset, total_turns) = {
         let cached = guard.as_ref().expect("cached transcript populated");
         let total_in_window = cached.turns.len() + usize::from(cached.current_turn.is_some());
         let tail_start = total_in_window.saturating_sub(max_turns);
@@ -670,6 +677,24 @@ pub fn read_jsonl_turns_page(
             cached
                 .current_turn_offset
                 .unwrap_or(cached.window_start_offset)
+        };
+
+        let earlier_child_turns: Vec<AgentTurn> = if tail_start > 0 {
+            let end = tail_start.min(cached.turns.len());
+            cached.turns[..end]
+                .iter()
+                .filter(|t| {
+                    t.events.iter().any(|ev| {
+                        matches!(
+                            ev,
+                            AgentEvent::Subagents { .. } | AgentEvent::BackgroundTasks { .. }
+                        )
+                    })
+                })
+                .cloned()
+                .collect()
+        } else {
+            Vec::new()
         };
 
         let slice: Vec<AgentTurn> = if max_turns == 0 {
@@ -692,15 +717,19 @@ pub fn read_jsonl_turns_page(
         } else {
             total_in_window.max(slice.len() + usize::from(has_more))
         };
-        (slice, has_more, first_offset, total_turns)
+        (slice, earlier_child_turns, has_more, first_offset, total_turns)
     };
     drop(guard);
 
     // Refresh Codex child subagents OUTSIDE the main transcript cache lock!
+    if !earlier_child_turns.is_empty() {
+        refresh_working_codex_subagents(transcript_path, &mut earlier_child_turns);
+    }
     refresh_working_codex_subagents(transcript_path, &mut slice);
 
     Ok(TranscriptPage {
         turns: slice,
+        earlier_child_turns,
         has_more,
         before_offset: has_more.then_some(first_offset),
         total_turns,

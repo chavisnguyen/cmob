@@ -2,7 +2,9 @@ import type {
   AgentLifecycleState,
   AgentTurn,
   AwaitingInput,
+  BackgroundTaskEntry,
   StartupDialogInfo,
+  SubagentEntry,
 } from "../../protocol/event";
 import { cleanUserPrompt } from "./cleanPrompt";
 import { selectComposerDock } from "./dockSelector";
@@ -99,6 +101,8 @@ export function buildChatViewModel(params: {
   snapshotConfirmed?: boolean;
   isSubmitting?: boolean;
   isStopping?: boolean;
+  activeSubagents?: readonly SubagentEntry[];
+  activeBackgroundTasks?: readonly BackgroundTaskEntry[];
 }): ChatViewModel {
   const {
     turns,
@@ -113,6 +117,8 @@ export function buildChatViewModel(params: {
     snapshotConfirmed = true,
     isSubmitting = false,
     isStopping = false,
+    activeSubagents = [],
+    activeBackgroundTasks = [],
   } = params;
 
   const { dock, latestAwaitingMatch, effectiveAwaiting } = selectComposerDock({
@@ -131,6 +137,8 @@ export function buildChatViewModel(params: {
     startupDialog: snapshotConfirmed ? startupDialog : null,
     effectiveAwaiting,
     turns,
+    activeSubagents,
+    activeBackgroundTasks,
   });
 
   const pendingById = new Map<string, PendingSendItem>();

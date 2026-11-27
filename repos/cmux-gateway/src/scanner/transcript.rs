@@ -374,4 +374,48 @@ mod tests {
 
         let _ = std::fs::remove_file(&path);
     }
+
+    #[test]
+    fn earlier_child_turns_preserved_beyond_max_turns_cutoff() {
+        let path = std::env::temp_dir().join(format!("cmux-earlier-sub-{}.jsonl", uuid::Uuid::new_v4()));
+        let mut f = File::create(&path).unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"USER_INPUT","created_at":"2026-11-27T01:00:00Z","content":"run team"}}"#
+        )
+        .unwrap();
+        writeln!(
+            f,
+            r#"{{"type":"PLANNER_RESPONSE","created_at":"2026-11-27T01:00:01Z","tool_calls":[{{"name":"invoke_subagent","args":{{"Role":"\"Team Lead\"","TypeName":"\"teamwork\""}}}}]}}"#
+        )
+        .unwrap();
+        for idx in 0..20 {
+            writeln!(
+                f,
+                r#"{{"type":"USER_INPUT","created_at":"2026-11-27T01:{:02}:00Z","content":"continue {idx}"}}"#,
+                idx + 1
+            )
+            .unwrap();
+            writeln!(
+                f,
+                r#"{{"type":"PLANNER_RESPONSE","created_at":"2026-11-27T01:{:02}:05Z","content":"update {idx}"}}"#,
+                idx + 1
+            )
+            .unwrap();
+        }
+        drop(f);
+
+        let page = TranscriptReader::read_turns_page(&path, "surf-sub", 15, None).unwrap();
+        assert_eq!(page.turns.len(), 15);
+        assert_eq!(page.earlier_child_turns.len(), 1);
+        let (subs, _) = crate::scanner::child_reconciler::extract_active_child_work(
+            &page.earlier_child_turns,
+            &page.turns,
+        );
+        assert_eq!(subs.len(), 1);
+        assert_eq!(subs[0].label, "Team Lead");
+        assert_eq!(subs[0].state, SubagentState::Working);
+
+        let _ = std::fs::remove_file(&path);
+    }
 }
